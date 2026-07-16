@@ -25,7 +25,8 @@ load_config() {
   while IFS='=' read -r key val; do
     case "$key" in ''|\#*) continue;; esac
     key="$(printf '%s' "$key" | tr -d '[:space:]')"
-    val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
+    val="${val%%[[:space:]]#*}"                                                   # strip an inline "# comment"
+    val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"     # trim surrounding space
     case "$key" in
       SHIP_FEATURE_WORKTREE_ROOT) [ -n "${SHIP_FEATURE_WORKTREE_ROOT:-}" ] || SHIP_FEATURE_WORKTREE_ROOT="$val" ;;
       SHIP_FEATURE_EXCLUDE_MARKER) [ -n "${SHIP_FEATURE_EXCLUDE_MARKER:-}" ] || SHIP_FEATURE_EXCLUDE_MARKER="$val" ;;
@@ -115,7 +116,7 @@ cmd_relay() {
   # If the caller omitted --reviewers and a quorum is configured, inject it (still fully overridable by
   # passing --reviewers yourself). stdout and the exact exit code are always preserved.
   local a has_reviewers=0
-  for a in "$@"; do case "$a" in --reviewers) has_reviewers=1;; esac; done
+  for a in "$@"; do case "$a" in --reviewers|--reviewers=*) has_reviewers=1;; esac; done
   if [ "$has_reviewers" = 0 ] && [ -n "${SHIP_FEATURE_REVIEWERS:-}" ]; then
     pr-review-relay "$@" --reviewers "$SHIP_FEATURE_REVIEWERS"
   else

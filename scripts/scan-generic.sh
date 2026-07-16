@@ -17,7 +17,15 @@ HOME_RE='(/home/|/Users/|/root/)[A-Za-z0-9._-]+'
 
 hits=0
 scan_one() {
-  local f="$1" line
+  local f="$1" line target
+  # A symlink's committed data is its TARGET PATH — scan that string (grepping the file would follow the
+  # link and read the target's contents, missing a leaked path like `link -> /home/user/secret`).
+  if [ -L "$f" ]; then
+    target=$(readlink "$f" 2>/dev/null || true)
+    printf '%s\n' "$target" | grep -qE "$HOME_RE" && { echo "  ✖ $f:symlink-target: $target" >&2; hits=$((hits + 1)); }
+    printf '%s\n' "$target" | grep -oE "$EMAIL_RE" | grep -qvE "$EMAIL_ALLOW" && { echo "  ✖ $f:symlink-target: $target" >&2; hits=$((hits + 1)); }
+    return 0
+  fi
   [ -f "$f" ] || return 0
   # Extract each email OCCURRENCE (-o), then filter per-address — so a real address on the same line as
   # an allowed placeholder is still caught (line-level filtering would drop the whole line). `-I` skips

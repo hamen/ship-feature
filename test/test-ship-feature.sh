@@ -108,6 +108,24 @@ if [ -f "$FAKEHOME2/.config/ship-feature/WORKFLOW.md" ] && [ ! -L "$FAKEHOME2/.c
 SREPO5="$WORK/scanrepo5"; git init -q "$SREPO5"
 ( cd "$SREPO5" && git commit -q --allow-empty -m init && git branch "SECRET-SLUG-XYZ-branch" && bash "$SCAN" "$WORK/deny.txt" >/dev/null 2>&1 ); check "scan catches a deny-listed term in a ref name" $? 1
 
+# --- scan-generic scans a SYMLINK's target string (committed data), not the pointee ----------
+# Build the target from a var so this test file doesn't itself contain a literal home path (which the
+# repo-wide scan would flag).
+lu="privuser"; ln -s "/home/$lu/secret" "$WORK/leaky-link" 2>/dev/null
+bash "$HERE/../scripts/scan-generic.sh" "$WORK/leaky-link" >/dev/null 2>&1; check "generic scan flags a home path in a symlink target" $? 1
+
+# --- scan-personal-data catches a term inside a BINARY blob (no -I) ---------------------------
+SREPO6="$WORK/scanrepo6"; git init -q "$SREPO6"
+( cd "$SREPO6" && printf 'SECRET-SLUG-XYZ\000\001\002binary' > bin.dat && git add bin.dat && git commit -q -m "add binary" && bash "$SCAN" "$WORK/deny.txt" >/dev/null 2>&1 ); check "scan catches a deny-listed term inside a binary blob" $? 1
+
+# --- load_config strips an inline comment from a value ---------------------------------------
+printf 'SHIP_FEATURE_REVIEWERS=codex,cursor  # my quorum\n' > "$CFGDIR/config2"
+out=$(PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config2" bash "$CLI" relay --author claude 2>/dev/null)
+if printf '%s' "$out" | grep -q -- "--reviewers codex,cursor" && ! printf '%s' "$out" | grep -q "quorum"; then echo "  ok   [-] config value inline comment is stripped"; PASS=$((PASS+1)); else echo "  FAIL inline comment not stripped"; FAIL=$((FAIL+1)); fi
+
+# --- preflight fails on a DIVERGED branch (own commit + default advanced) ---------------------
+( cd "$MAIN/.claude/worktrees/feat" && git commit -q --allow-empty -m "feature work" && bash "$CLI" preflight >/dev/null 2>&1 ); check "preflight fails on a diverged branch" $? 1
+
 echo "-------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]
