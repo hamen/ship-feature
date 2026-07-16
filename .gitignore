@@ -1,0 +1,8 @@
+# Local, private — never commit these.
+config
+denylist.txt
+*.local
+
+# Worktree markers (in case someone creates worktrees under the repo).
+.claude/
+.worktrees/

@@ -1,0 +1,5 @@
+This fixture exists ONLY to prove scan-generic.sh detects each category. It is excluded from the
+repo-wide scan (it lives under test/fixtures/). Do not treat its contents as real.
+
+Planted email:     real.person@gmail.com
+Planted home path: /home/realdev/projects/secret-thing/

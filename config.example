@@ -1,0 +1,22 @@
+# ship-feature — example configuration.
+#
+# Copy to ~/.config/ship-feature/config and edit. These are documented knobs, read as plain
+# `KEY=value` lines — this file is NEVER shell-`source`d. In practice you can also just export the
+# SHIP_FEATURE_* variables from your shell profile; the CLI reads them from the environment.
+#
+# ALL values below are dummy placeholders. Put your real values here (this file is gitignored) — never
+# in the repo.
+
+# Where the workflow creates git worktrees (relative to the repo root).
+SHIP_FEATURE_WORKTREE_ROOT=.worktrees
+
+# Marker directory that must be git-excluded so it never shows up in `git status`.
+SHIP_FEATURE_EXCLUDE_MARKER=.worktrees/
+
+# Path to a PRIVATE, newline-delimited deny-list for scripts/scan-personal-data.sh. Each line is a
+# literal string that must NEVER appear in the public repo (real project slugs, bundle-id prefixes,
+# home paths, internal hostnames). Keep this file OUT of git.
+SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
+
+# (Out of scope for the workflow itself.) The command your separate release tool runs.
+RELEASE_CMD=your-release-command
