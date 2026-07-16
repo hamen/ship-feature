@@ -20,11 +20,15 @@ DENYLIST="${1:-${SHIP_FEATURE_DENYLIST:-}}"
 [ -f "$DENYLIST" ] || { echo "deny-list file not found: $DENYLIST" >&2; exit 2; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "not inside a git repo" >&2; exit 2; }
 
-# Collect the corpora to search, once.
-ALL_COMMITS=$(git rev-list --all 2>/dev/null)
-META=$(git log --all --format='%H%n%an%n%ae%n%cn%n%ce%n%s%n%b' 2>/dev/null)
-NAMES=$(git log --all --name-only --format='' 2>/dev/null | sort -u)
-REFS=$(git for-each-ref --format='%(refname)' 2>/dev/null)
+# Collect the corpora once, into temp FILES. Grepping files (not `printf ... | grep`) avoids a pipefail
+# + SIGPIPE interaction where grep exits early on a match, printf dies with SIGPIPE, and the pipeline is
+# reported as failure — which would mask a real hit (a false "clean").
+TMPD=$(mktemp -d) || { echo "mktemp failed" >&2; exit 2; }
+trap 'rm -rf "$TMPD"' EXIT
+git rev-list --all 2>/dev/null > "$TMPD/commits"
+git log --all --format='%H%n%an%n%ae%n%cn%n%ce%n%s%n%b' 2>/dev/null > "$TMPD/meta"
+git log --all --name-only --format='' 2>/dev/null | sort -u > "$TMPD/names"
+git for-each-ref --format='%(refname)' 2>/dev/null > "$TMPD/refs"
 
 hits=0
 while IFS= read -r term || [ -n "$term" ]; do
@@ -34,14 +38,13 @@ while IFS= read -r term || [ -n "$term" ]; do
   [ -n "$term" ] || continue
 
   found=""
-  # 1) file contents across ALL history (blobs in every commit's tree)
-  if [ -n "$ALL_COMMITS" ] && git grep -F -I -n -e "$term" $ALL_COMMITS -- >/dev/null 2>&1; then found="history contents"; fi
-  # 2) commit metadata (messages, author/committer name+email)
-  [ -z "$found" ] && printf '%s' "$META"  | grep -F -q -e "$term" && found="commit metadata"
-  # 3) filenames anywhere in history
-  [ -z "$found" ] && printf '%s' "$NAMES" | grep -F -q -e "$term" && found="filename"
-  # 4) branch / tag / ref names
-  [ -z "$found" ] && printf '%s' "$REFS"  | grep -F -q -e "$term" && found="ref name"
+  # 1) file contents across ALL history (blobs in every commit's tree). Batch commits via xargs so a
+  #    large history can't blow past ARG_MAX; check for a matching path rather than trusting exit codes.
+  if [ -s "$TMPD/commits" ] && [ -n "$(xargs -a "$TMPD/commits" git grep -F -I -l -e "$term" 2>/dev/null | head -n1)" ]; then found="history contents"; fi
+  # 2) commit metadata (messages, author/committer name+email)  3) filenames  4) ref names
+  [ -z "$found" ] && grep -F -q -e "$term" "$TMPD/meta"  && found="commit metadata"
+  [ -z "$found" ] && grep -F -q -e "$term" "$TMPD/names" && found="filename"
+  [ -z "$found" ] && grep -F -q -e "$term" "$TMPD/refs"  && found="ref name"
 
   if [ -n "$found" ]; then
     echo "✖ deny-listed term present ($found): $term" >&2

@@ -10,7 +10,8 @@
 #   - seeds ~/.config/ship-feature/config from config.example only if absent,
 #   - checks ~/.local/bin is on PATH and smoke-tests that everything resolves.
 #
-# Nothing is overwritten without a timestamped backup. Re-run any time.
+# A real (non-symlink) file it would replace is backed up first; managed symlinks are replaced in place.
+# Failed steps are counted and make the installer exit non-zero. Re-run any time.
 set -uo pipefail
 
 COPY_WORKFLOW=0
@@ -20,17 +21,22 @@ REPO="$(cd "$(dirname "$0")" && pwd)"
 CFG="$HOME/.config/ship-feature"
 BIN="$HOME/.local/bin"
 AGENTS_SKILLS="$HOME/.agents/skills"
-did=0
+did=0; fails=0
 
 say()  { echo "  $*"; did=$((did + 1)); }
-link() { ln -sfn "$1" "$2"; say "linked  $2 -> $1"; }
-backup(){ [ -e "$1" ] && cp -p "$1" "$1.bak-ship-feature-$(date +%s)" && echo "  backed up $1"; }
+backup(){ [ -e "$1" ] && [ ! -L "$1" ] && cp -p "$1" "$1.bak-ship-feature-$(date +%s)" && echo "  backed up $1"; }
+link() {
+  local src="$1" dst="$2"
+  backup "$dst"   # only backs up a real (non-symlink) file/dir; our own symlinks are safe to replace
+  if ln -sfn "$src" "$dst"; then say "linked  $dst -> $src"; else echo "  ! failed to link $dst" >&2; fails=$((fails + 1)); fi
+}
 
 mkdir -p "$CFG" "$BIN" "$AGENTS_SKILLS/ship-feature" "$HOME/.claude/skills" "$HOME/.cursor/rules"
 
 # 1) WORKFLOW.md — the path every adapter references.
 if [ "$COPY_WORKFLOW" = 1 ]; then
-  cp "$REPO/WORKFLOW.md" "$CFG/WORKFLOW.md"; say "copied  $CFG/WORKFLOW.md"
+  backup "$CFG/WORKFLOW.md"
+  if cp "$REPO/WORKFLOW.md" "$CFG/WORKFLOW.md"; then say "copied  $CFG/WORKFLOW.md"; else echo "  ! failed to copy WORKFLOW.md" >&2; fails=$((fails + 1)); fi
 else
   link "$REPO/WORKFLOW.md" "$CFG/WORKFLOW.md"
 fi
@@ -80,4 +86,8 @@ echo "--- smoke test ---"
 [ -f "$HOME/.cursor/rules/ship-feature.md" ] && echo "  ✓ Cursor rule resolves" || echo "  ! Cursor rule missing" >&2
 grep -qF '# >>> ship-feature >>>' "$AGENTS" 2>/dev/null && echo "  ✓ Codex AGENTS.md block present" || echo "  ! Codex block missing" >&2
 
+if [ "$fails" -gt 0 ]; then
+  echo "✖ install finished with $fails failure(s) — see the ! lines above." >&2
+  exit 1
+fi
 echo "✔ install complete ($did change(s)). Add a line to your global CLAUDE.md pointing at the ship-feature skill for any feature/fix."

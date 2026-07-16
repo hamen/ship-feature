@@ -29,12 +29,17 @@ jobs:
 
   secrets:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      # Pinned generic secret scanner (complements scan-generic.sh, which covers emails/home paths).
-      # Pin to a release tag; free for individual accounts and public repos.
+      # Generic secret scanner (complements scan-generic.sh, which covers emails/home paths). Free for
+      # individual accounts and public repos. NOTE: consider pinning to an immutable commit SHA.
       - name: gitleaks
         uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

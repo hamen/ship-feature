@@ -14,22 +14,27 @@ EMAIL_ALLOW='@example\.(com|org|net|test)\b|@example\b|noreply@|@localhost'
 # Absolute home paths (a leaked developer machine path).
 HOME_RE='(/home/[^/[:space:]"'"'"']+|/Users/[^/[:space:]"'"'"']+)/'
 
-if [ "$#" -gt 0 ]; then
-  FILES="$*"
-else
-  FILES="$(git ls-files 2>/dev/null | grep -vE '^test/fixtures/|^scripts/scan-generic\.sh$')"
-fi
-
 hits=0
-for f in $FILES; do
-  [ -f "$f" ] || continue
+scan_one() {
+  local f="$1" line
+  [ -f "$f" ] || return 0
   while IFS= read -r line; do
-    echo "  ✖ $line" >&2; hits=$((hits + 1))
-  done < <(grep -nE "$EMAIL_RE" "$f" 2>/dev/null | grep -vE "$EMAIL_ALLOW" | sed "s|^|$f:email: |")
+    echo "  ✖ $f:email: $line" >&2; hits=$((hits + 1))
+  done < <(grep -nE "$EMAIL_RE" "$f" 2>/dev/null | grep -vE "$EMAIL_ALLOW")
   while IFS= read -r line; do
-    echo "  ✖ $line" >&2; hits=$((hits + 1))
-  done < <(grep -nE "$HOME_RE" "$f" 2>/dev/null | sed "s|^|$f:home-path: |")
-done
+    echo "  ✖ $f:home-path: $line" >&2; hits=$((hits + 1))
+  done < <(grep -nE "$HOME_RE" "$f" 2>/dev/null)
+}
+
+if [ "$#" -gt 0 ]; then
+  for f in "$@"; do scan_one "$f"; done
+else
+  # NUL-delimited so paths with spaces/newlines are handled correctly.
+  while IFS= read -r -d '' f; do
+    case "$f" in test/fixtures/*|scripts/scan-generic.sh) continue;; esac
+    scan_one "$f"
+  done < <(git ls-files -z 2>/dev/null)
+fi
 
 if [ "$hits" -gt 0 ]; then
   echo "✖ scan-generic: $hits potential leak(s) (real email / home path). Review above." >&2

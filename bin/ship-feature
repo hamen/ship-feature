@@ -13,24 +13,42 @@
 # NOT in v1. Bash 3.2-safe (no associative arrays, no ${x^}); no jq dependency.
 set -uo pipefail
 
-# The worktree root the workflow uses (override for non-default setups).
-WORKTREE_ROOT="${SHIP_FEATURE_WORKTREE_ROOT:-.claude/worktrees}"
-# The marker dir that must be git-excluded (kept out of everyone's status).
-EXCLUDE_MARKER="${SHIP_FEATURE_EXCLUDE_MARKER:-.claude/}"
-
 die()  { echo "✖ $*" >&2; exit 1; }
 warn() { echo "  ! $*" >&2; }
 ok()   { echo "  ✓ $*"; }
 
+# Load ~/.config/ship-feature/config as plain KEY=value lines — NEVER shell-`source`d, and only known
+# SHIP_FEATURE_* keys are honored. Environment variables win over the file.
+load_config() {
+  local cfg="${SHIP_FEATURE_CONFIG:-$HOME/.config/ship-feature/config}" key val
+  [ -f "$cfg" ] || return 0
+  while IFS='=' read -r key val; do
+    case "$key" in ''|\#*) continue;; esac
+    key="$(printf '%s' "$key" | tr -d '[:space:]')"
+    val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
+    case "$key" in
+      SHIP_FEATURE_WORKTREE_ROOT) [ -n "${SHIP_FEATURE_WORKTREE_ROOT:-}" ] || SHIP_FEATURE_WORKTREE_ROOT="$val" ;;
+      SHIP_FEATURE_EXCLUDE_MARKER) [ -n "${SHIP_FEATURE_EXCLUDE_MARKER:-}" ] || SHIP_FEATURE_EXCLUDE_MARKER="$val" ;;
+      SHIP_FEATURE_DENYLIST) [ -n "${SHIP_FEATURE_DENYLIST:-}" ] || SHIP_FEATURE_DENYLIST="$val" ;;
+    esac
+  done < "$cfg"
+}
+
 default_branch() {
-  # e.g. refs/remotes/origin/main -> main
+  # refs/remotes/origin/HEAD -> the ref it points to, minus the "origin/" remote prefix.
+  # Strip only the remote prefix (not everything up to the last /) so branch names containing '/'
+  # (e.g. "release/main") survive.
   local ref
   ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || return 1
-  printf '%s\n' "${ref##*/}"
+  ref="${ref#refs/remotes/origin/}"
+  printf '%s\n' "$ref"
 }
 
 cmd_preflight() {
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git working tree."
+  load_config
+  local worktree_root="${SHIP_FEATURE_WORKTREE_ROOT:-.claude/worktrees}"
+  local exclude_marker="${SHIP_FEATURE_EXCLUDE_MARKER:-.claude/}"
 
   local def cur common_dir git_dir top
   def=$(default_branch) || die "cannot resolve origin/HEAD (the default branch). Run: git remote set-head origin -a"
@@ -48,24 +66,26 @@ cmd_preflight() {
     *) die "not in a linked worktree — use 'git worktree add' (never work in the main tree)." ;;
   esac
 
-  # Worktree lives under the configured root.
+  # Worktree lives under the configured root (a workflow requirement, not just advice).
   top=$(git rev-parse --show-toplevel 2>/dev/null)
   case "$top" in
-    *"/$WORKTREE_ROOT/"*) ok "worktree under $WORKTREE_ROOT/" ;;
-    *) warn "worktree is not under $WORKTREE_ROOT/ (set SHIP_FEATURE_WORKTREE_ROOT if intentional)" ;;
+    *"/$worktree_root/"*) ok "worktree under $worktree_root/" ;;
+    *) die "worktree is not under $worktree_root/ — create it there (or set SHIP_FEATURE_WORKTREE_ROOT)." ;;
   esac
 
-  # The marker dir is excluded (in the SHARED common-dir exclude, not the per-worktree one).
+  # The marker dir must be excluded (in the SHARED common-dir exclude, not the per-worktree one).
   local exclude="$common_dir/info/exclude"
-  if [ -f "$exclude" ] && grep -qF "$EXCLUDE_MARKER" "$exclude" 2>/dev/null; then
-    ok "$EXCLUDE_MARKER is git-excluded"
+  if [ -f "$exclude" ] && grep -qF "$exclude_marker" "$exclude" 2>/dev/null; then
+    ok "$exclude_marker is git-excluded"
   else
-    warn "$EXCLUDE_MARKER is not in $exclude — add it so it stays out of git status."
+    die "$exclude_marker is not in $exclude — add it so it stays out of git status."
   fi
 
-  # Ancestry: the feature branch shares history with the default branch.
-  if git merge-base "origin/$def" HEAD >/dev/null 2>&1; then
+  # Ancestry: the feature branch must actually descend from the default branch.
+  if git merge-base --is-ancestor "origin/$def" HEAD 2>/dev/null; then
     ok "branch descends from origin/$def"
+  elif git merge-base "origin/$def" HEAD >/dev/null 2>&1; then
+    warn "branch shares history with origin/$def but is behind it — consider rebasing onto the default branch."
   else
     die "no common history with origin/$def — did you branch off the default branch?"
   fi

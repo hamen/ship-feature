@@ -54,6 +54,18 @@ printf 'SECRET-SLUG-XYZ\n' > "$WORK/deny.txt"
 SREPO2="$WORK/scanrepo2"; git init -q "$SREPO2"
 ( cd "$SREPO2" && git commit -q --allow-empty -m "mentions SECRET-SLUG-XYZ" && bash "$SCAN" "$WORK/deny.txt" >/dev/null 2>&1 ); check "scan catches a planted term in a commit message" $? 1
 
+# --- install.sh under a throwaway HOME (exercises symlinks + AGENTS.md awk) ---
+FAKEHOME="$WORK/home"; mkdir -p "$FAKEHOME"
+( cd "$HERE/.." && HOME="$FAKEHOME" bash install.sh >/dev/null 2>&1 ); check "install.sh succeeds under a clean HOME" $? 0
+if [ -f "$FAKEHOME/.config/ship-feature/WORKFLOW.md" ] && [ -f "$FAKEHOME/.local/bin/ship-feature" ] \
+   && [ -f "$FAKEHOME/.claude/skills/ship-feature/SKILL.md" ] \
+   && grep -qF '# >>> ship-feature >>>' "$FAKEHOME/.codex/AGENTS.md" 2>/dev/null; then
+  echo "  ok   [-] install wired WORKFLOW + CLI + skill + Codex block"; PASS=$((PASS+1))
+else echo "  FAIL install did not wire everything"; FAIL=$((FAIL+1)); fi
+( cd "$HERE/.." && HOME="$FAKEHOME" bash install.sh >/dev/null 2>&1 )
+n=$(grep -cF '# >>> ship-feature >>>' "$FAKEHOME/.codex/AGENTS.md" 2>/dev/null || echo 0)
+check "install.sh is idempotent (exactly one Codex block)" "$n" 1
+
 # --- generic scanner: proves it catches each claimed category ----------------
 bash "$HERE/../scripts/scan-generic.sh" "$HERE/fixtures/leaky.sample" >/dev/null 2>&1; check "generic scan flags the leaky fixture (email + home path)" $? 1
 echo "just some ordinary text" > "$WORK/clean.txt"

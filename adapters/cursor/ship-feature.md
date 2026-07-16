@@ -1,6 +1,6 @@
 ---
-description: Gated workflow for shipping any repository change (plan → review → implement → cross-review → merge → verify)
-alwaysApply: true
+description: Gated workflow for shipping any repository change (plan → review → implement → cross-review → merge → verify). Apply when the user asks to implement/build/add/fix/ship a change to a repo.
+alwaysApply: false
 ---
 
 # ship-feature workflow

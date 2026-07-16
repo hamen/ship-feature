@@ -1,5 +1,5 @@
 # Local, private — never commit these.
-config
+/config
 denylist.txt
 *.local
 
