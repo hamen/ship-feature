@@ -1,6 +1,6 @@
 # ship-feature
 
-![ship-feature](assets/header.png)
+![ship-feature workflow pipeline](assets/header.png)
 
 <div align="center">
 
@@ -21,8 +21,9 @@
 
 Plan → review → implement → cross-review → merge → verify, with **two human approval gates** and the
 agent **never merging its own work**. The process lives in one place — [`WORKFLOW.md`](WORKFLOW.md) — and
-each agent (Claude, Codex, Cursor) gets a thin adapter that points at it, so you stop re-explaining "how
-we ship" every session.
+each driver agent (Claude, Codex, Cursor) gets a thin adapter that points at it, so you stop re-explaining
+"how we ship" every session. Antigravity joins the **cross-review** step through
+[`pr-review-relay`](https://github.com/hamen/pr-review-relay).
 
 ## 🆕 What's new
 
@@ -40,7 +41,7 @@ Agents reinvent your release/PR process every session — worktree or not, which
 
 The authoritative version is [`WORKFLOW.md`](WORKFLOW.md). At a glance:
 
-| Step | What happens | |
+| Step | What happens | Gate |
 |:----:|--------------|:--|
 | 1 | **Plan** the change | |
 | 2 | A second agent **reviews the plan** | |
