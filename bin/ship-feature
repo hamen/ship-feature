@@ -77,12 +77,13 @@ cmd_preflight() {
     *) die "worktree is not under $worktree_root/ — create it there (or set SHIP_FEATURE_WORKTREE_ROOT)." ;;
   esac
 
-  # The marker dir must be excluded (in the SHARED common-dir exclude, not the per-worktree one).
-  local exclude="$common_dir/info/exclude"
-  if [ -f "$exclude" ] && grep -qF "$exclude_marker" "$exclude" 2>/dev/null; then
-    ok "$exclude_marker is git-excluded"
+  # The marker must actually be IGNORED — ask git, don't grep the exclude file (a commented or negated
+  # rule would pass a grep but not real ignore behavior). check-ignore consults .gitignore + info/exclude.
+  local probe="${exclude_marker%/}/.ship-feature-probe"
+  if git check-ignore -q "$probe" 2>/dev/null; then
+    ok "$exclude_marker is git-ignored"
   else
-    die "$exclude_marker is not in $exclude — add it so it stays out of git status."
+    die "$exclude_marker is not ignored — add it to $common_dir/info/exclude (or .gitignore)."
   fi
 
   # Ancestry: the feature branch must actually descend from the current default branch.
@@ -90,9 +91,9 @@ cmd_preflight() {
     ok "branch descends from origin/$def"
   elif git merge-base "origin/$def" HEAD >/dev/null 2>&1; then
     if [ -n "${SHIP_FEATURE_ALLOW_BEHIND:-}" ]; then
-      warn "branch is behind origin/$def — allowed via SHIP_FEATURE_ALLOW_BEHIND."
+      warn "branch is behind or diverged from origin/$def — allowed via SHIP_FEATURE_ALLOW_BEHIND."
     else
-      die "branch is behind origin/$def — rebase onto the default branch, or set SHIP_FEATURE_ALLOW_BEHIND=1 to proceed on a stale base."
+      die "branch is behind or diverged from origin/$def — rebase onto the default branch, or set SHIP_FEATURE_ALLOW_BEHIND=1 to proceed on a stale base."
     fi
   else
     die "no common history with origin/$def — did you branch off the default branch?"

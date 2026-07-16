@@ -29,7 +29,10 @@ link() {
   local src="$1" dst="$2"
   # A real (non-symlink) file OR directory in the way is backed up and removed first, so we never
   # `cp -p` a directory (fails) or create a link *inside* an existing dir. Our own symlinks are replaced.
-  if [ -e "$dst" ] && [ ! -L "$dst" ]; then backup "$dst"; rm -rf "$dst"; fi
+  # Only remove the destination AFTER a confirmed-successful backup — never destroy an un-backed-up file.
+  if [ -e "$dst" ] && [ ! -L "$dst" ]; then
+    if backup "$dst"; then rm -rf "$dst"; else echo "  ! refusing to replace $dst (backup failed)" >&2; fails=$((fails + 1)); return; fi
+  fi
   if ln -sfn "$src" "$dst"; then say "linked  $dst -> $src"; else echo "  ! failed to link $dst" >&2; fails=$((fails + 1)); fi
 }
 
@@ -60,7 +63,11 @@ if [ -z "$BLOCK" ]; then
   echo "  ! could not read Codex block from snippet — skipping AGENTS.md" >&2
 else
   tmp="$(mktemp)"
-  if [ -f "$AGENTS" ] && grep -qF '# >>> ship-feature >>>' "$AGENTS"; then
+  if [ -f "$AGENTS" ] && grep -qF '# >>> ship-feature >>>' "$AGENTS" && ! grep -qF '# <<< ship-feature <<<' "$AGENTS"; then
+    # Start marker present but end marker missing: editing would truncate everything after it. Refuse.
+    echo "  ! $AGENTS has the ship-feature start marker but no end marker — fix it by hand (refusing to edit)." >&2
+    fails=$((fails + 1)); rm -f "$tmp"
+  elif [ -f "$AGENTS" ] && grep -qF '# >>> ship-feature >>>' "$AGENTS"; then
     backup "$AGENTS"
     # Pass the multiline block via the environment, not `awk -v` (BSD/macOS awk mangles/rejects a
     # multiline -v value — which silently produced an EMPTY AGENTS.md). Verify awk succeeded and the

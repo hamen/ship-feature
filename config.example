@@ -16,3 +16,6 @@ SHIP_FEATURE_EXCLUDE_MARKER=.claude/
 # literal string that must NEVER appear in the public repo (real project slugs, bundle-id prefixes,
 # home paths, internal hostnames). Keep this file OUT of git.
 SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
+
+# Escape hatch, ENV-ONLY (export it — it is NOT read from this file): set SHIP_FEATURE_ALLOW_BEHIND=1 to
+# let `ship-feature preflight` proceed when your branch is behind/diverged from the default branch.

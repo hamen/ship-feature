@@ -13,6 +13,7 @@ Non-negotiable points:
 - Plan first; have the plan reviewed; then **stop for explicit human approval before writing to the
   source repo**.
 - Implement in a **git worktree**, stage explicit paths, open a PR.
-- Cross-review with `ship-feature relay --author cursor`; keep iterating while any Blocker/Should-fix
-  remains. The relay's exit `0` means everyone ran, not that the reviews are clean — read the verdicts.
+- Cross-review with `ship-feature relay --author cursor --reviewers claude,codex,cursor,antigravity`
+  (explicit list = quorum); keep iterating while any Blocker/Should-fix remains. The relay's exit `0`
+  means everyone ran, not that the reviews are clean — read the verdicts.
 - **The human merges** — never self-merge.

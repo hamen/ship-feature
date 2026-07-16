@@ -56,7 +56,9 @@ Hand the PR to the **other** agents for review, and run the full test suite / CI
 head.
 
 ```
-ship-feature relay --author <self>      # transparent wrapper over pr-review-relay
+# Name the reviewers explicitly (the quorum) so a missing agent FAILS the round instead of silently
+# thinning the panel — a 1/4 pass must not read as consensus.
+ship-feature relay --author <self> --reviewers claude,codex,cursor,antigravity
 ```
 
 **Read the exit code** (`ship-feature relay` preserves it):

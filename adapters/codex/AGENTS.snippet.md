@@ -13,7 +13,8 @@ code. The canonical process is `~/.config/ship-feature/WORKFLOW.md` — read it 
 Non-negotiable points:
 - Plan first; have it reviewed; then **stop for explicit human approval before writing to the source repo**.
 - Implement in a **git worktree**, stage explicit paths, open a PR.
-- Cross-review with `ship-feature relay --author codex`; keep iterating while any Blocker/Should-fix
-  remains; exit `0` from the relay means everyone ran, NOT that the reviews are clean.
+- Cross-review with `ship-feature relay --author codex --reviewers claude,codex,cursor,antigravity`
+  (explicit list = quorum); keep iterating while any Blocker/Should-fix remains; exit `0` from the relay
+  means everyone ran, NOT that the reviews are clean.
 - **The human merges** — never self-merge.
 # <<< ship-feature <<<

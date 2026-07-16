@@ -22,6 +22,7 @@ echo "ship-feature tests:"
 REMOTE="$WORK/remote.git"; git init -q --bare "$REMOTE"
 MAIN="$WORK/main"; git clone -q "$REMOTE" "$MAIN"
 ( cd "$MAIN" && git commit -q --allow-empty -m "seed" && git push -q origin HEAD:main && git remote set-head origin main >/dev/null 2>&1 )
+git -C "$REMOTE" symbolic-ref HEAD refs/heads/main   # so fresh clones resolve origin/HEAD = main
 printf '.claude/\n' >> "$MAIN/.git/info/exclude"
 ( cd "$MAIN" && git worktree add -q -b feat .claude/worktrees/feat origin/main )
 
@@ -31,6 +32,19 @@ printf '.claude/\n' >> "$MAIN/.git/info/exclude"
 ( cd "$MAIN" && bash "$CLI" preflight >/dev/null 2>&1 ); check "preflight fails on the default branch" $? 1
 # preflight: on a feature branch but NOT a linked worktree → fail
 ( cd "$MAIN" && git checkout -q -b feat2 && bash "$CLI" preflight >/dev/null 2>&1 ); check "preflight fails outside a linked worktree" $? 1
+
+# preflight negatives:
+# (a) worktree marker not git-ignored → fail (fresh clone, no exclude entry added)
+MAINB="$WORK/mainb"; git clone -q "$REMOTE" "$MAINB"
+( cd "$MAINB" && git worktree add -q -b featb .claude/worktrees/featb origin/main )
+( cd "$MAINB/.claude/worktrees/featb" && bash "$CLI" preflight >/dev/null 2>&1 ); check "preflight fails when the marker is not git-ignored" $? 1
+# (b) worktree outside the configured root → fail
+( cd "$MAIN" && git worktree add -q -b featx "$WORK/elsewhere" origin/main )
+( cd "$WORK/elsewhere" && bash "$CLI" preflight >/dev/null 2>&1 ); check "preflight fails when worktree is outside the root" $? 1
+# (c) behind the default branch → fail, unless SHIP_FEATURE_ALLOW_BEHIND
+( cd "$MAIN" && git checkout -q main && git commit -q --allow-empty -m "advance main" && git push -q origin main )
+( cd "$MAIN/.claude/worktrees/feat" && git fetch -q origin && bash "$CLI" preflight >/dev/null 2>&1 ); check "preflight fails when behind the default branch" $? 1
+( cd "$MAIN/.claude/worktrees/feat" && SHIP_FEATURE_ALLOW_BEHIND=1 bash "$CLI" preflight >/dev/null 2>&1 ); check "preflight passes behind with SHIP_FEATURE_ALLOW_BEHIND" $? 0
 
 # --- relay passthrough: exit code + stdout preserved -------------------------
 BIN="$WORK/bin"; mkdir -p "$BIN"

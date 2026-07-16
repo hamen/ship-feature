@@ -30,10 +30,12 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "not inside a git 
 # reported as failure — which would mask a real hit (a false "clean").
 TMPD=$(mktemp -d) || { echo "mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$TMPD"' EXIT
-git rev-list --all 2>/dev/null > "$TMPD/commits"
-git log --all --format='%H%n%an%n%ae%n%cn%n%ce%n%s%n%b' 2>/dev/null > "$TMPD/meta"
-git log --all --name-only --format='' 2>/dev/null | sort -u > "$TMPD/names"
-git for-each-ref --format='%(refname)' 2>/dev/null > "$TMPD/refs"
+# Fail CLOSED on git errors: a corrupt repo that makes these commands error must NOT be reported clean.
+gitfail() { echo "✖ git operation failed ($1) — cannot scan reliably; failing closed." >&2; exit 2; }
+git rev-list --all > "$TMPD/commits" 2>/dev/null || gitfail "rev-list"
+git log --all --format='%H%n%an%n%ae%n%cn%n%ce%n%s%n%b' > "$TMPD/meta" 2>/dev/null || gitfail "log meta"
+git log --all --name-only --format='' 2>/dev/null | sort -u > "$TMPD/names" || gitfail "log names"
+git for-each-ref --format='%(refname)' > "$TMPD/refs" 2>/dev/null || gitfail "for-each-ref"
 
 hits=0
 while IFS= read -r term || [ -n "$term" ]; do

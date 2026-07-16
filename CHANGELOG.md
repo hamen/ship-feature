@@ -25,7 +25,8 @@ First release.
   fork PRs) and `scripts/scan-personal-data.sh` (local pre-publication scan of full history, commit
   metadata, filenames, and ref names against a private deny-list file that is never `source`-d).
 - **Tests + CI** — `test/test-ship-feature.sh` (real temp repos + stubbed `pr-review-relay`) and a
-  GitHub Actions matrix on Ubuntu + macOS that checks out the PR head SHA, runs the suite, and runs both
-  scanners.
+  GitHub Actions matrix on Ubuntu + macOS that checks out the PR head SHA, runs the suite, `scan-generic.sh`,
+  and gitleaks. (`scan-personal-data.sh` needs a private deny-list, so it runs locally pre-publication,
+  not in CI.)
 
 [0.1.0]: https://github.com/hamen/ship-feature/releases/tag/v0.1.0

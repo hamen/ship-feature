@@ -41,8 +41,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       # Generic secret scanner (complements scan-generic.sh, which covers emails/home paths). Free for
-      # individual accounts and public repos. NOTE: consider pinning to an immutable commit SHA.
+      # individual accounts and public repos. Pinned to an immutable commit SHA (gitleaks-action v2).
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

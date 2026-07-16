@@ -19,10 +19,10 @@ The essentials you must honor:
 2. 🚦 **Stop for the human to approve the plan.** Do not write to the source repository before that.
 3. Implement in a **git worktree** (never the main tree), stage explicit paths, open a **PR**. Run
    `ship-feature preflight` first.
-4. Run the **cross-review**: `ship-feature relay --author <self>` (transparent wrapper over
-   `pr-review-relay`). Branch on its exit code — `0` means everyone ran, **not** that reviews are clean;
-   read the verdicts. Keep iterating while any **Blocker** or **Should-fix** exists; stop only at full
-   agreement or **Nits-only**.
+4. Run the **cross-review**: `ship-feature relay --author <self> --reviewers claude,codex,cursor,antigravity`
+   (name the reviewers = quorum, so a missing agent fails rather than thinning the panel). Branch on its
+   exit code — `0` means everyone ran, **not** that reviews are clean; read the verdicts. Keep iterating
+   while any **Blocker** or **Should-fix** exists; stop only at full agreement or **Nits-only**.
 5. 🚦 **Stop for the human to merge.** Never self-merge.
 6. **Verify** the tests on the merge commit.
 
