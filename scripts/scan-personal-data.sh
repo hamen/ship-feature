@@ -24,7 +24,11 @@ DENYLIST="${1:-${SHIP_FEATURE_DENYLIST:-}}"
 # Fall back to the config file's SHIP_FEATURE_DENYLIST (read with sed, never `source`d).
 if [ -z "$DENYLIST" ]; then
   _cfg="${SHIP_FEATURE_CONFIG:-$HOME/.config/ship-feature/config}"
-  [ -f "$_cfg" ] && DENYLIST=$(sed -n 's/^[[:space:]]*SHIP_FEATURE_DENYLIST[[:space:]]*=[[:space:]]*//p' "$_cfg" | tail -n1)
+  if [ -f "$_cfg" ]; then
+    DENYLIST=$(sed -n 's/^[[:space:]]*SHIP_FEATURE_DENYLIST[[:space:]]*=[[:space:]]*//p' "$_cfg" | tail -n1)
+    DENYLIST="${DENYLIST%%[[:space:]]#*}"                       # strip an inline "# comment"
+    DENYLIST="${DENYLIST%"${DENYLIST##*[![:space:]]}"}"          # strip trailing whitespace
+  fi
 fi
 [ -n "$DENYLIST" ] || { echo "usage: $0 <denylist-file>  (or set SHIP_FEATURE_DENYLIST / config)" >&2; exit 2; }
 [ -f "$DENYLIST" ] || { echo "deny-list file not found: $DENYLIST" >&2; exit 2; }

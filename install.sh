@@ -107,8 +107,9 @@ if [ ! -f "$CFG/config" ]; then
   if cp "$REPO/config.example" "$CFG/config"; then say "seeded  $CFG/config (from config.example)"; else echo "  ! failed to seed $CFG/config" >&2; fails=$((fails + 1)); fi
 else echo "  = kept existing $CFG/config"; fi
 
-# 7) PATH check + smoke test.
+# 7) PATH check + dependency check + smoke test.
 case ":$PATH:" in *":$BIN:"*) : ;; *) echo "  ! $BIN is not on your PATH — add it so 'ship-feature' is found." >&2 ;; esac
+command -v pr-review-relay >/dev/null 2>&1 || echo "  ! note: pr-review-relay is not on PATH — install the dependency so 'ship-feature relay' works: https://github.com/hamen/pr-review-relay" >&2
 echo "--- smoke test ---"
 smoke() { if eval "$1"; then echo "  ✓ $2"; else echo "  ! $2 — FAILED" >&2; fails=$((fails + 1)); fi; }
 smoke '"$BIN/ship-feature" help >/dev/null 2>&1'            "ship-feature runs"

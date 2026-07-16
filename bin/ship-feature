@@ -28,10 +28,12 @@ load_config() {
     val="${val%%[[:space:]]#*}"                                                   # strip an inline "# comment"
     val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"     # trim surrounding space
     case "$key" in
-      SHIP_FEATURE_WORKTREE_ROOT) [ -n "${SHIP_FEATURE_WORKTREE_ROOT:-}" ] || SHIP_FEATURE_WORKTREE_ROOT="$val" ;;
-      SHIP_FEATURE_EXCLUDE_MARKER) [ -n "${SHIP_FEATURE_EXCLUDE_MARKER:-}" ] || SHIP_FEATURE_EXCLUDE_MARKER="$val" ;;
-      SHIP_FEATURE_DENYLIST) [ -n "${SHIP_FEATURE_DENYLIST:-}" ] || SHIP_FEATURE_DENYLIST="$val" ;;
-      SHIP_FEATURE_REVIEWERS) [ -n "${SHIP_FEATURE_REVIEWERS:-}" ] || SHIP_FEATURE_REVIEWERS="$val" ;;
+      # Use ${VAR+x} (is it DEFINED?) not ${VAR:-} (is it non-empty?), so an explicitly empty environment
+      # value (e.g. SHIP_FEATURE_REVIEWERS=) wins over the config file and disables it.
+      SHIP_FEATURE_WORKTREE_ROOT) [ -n "${SHIP_FEATURE_WORKTREE_ROOT+x}" ] || SHIP_FEATURE_WORKTREE_ROOT="$val" ;;
+      SHIP_FEATURE_EXCLUDE_MARKER) [ -n "${SHIP_FEATURE_EXCLUDE_MARKER+x}" ] || SHIP_FEATURE_EXCLUDE_MARKER="$val" ;;
+      SHIP_FEATURE_DENYLIST) [ -n "${SHIP_FEATURE_DENYLIST+x}" ] || SHIP_FEATURE_DENYLIST="$val" ;;
+      SHIP_FEATURE_REVIEWERS) [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || SHIP_FEATURE_REVIEWERS="$val" ;;
     esac
   done < "$cfg"
 }
@@ -51,7 +53,9 @@ cmd_preflight() {
   load_config
   local worktree_root="${SHIP_FEATURE_WORKTREE_ROOT:-.claude/worktrees}"
   worktree_root="${worktree_root%/}"   # tolerate a trailing slash (else the "/root/" match breaks)
-  local exclude_marker="${SHIP_FEATURE_EXCLUDE_MARKER:-.claude/}"
+  # Default the excluded marker to the TOP component of the worktree root so they always correspond —
+  # otherwise a custom root (e.g. ".worktrees") could pass while an unrelated ".claude/" is what's ignored.
+  local exclude_marker="${SHIP_FEATURE_EXCLUDE_MARKER:-${worktree_root%%/*}/}"
 
   local def cur common_dir git_dir top
   def=$(default_branch) || die "cannot resolve origin/HEAD (the default branch). Run: git remote set-head origin -a"
@@ -116,10 +120,18 @@ cmd_relay() {
   # If the caller omitted --reviewers and a quorum is configured, inject it (still fully overridable by
   # passing --reviewers yourself). stdout and the exact exit code are always preserved.
   local a has_reviewers=0
-  for a in "$@"; do case "$a" in --reviewers|--reviewers=*) has_reviewers=1;; esac; done
-  if [ "$has_reviewers" = 0 ] && [ -n "${SHIP_FEATURE_REVIEWERS:-}" ]; then
+  for a in "$@"; do case "$a" in
+    --reviewers) has_reviewers=1 ;;
+    # pr-review-relay only accepts the two-token form; reject the =form with a clear message rather than
+    # passing it through and letting the relay die with "unknown arg".
+    --reviewers=*) die "pass reviewers as two tokens: --reviewers <list> (the --reviewers=... form isn't supported)." ;;
+  esac; done
+  if [ "$has_reviewers" = 1 ]; then
+    pr-review-relay "$@"
+  elif [ -n "${SHIP_FEATURE_REVIEWERS:-}" ]; then
     pr-review-relay "$@" --reviewers "$SHIP_FEATURE_REVIEWERS"
   else
+    echo "  note: no explicit --reviewers and SHIP_FEATURE_REVIEWERS is unset — the relay may run a thinned panel. Set your quorum for a fail-closed cross-review." >&2
     pr-review-relay "$@"
   fi
   local rc=$?
