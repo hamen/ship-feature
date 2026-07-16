@@ -1,0 +1,48 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # macOS validates the Bash 3.2 target that Ubuntu's Bash 5 cannot.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Test the exact reviewed code — the PR head SHA, not GitHub's synthetic merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: syntax check
+        run: |
+          shopt -s nullglob   # so an empty glob doesn't become a literal '*.sh' and fail the job
+          for f in bin/ship-feature install.sh scripts/*.sh test/*.sh; do bash -n "$f"; done
+      - name: tests
+        run: bash test/test-ship-feature.sh
+      - name: generic leak scan (emails / home paths)
+        run: bash scripts/scan-generic.sh
+
+  secrets:
+    runs-on: ubuntu-latest
+    # Runs on fork PRs too: the read-only GITHUB_TOKEN is enough for gitleaks-action to scan and fail the
+    # job on findings (it just can't post a PR comment) — and forks are exactly where scanning matters.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      # Generic secret scanner (complements scan-generic.sh, which covers emails/home paths). Free for
+      # individual accounts and public repos. Pinned to an immutable commit SHA (gitleaks-action v2).
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

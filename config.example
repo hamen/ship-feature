@@ -1,0 +1,28 @@
+# ship-feature — example configuration.
+#
+# Copy to ~/.config/ship-feature/config and edit. The `ship-feature` CLI reads this file as plain
+# `KEY=value` lines and honors the SHIP_FEATURE_* keys below — it is NEVER shell-`source`d, so nothing
+# here is executed. Environment variables of the same name take precedence over this file.
+#
+# The values below are the built-in defaults. This example file is TRACKED and public; put your real
+# values only in the copy at ~/.config/ship-feature/config, which is gitignored.
+
+# Where the workflow creates git worktrees (relative to the repo root). Default matches the CLI.
+SHIP_FEATURE_WORKTREE_ROOT=.claude/worktrees
+
+# Marker directory that must be git-excluded so it never shows up in `git status`.
+SHIP_FEATURE_EXCLUDE_MARKER=.claude/
+
+# The cross-review quorum: the agents you actually have installed. When set, `ship-feature relay`
+# injects it as --reviewers (so a missing agent fails the round instead of silently thinning the panel).
+# LEFT UNSET by default on purpose — uncomment and list ONLY the agents you have, or a fresh install
+# would force a quorum you can't satisfy and every review round would fail.
+# SHIP_FEATURE_REVIEWERS=claude,codex,cursor
+
+# Path to a PRIVATE, newline-delimited deny-list for scripts/scan-personal-data.sh. Each line is a
+# literal string that must NEVER appear in the public repo (real project slugs, bundle-id prefixes,
+# home paths, internal hostnames). Keep this file OUT of git.
+SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
+
+# Escape hatch, ENV-ONLY (export it — it is NOT read from this file): set SHIP_FEATURE_ALLOW_BEHIND=1 to
+# let `ship-feature preflight` proceed when your branch is behind/diverged from the default branch.
