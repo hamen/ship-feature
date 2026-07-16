@@ -58,13 +58,17 @@ cmd_preflight() {
   [ "$cur" != "$def" ] || die "you are on the default branch '$def' — create a feature branch/worktree first."
   ok "on feature branch: $cur"
 
-  # Linked worktree: its git dir sits under the common dir's worktrees/.
-  git_dir=$(git rev-parse --git-dir 2>/dev/null)
+  # Linked worktree: --git-dir and --git-common-dir are identical in the main tree and differ in a
+  # linked worktree. (More robust than matching "/worktrees/" in the path, which a repo cloned under a
+  # directory literally named "worktrees" would trip.)
+  git_dir=$(git rev-parse --absolute-git-dir 2>/dev/null)
   common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
-  case "$git_dir" in
-    *"/worktrees/"*) ok "in a linked worktree" ;;
-    *) die "not in a linked worktree — use 'git worktree add' (never work in the main tree)." ;;
-  esac
+  case "$common_dir" in /*) : ;; *) common_dir=$(cd "$common_dir" 2>/dev/null && pwd) ;; esac
+  if [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ]; then
+    ok "in a linked worktree"
+  else
+    die "not in a linked worktree — use 'git worktree add' (never work in the main tree)."
+  fi
 
   # Worktree lives under the configured root (a workflow requirement, not just advice).
   top=$(git rev-parse --show-toplevel 2>/dev/null)
@@ -81,11 +85,15 @@ cmd_preflight() {
     die "$exclude_marker is not in $exclude — add it so it stays out of git status."
   fi
 
-  # Ancestry: the feature branch must actually descend from the default branch.
+  # Ancestry: the feature branch must actually descend from the current default branch.
   if git merge-base --is-ancestor "origin/$def" HEAD 2>/dev/null; then
     ok "branch descends from origin/$def"
   elif git merge-base "origin/$def" HEAD >/dev/null 2>&1; then
-    warn "branch shares history with origin/$def but is behind it — consider rebasing onto the default branch."
+    if [ -n "${SHIP_FEATURE_ALLOW_BEHIND:-}" ]; then
+      warn "branch is behind origin/$def — allowed via SHIP_FEATURE_ALLOW_BEHIND."
+    else
+      die "branch is behind origin/$def — rebase onto the default branch, or set SHIP_FEATURE_ALLOW_BEHIND=1 to proceed on a stale base."
+    fi
   else
     die "no common history with origin/$def — did you branch off the default branch?"
   fi

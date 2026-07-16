@@ -63,7 +63,8 @@ if [ -f "$FAKEHOME/.config/ship-feature/WORKFLOW.md" ] && [ -f "$FAKEHOME/.local
   echo "  ok   [-] install wired WORKFLOW + CLI + skill + Codex block"; PASS=$((PASS+1))
 else echo "  FAIL install did not wire everything"; FAIL=$((FAIL+1)); fi
 ( cd "$HERE/.." && HOME="$FAKEHOME" bash install.sh >/dev/null 2>&1 )
-n=$(grep -cF '# >>> ship-feature >>>' "$FAKEHOME/.codex/AGENTS.md" 2>/dev/null || echo 0)
+# grep -c prints "0" and exits 1 on no match; capture stdout, don't append via `|| echo 0`.
+n=$(grep -cF '# >>> ship-feature >>>' "$FAKEHOME/.codex/AGENTS.md" 2>/dev/null); [ -n "$n" ] || n=0
 check "install.sh is idempotent (exactly one Codex block)" "$n" 1
 
 # --- generic scanner: proves it catches each claimed category ----------------

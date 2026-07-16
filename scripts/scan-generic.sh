@@ -11,8 +11,9 @@ set -uo pipefail
 # Real emails, but not RFC-2606 reserved example domains or noreply addresses (those are placeholders).
 EMAIL_RE='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z][A-Za-z]+'
 EMAIL_ALLOW='@example\.(com|org|net|test)\b|@example\b|noreply@|@localhost'
-# Absolute home paths (a leaked developer machine path).
-HOME_RE='(/home/[^/[:space:]"'"'"']+|/Users/[^/[:space:]"'"'"']+)/'
+# Absolute home paths (a leaked developer machine path). No trailing slash required, so a bare
+# "/home/user" at end-of-line is still caught.
+HOME_RE='(/home/|/Users/)[A-Za-z0-9._-]+'
 
 hits=0
 scan_one() {

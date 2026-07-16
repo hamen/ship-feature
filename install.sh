@@ -24,10 +24,12 @@ AGENTS_SKILLS="$HOME/.agents/skills"
 did=0; fails=0
 
 say()  { echo "  $*"; did=$((did + 1)); }
-backup(){ [ -e "$1" ] && [ ! -L "$1" ] && cp -p "$1" "$1.bak-ship-feature-$(date +%s)" && echo "  backed up $1"; }
+backup(){ [ -e "$1" ] && [ ! -L "$1" ] && cp -pR "$1" "$1.bak-ship-feature-$(date +%s)" && echo "  backed up $1"; }
 link() {
   local src="$1" dst="$2"
-  backup "$dst"   # only backs up a real (non-symlink) file/dir; our own symlinks are safe to replace
+  # A real (non-symlink) file OR directory in the way is backed up and removed first, so we never
+  # `cp -p` a directory (fails) or create a link *inside* an existing dir. Our own symlinks are replaced.
+  if [ -e "$dst" ] && [ ! -L "$dst" ]; then backup "$dst"; rm -rf "$dst"; fi
   if ln -sfn "$src" "$dst"; then say "linked  $dst -> $src"; else echo "  ! failed to link $dst" >&2; fails=$((fails + 1)); fi
 }
 
@@ -60,17 +62,26 @@ else
   tmp="$(mktemp)"
   if [ -f "$AGENTS" ] && grep -qF '# >>> ship-feature >>>' "$AGENTS"; then
     backup "$AGENTS"
-    awk -v block="$BLOCK" '
-      /^# >>> ship-feature >>>/ {print block; skip=1; next}
-      /^# <<< ship-feature <<</ {skip=0; next}
-      skip {next}
-      {print}
-    ' "$AGENTS" > "$tmp"
-    mv "$tmp" "$AGENTS"; say "updated $AGENTS (ship-feature block)"
+    # Pass the multiline block via the environment, not `awk -v` (BSD/macOS awk mangles/rejects a
+    # multiline -v value — which silently produced an EMPTY AGENTS.md). Verify awk succeeded and the
+    # result is non-empty BEFORE replacing the file.
+    if SF_BLOCK="$BLOCK" awk '
+         /^# >>> ship-feature >>>/ {print ENVIRON["SF_BLOCK"]; skip=1; next}
+         /^# <<< ship-feature <<</ {skip=0; next}
+         skip {next}
+         {print}
+       ' "$AGENTS" > "$tmp" && [ -s "$tmp" ]; then
+      mv "$tmp" "$AGENTS"; say "updated $AGENTS (ship-feature block)"
+    else
+      echo "  ! failed to update ship-feature block in $AGENTS (awk)" >&2; fails=$((fails + 1)); rm -f "$tmp"
+    fi
   else
     [ -f "$AGENTS" ] && backup "$AGENTS"
-    { [ -f "$AGENTS" ] && cat "$AGENTS"; printf '\n%s\n' "$BLOCK"; } > "$tmp"
-    mv "$tmp" "$AGENTS"; say "appended ship-feature block to $AGENTS"
+    if { [ -f "$AGENTS" ] && cat "$AGENTS"; printf '\n%s\n' "$BLOCK"; } > "$tmp" && [ -s "$tmp" ]; then
+      mv "$tmp" "$AGENTS"; say "appended ship-feature block to $AGENTS"
+    else
+      echo "  ! failed to write $AGENTS" >&2; fails=$((fails + 1)); rm -f "$tmp"
+    fi
   fi
 fi
 
@@ -80,11 +91,12 @@ if [ ! -f "$CFG/config" ]; then cp "$REPO/config.example" "$CFG/config"; say "se
 # 7) PATH check + smoke test.
 case ":$PATH:" in *":$BIN:"*) : ;; *) echo "  ! $BIN is not on your PATH — add it so 'ship-feature' is found." >&2 ;; esac
 echo "--- smoke test ---"
-"$BIN/ship-feature" help >/dev/null 2>&1 && echo "  ✓ ship-feature runs" || echo "  ! ship-feature failed to run" >&2
-[ -f "$CFG/WORKFLOW.md" ] && echo "  ✓ WORKFLOW.md resolves at $CFG/WORKFLOW.md" || echo "  ! WORKFLOW.md missing" >&2
-[ -f "$HOME/.claude/skills/ship-feature/SKILL.md" ] && echo "  ✓ Claude skill resolves" || echo "  ! Claude skill missing" >&2
-[ -f "$HOME/.cursor/rules/ship-feature.md" ] && echo "  ✓ Cursor rule resolves" || echo "  ! Cursor rule missing" >&2
-grep -qF '# >>> ship-feature >>>' "$AGENTS" 2>/dev/null && echo "  ✓ Codex AGENTS.md block present" || echo "  ! Codex block missing" >&2
+smoke() { if eval "$1"; then echo "  ✓ $2"; else echo "  ! $2 — FAILED" >&2; fails=$((fails + 1)); fi; }
+smoke '"$BIN/ship-feature" help >/dev/null 2>&1'            "ship-feature runs"
+smoke '[ -f "$CFG/WORKFLOW.md" ]'                           "WORKFLOW.md resolves at $CFG/WORKFLOW.md"
+smoke '[ -f "$HOME/.claude/skills/ship-feature/SKILL.md" ]' "Claude skill resolves"
+smoke '[ -f "$HOME/.cursor/rules/ship-feature.md" ]'        "Cursor rule resolves"
+smoke 'grep -qF "# >>> ship-feature >>>" "$AGENTS" 2>/dev/null' "Codex AGENTS.md block present"
 
 if [ "$fails" -gt 0 ]; then
   echo "✖ install finished with $fails failure(s) — see the ! lines above." >&2

@@ -16,7 +16,12 @@
 set -uo pipefail
 
 DENYLIST="${1:-${SHIP_FEATURE_DENYLIST:-}}"
-[ -n "$DENYLIST" ] || { echo "usage: $0 <denylist-file>  (or set SHIP_FEATURE_DENYLIST)" >&2; exit 2; }
+# Fall back to the config file's SHIP_FEATURE_DENYLIST (read with sed, never `source`d).
+if [ -z "$DENYLIST" ]; then
+  _cfg="${SHIP_FEATURE_CONFIG:-$HOME/.config/ship-feature/config}"
+  [ -f "$_cfg" ] && DENYLIST=$(sed -n 's/^[[:space:]]*SHIP_FEATURE_DENYLIST[[:space:]]*=[[:space:]]*//p' "$_cfg" | tail -n1)
+fi
+[ -n "$DENYLIST" ] || { echo "usage: $0 <denylist-file>  (or set SHIP_FEATURE_DENYLIST / config)" >&2; exit 2; }
 [ -f "$DENYLIST" ] || { echo "deny-list file not found: $DENYLIST" >&2; exit 2; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "not inside a git repo" >&2; exit 2; }
 
@@ -38,9 +43,10 @@ while IFS= read -r term || [ -n "$term" ]; do
   [ -n "$term" ] || continue
 
   found=""
-  # 1) file contents across ALL history (blobs in every commit's tree). Batch commits via xargs so a
-  #    large history can't blow past ARG_MAX; check for a matching path rather than trusting exit codes.
-  if [ -s "$TMPD/commits" ] && [ -n "$(xargs -a "$TMPD/commits" git grep -F -I -l -e "$term" 2>/dev/null | head -n1)" ]; then found="history contents"; fi
+  # 1) file contents across ALL history (blobs in every commit's tree). Batch commits via xargs reading
+  #    stdin (portable — GNU `xargs -a` is not on macOS/BSD) so a large history can't blow past ARG_MAX;
+  #    check for a matching path rather than trusting exit codes.
+  if [ -s "$TMPD/commits" ] && [ -n "$(xargs git grep -F -I -l -e "$term" < "$TMPD/commits" 2>/dev/null | head -n1)" ]; then found="history contents"; fi
   # 2) commit metadata (messages, author/committer name+email)  3) filenames  4) ref names
   [ -z "$found" ] && grep -F -q -e "$term" "$TMPD/meta"  && found="commit metadata"
   [ -z "$found" ] && grep -F -q -e "$term" "$TMPD/names" && found="filename"

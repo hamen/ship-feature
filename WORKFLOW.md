@@ -41,8 +41,9 @@ Summarize the agreed plan and **stop**. Do not touch the source repository until
 
 ### 4. Implement in a worktree, open a PR
 - Work in a **git worktree**, never the main working tree. Default root `.claude/worktrees/`, override
-  with `SHIP_FEATURE_WORKTREE_ROOT`. Add the worktree marker dir to `.git/info/exclude` so it never
-  shows up in anyone's status.
+  with `SHIP_FEATURE_WORKTREE_ROOT`. Add the worktree marker dir to the repository's `info/exclude` (in a
+  linked worktree that's the **common** git dir's exclude, which `ship-feature preflight` checks) so it
+  never shows up in anyone's status.
 - Branch off the repository's **default branch** (`origin/HEAD`), not a hardcoded name.
 - **Stage explicit paths** — never `git add -A`/`git add .` (tools drop stray files).
 - One coherent change per PR. Ship tests at the level you touched.

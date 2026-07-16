@@ -29,6 +29,9 @@ jobs:
 
   secrets:
     runs-on: ubuntu-latest
+    # gitleaks-action needs GITHUB_TOKEN; on external fork PRs the token is read-only/absent, so only
+    # run it for same-repo PRs and pushes (scan-generic.sh above still covers fork PRs).
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: read
       pull-requests: read
