@@ -20,13 +20,14 @@ scan_one() {
   local f="$1" line
   [ -f "$f" ] || return 0
   # Extract each email OCCURRENCE (-o), then filter per-address — so a real address on the same line as
-  # an allowed placeholder is still caught (line-level filtering would drop the whole line).
+  # an allowed placeholder is still caught (line-level filtering would drop the whole line). `-I` skips
+  # binary files; `-- "$f"` handles filenames that start with a dash.
   while IFS= read -r line; do
     echo "  ✖ $f:email: $line" >&2; hits=$((hits + 1))
-  done < <(grep -oE "$EMAIL_RE" "$f" 2>/dev/null | grep -vE "$EMAIL_ALLOW")
+  done < <(grep -oEI "$EMAIL_RE" -- "$f" 2>/dev/null | grep -vE "$EMAIL_ALLOW")
   while IFS= read -r line; do
     echo "  ✖ $f:home-path: $line" >&2; hits=$((hits + 1))
-  done < <(grep -nE "$HOME_RE" "$f" 2>/dev/null)
+  done < <(grep -nEI "$HOME_RE" -- "$f" 2>/dev/null)
 }
 
 if [ "$#" -gt 0 ]; then

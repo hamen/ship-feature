@@ -92,8 +92,9 @@ else
       echo "  ! failed to update ship-feature block in $AGENTS (awk)" >&2; fails=$((fails + 1)); rm -f "$tmp"
     fi
   else
-    [ -f "$AGENTS" ] && backup "$AGENTS"
-    if { [ -f "$AGENTS" ] && cat "$AGENTS"; printf '\n%s\n' "$BLOCK"; } > "$tmp" && [ -s "$tmp" ]; then
+    if [ -f "$AGENTS" ] && ! backup "$AGENTS"; then
+      echo "  ! refusing to edit $AGENTS (backup failed)" >&2; fails=$((fails + 1)); rm -f "$tmp"
+    elif { [ -f "$AGENTS" ] && cat "$AGENTS"; printf '\n%s\n' "$BLOCK"; } > "$tmp" && [ -s "$tmp" ]; then
       mv "$tmp" "$AGENTS"; say "appended ship-feature block to $AGENTS"
     else
       echo "  ! failed to write $AGENTS" >&2; fails=$((fails + 1)); rm -f "$tmp"
@@ -102,7 +103,9 @@ else
 fi
 
 # 6) config seed (never clobber a real config).
-if [ ! -f "$CFG/config" ]; then cp "$REPO/config.example" "$CFG/config"; say "seeded  $CFG/config (from config.example)"; else echo "  = kept existing $CFG/config"; fi
+if [ ! -f "$CFG/config" ]; then
+  if cp "$REPO/config.example" "$CFG/config"; then say "seeded  $CFG/config (from config.example)"; else echo "  ! failed to seed $CFG/config" >&2; fails=$((fails + 1)); fi
+else echo "  = kept existing $CFG/config"; fi
 
 # 7) PATH check + smoke test.
 case ":$PATH:" in *":$BIN:"*) : ;; *) echo "  ! $BIN is not on your PATH — add it so 'ship-feature' is found." >&2 ;; esac

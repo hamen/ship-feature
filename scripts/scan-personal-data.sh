@@ -10,6 +10,11 @@
 # home paths, internal hostnames). It is READ line by line — NEVER shell-`source`d — so its contents can
 # never be executed.
 #
+# Scope/perf: this is a thorough pre-publication scan meant to run occasionally on a repo you are about
+# to publish. The history-content pass greps every commit tree, so cost scales with history size; on a
+# very large history prefer a dedicated tool (e.g. gitleaks/trufflehog) for the bulk pass and use this
+# for the deny-list terms.
+#
 # Usage:
 #   scripts/scan-personal-data.sh [path/to/denylist.txt]
 #   SHIP_FEATURE_DENYLIST=... scripts/scan-personal-data.sh

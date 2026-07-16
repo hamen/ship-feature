@@ -30,6 +30,7 @@ load_config() {
       SHIP_FEATURE_WORKTREE_ROOT) [ -n "${SHIP_FEATURE_WORKTREE_ROOT:-}" ] || SHIP_FEATURE_WORKTREE_ROOT="$val" ;;
       SHIP_FEATURE_EXCLUDE_MARKER) [ -n "${SHIP_FEATURE_EXCLUDE_MARKER:-}" ] || SHIP_FEATURE_EXCLUDE_MARKER="$val" ;;
       SHIP_FEATURE_DENYLIST) [ -n "${SHIP_FEATURE_DENYLIST:-}" ] || SHIP_FEATURE_DENYLIST="$val" ;;
+      SHIP_FEATURE_REVIEWERS) [ -n "${SHIP_FEATURE_REVIEWERS:-}" ] || SHIP_FEATURE_REVIEWERS="$val" ;;
     esac
   done < "$cfg"
 }
@@ -56,6 +57,7 @@ cmd_preflight() {
   ok "default branch: $def"
 
   cur=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || die "cannot read current branch."
+  [ "$cur" != "HEAD" ] || die "detached HEAD — check out a named feature branch before implementing."
   [ "$cur" != "$def" ] || die "you are on the default branch '$def' — create a feature branch/worktree first."
   ok "on feature branch: $cur"
 
@@ -64,8 +66,8 @@ cmd_preflight() {
   # directory literally named "worktrees" would trip.)
   git_dir=$(git rev-parse --absolute-git-dir 2>/dev/null)
   common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
-  # `CDPATH=` disables CDPATH lookups, which could otherwise make `cd` echo a path and corrupt the value.
-  case "$common_dir" in /*) : ;; *) common_dir=$(CDPATH= cd "$common_dir" 2>/dev/null && pwd) ;; esac
+  # `CDPATH=` disables CDPATH lookups and the `./` prefix stops a value like `-` being read as an option.
+  case "$common_dir" in /*) : ;; *) common_dir=$(CDPATH= cd "./$common_dir" 2>/dev/null && pwd) ;; esac
   if [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ]; then
     ok "in a linked worktree"
   else
@@ -109,8 +111,16 @@ cmd_preflight() {
 
 cmd_relay() {
   command -v pr-review-relay >/dev/null 2>&1 || die "pr-review-relay not found on PATH (it is a dependency: https://github.com/hamen/pr-review-relay)."
-  # Transparent pass-through: forward every argument, preserve stdout and the exact exit code.
-  pr-review-relay "$@"
+  load_config
+  # If the caller omitted --reviewers and a quorum is configured, inject it (still fully overridable by
+  # passing --reviewers yourself). stdout and the exact exit code are always preserved.
+  local a has_reviewers=0
+  for a in "$@"; do case "$a" in --reviewers) has_reviewers=1;; esac; done
+  if [ "$has_reviewers" = 0 ] && [ -n "${SHIP_FEATURE_REVIEWERS:-}" ]; then
+    pr-review-relay "$@" --reviewers "$SHIP_FEATURE_REVIEWERS"
+  else
+    pr-review-relay "$@"
+  fi
   local rc=$?
   # Workflow-policy reminder only (on stderr, so it never pollutes the forwarded stdout).
   case "$rc" in

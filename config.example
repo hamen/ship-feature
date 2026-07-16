@@ -4,7 +4,8 @@
 # `KEY=value` lines and honors the SHIP_FEATURE_* keys below — it is NEVER shell-`source`d, so nothing
 # here is executed. Environment variables of the same name take precedence over this file.
 #
-# The values below are the built-in defaults; change them to fit your setup (this file is gitignored).
+# The values below are the built-in defaults. This example file is TRACKED and public; put your real
+# values only in the copy at ~/.config/ship-feature/config, which is gitignored.
 
 # Where the workflow creates git worktrees (relative to the repo root). Default matches the CLI.
 SHIP_FEATURE_WORKTREE_ROOT=.claude/worktrees
