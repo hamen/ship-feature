@@ -12,8 +12,8 @@ set -uo pipefail
 EMAIL_RE='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z][A-Za-z]+'
 EMAIL_ALLOW='@example\.(com|org|net|test)\b|@example\b|noreply@|@localhost'
 # Absolute home paths (a leaked developer machine path). No trailing slash required, so a bare
-# "/home/user" at end-of-line is still caught.
-HOME_RE='(/home/|/Users/)[A-Za-z0-9._-]+'
+# "/home/user" at end-of-line is still caught. Covers /home, /Users, and /root.
+HOME_RE='(/home/|/Users/|/root/)[A-Za-z0-9._-]+'
 
 hits=0
 scan_one() {
@@ -32,11 +32,15 @@ scan_one() {
 if [ "$#" -gt 0 ]; then
   for f in "$@"; do scan_one "$f"; done
 else
-  # NUL-delimited so paths with spaces/newlines are handled correctly.
+  # NUL-delimited so paths with spaces/newlines are handled correctly. Fail CLOSED if the tracked-file
+  # list can't be enumerated (else an empty set would produce a bogus "clean").
+  tmpf=$(mktemp) || { echo "mktemp failed" >&2; exit 2; }
+  if ! git ls-files -z > "$tmpf" 2>/dev/null; then rm -f "$tmpf"; echo "✖ git ls-files failed — cannot enumerate tracked files." >&2; exit 1; fi
   while IFS= read -r -d '' f; do
     case "$f" in test/fixtures/*|scripts/scan-generic.sh) continue;; esac
     scan_one "$f"
-  done < <(git ls-files -z 2>/dev/null)
+  done < "$tmpf"
+  rm -f "$tmpf"
 fi
 
 if [ "$hits" -gt 0 ]; then

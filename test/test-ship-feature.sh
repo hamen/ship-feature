@@ -67,6 +67,9 @@ printf 'SECRET-SLUG-XYZ\n' > "$WORK/deny.txt"
 # planted term in a COMMIT MESSAGE (not file contents) is also caught
 SREPO2="$WORK/scanrepo2"; git init -q "$SREPO2"
 ( cd "$SREPO2" && git commit -q --allow-empty -m "mentions SECRET-SLUG-XYZ" && bash "$SCAN" "$WORK/deny.txt" >/dev/null 2>&1 ); check "scan catches a planted term in a commit message" $? 1
+# planted term in a FILENAME is also caught
+SREPO3="$WORK/scanrepo3"; git init -q "$SREPO3"
+( cd "$SREPO3" && : > "SECRET-SLUG-XYZ-name.txt" && git add . && git commit -q -m "add file" && bash "$SCAN" "$WORK/deny.txt" >/dev/null 2>&1 ); check "scan catches a deny-listed term in a filename" $? 1
 
 # --- install.sh under a throwaway HOME (exercises symlinks + AGENTS.md awk) ---
 FAKEHOME="$WORK/home"; mkdir -p "$FAKEHOME"

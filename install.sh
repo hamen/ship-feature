@@ -40,8 +40,15 @@ mkdir -p "$CFG" "$BIN" "$AGENTS_SKILLS/ship-feature" "$HOME/.claude/skills" "$HO
 
 # 1) WORKFLOW.md — the path every adapter references.
 if [ "$COPY_WORKFLOW" = 1 ]; then
-  backup "$CFG/WORKFLOW.md"
-  if cp "$REPO/WORKFLOW.md" "$CFG/WORKFLOW.md"; then say "copied  $CFG/WORKFLOW.md"; else echo "  ! failed to copy WORKFLOW.md" >&2; fails=$((fails + 1)); fi
+  wf_ok=1
+  # Back up a real file first (abort the copy if the backup fails — never overwrite un-backed-up data).
+  if [ -e "$CFG/WORKFLOW.md" ] && [ ! -L "$CFG/WORKFLOW.md" ]; then
+    backup "$CFG/WORKFLOW.md" || { echo "  ! refusing to replace $CFG/WORKFLOW.md (backup failed)" >&2; fails=$((fails + 1)); wf_ok=0; }
+  fi
+  if [ "$wf_ok" = 1 ]; then
+    rm -f "$CFG/WORKFLOW.md"   # drop an existing symlink so `cp` writes a real file, not THROUGH the link
+    if cp "$REPO/WORKFLOW.md" "$CFG/WORKFLOW.md"; then say "copied  $CFG/WORKFLOW.md"; else echo "  ! failed to copy WORKFLOW.md" >&2; fails=$((fails + 1)); fi
+  fi
 else
   link "$REPO/WORKFLOW.md" "$CFG/WORKFLOW.md"
 fi
@@ -68,11 +75,13 @@ else
     echo "  ! $AGENTS has the ship-feature start marker but no end marker — fix it by hand (refusing to edit)." >&2
     fails=$((fails + 1)); rm -f "$tmp"
   elif [ -f "$AGENTS" ] && grep -qF '# >>> ship-feature >>>' "$AGENTS"; then
-    backup "$AGENTS"
+    # Abort the edit if the backup fails — never overwrite an un-backed-up AGENTS.md.
+    if ! backup "$AGENTS"; then
+      echo "  ! refusing to edit $AGENTS (backup failed)" >&2; fails=$((fails + 1)); rm -f "$tmp"
     # Pass the multiline block via the environment, not `awk -v` (BSD/macOS awk mangles/rejects a
     # multiline -v value — which silently produced an EMPTY AGENTS.md). Verify awk succeeded and the
     # result is non-empty BEFORE replacing the file.
-    if SF_BLOCK="$BLOCK" awk '
+    elif SF_BLOCK="$BLOCK" awk '
          /^# >>> ship-feature >>>/ {print ENVIRON["SF_BLOCK"]; skip=1; next}
          /^# <<< ship-feature <<</ {skip=0; next}
          skip {next}

@@ -32,8 +32,11 @@ TMPD=$(mktemp -d) || { echo "mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$TMPD"' EXIT
 # Fail CLOSED on git errors: a corrupt repo that makes these commands error must NOT be reported clean.
 gitfail() { echo "✖ git operation failed ($1) — cannot scan reliably; failing closed." >&2; exit 2; }
+# Integrity: walking all objects errors out on a missing/corrupt blob, so a repo that would make the
+# per-term `git grep` silently error (and look "clean") fails closed here instead.
+git rev-list --all --objects >/dev/null 2>&1 || gitfail "object enumeration (repo may be corrupt / missing blobs)"
 git rev-list --all > "$TMPD/commits" 2>/dev/null || gitfail "rev-list"
-git log --all --format='%H%n%an%n%ae%n%cn%n%ce%n%s%n%b' > "$TMPD/meta" 2>/dev/null || gitfail "log meta"
+git log --all --format='%H%n%an%n%ae%n%cn%n%ce%n%s%n%b%n%N' > "$TMPD/meta" 2>/dev/null || gitfail "log meta"
 git log --all --name-only --format='' 2>/dev/null | sort -u > "$TMPD/names" || gitfail "log names"
 git for-each-ref --format='%(refname)' > "$TMPD/refs" 2>/dev/null || gitfail "for-each-ref"
 

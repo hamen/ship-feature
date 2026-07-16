@@ -48,6 +48,7 @@ cmd_preflight() {
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git working tree."
   load_config
   local worktree_root="${SHIP_FEATURE_WORKTREE_ROOT:-.claude/worktrees}"
+  worktree_root="${worktree_root%/}"   # tolerate a trailing slash (else the "/root/" match breaks)
   local exclude_marker="${SHIP_FEATURE_EXCLUDE_MARKER:-.claude/}"
 
   local def cur common_dir git_dir top
@@ -63,7 +64,8 @@ cmd_preflight() {
   # directory literally named "worktrees" would trip.)
   git_dir=$(git rev-parse --absolute-git-dir 2>/dev/null)
   common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
-  case "$common_dir" in /*) : ;; *) common_dir=$(cd "$common_dir" 2>/dev/null && pwd) ;; esac
+  # `CDPATH=` disables CDPATH lookups, which could otherwise make `cd` echo a path and corrupt the value.
+  case "$common_dir" in /*) : ;; *) common_dir=$(CDPATH= cd "$common_dir" 2>/dev/null && pwd) ;; esac
   if [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ]; then
     ok "in a linked worktree"
   else
@@ -85,6 +87,9 @@ cmd_preflight() {
   else
     die "$exclude_marker is not ignored — add it to $common_dir/info/exclude (or .gitignore)."
   fi
+
+  # The default-branch tracking ref must be fetched to compare against it.
+  git rev-parse --verify --quiet "origin/$def" >/dev/null 2>&1 || die "cannot resolve origin/$def — run 'git fetch' first."
 
   # Ancestry: the feature branch must actually descend from the current default branch.
   if git merge-base --is-ancestor "origin/$def" HEAD 2>/dev/null; then

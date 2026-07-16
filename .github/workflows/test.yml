@@ -21,6 +21,7 @@ jobs:
           fetch-depth: 0
       - name: syntax check
         run: |
+          shopt -s nullglob   # so an empty glob doesn't become a literal '*.sh' and fail the job
           for f in bin/ship-feature install.sh scripts/*.sh test/*.sh; do bash -n "$f"; done
       - name: tests
         run: bash test/test-ship-feature.sh
@@ -29,9 +30,8 @@ jobs:
 
   secrets:
     runs-on: ubuntu-latest
-    # gitleaks-action needs GITHUB_TOKEN; on external fork PRs the token is read-only/absent, so only
-    # run it for same-repo PRs and pushes (scan-generic.sh above still covers fork PRs).
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # Runs on fork PRs too: the read-only GITHUB_TOKEN is enough for gitleaks-action to scan and fail the
+    # job on findings (it just can't post a PR comment) — and forks are exactly where scanning matters.
     permissions:
       contents: read
       pull-requests: read

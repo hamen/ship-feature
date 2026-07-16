@@ -56,9 +56,8 @@ Hand the PR to the **other** agents for review, and run the full test suite / CI
 head.
 
 ```
-# Name the reviewers explicitly (the quorum) so a missing agent FAILS the round instead of silently
-# thinning the panel — a 1/4 pass must not read as consensus.
-ship-feature relay --author <self> --reviewers claude,codex,cursor,antigravity
+# Name the reviewers YOU actually run — adjust the list to the agents you have installed.
+ship-feature relay --author <self> --reviewers <your reviewer set>   # e.g. claude,codex,cursor
 ```
 
 **Read the exit code** (`ship-feature relay` preserves it):
@@ -67,8 +66,9 @@ ship-feature relay --author <self> --reviewers claude,codex,cursor,antigravity
 - `3` — the round is not trustworthy (a reviewer failed / SHA unreadable / HEAD moved). Re-run.
 - `4` — the round cap was hit. Escalate to the human.
 
-**Quorum:** run the relay with an **explicit reviewer list** so a missing agent is a hard failure rather
-than a silently thinned panel — a `1/4` pass must not read as consensus.
+**Quorum:** always pass an **explicit reviewer list** (the agents you have) so a missing one is a hard
+failure rather than a silently thinned panel — a partial pass must not read as consensus. Set it once in
+`~/.config/ship-feature/config` via `SHIP_FEATURE_REVIEWERS` for convenience.
 
 **Loop-termination rule:** the review loop **continues as long as any Blocker or Should-fix exists** —
 finding one means keep iterating (fix, push, re-run). It ends **only** when either:
