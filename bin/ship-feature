@@ -156,7 +156,8 @@ cmd_relay() {
 # is posted anywhere; nothing is written.
 #
 # Supported reviewers are ONLY those that can be run genuinely read-only over the plan
-# text: claude (--permission-mode plan), codex (--sandbox read-only), cursor (--mode=ask,
+# text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
+# load either), codex (--sandbox read-only), cursor (--mode=ask,
 # Q&A), qwen (--approval-mode plan, its read-only mode that denies edit/write/shell, plus
 # --safe-mode to also block checkout config). agy and opencode are RELAY-ONLY here — agy
 # has no read-only mode (its relay flag disables ALL permissions) and opencode needs the
@@ -169,14 +170,14 @@ plan_relay_only() { case "$1" in opencode|antigravity|agy) return 0;; *) return 
 
 cmd_plan_review() {
   load_config
-  local reviewers="" file="" parallel=0 have_file=0
+  local reviewers="" file="" parallel=0 have_file=0 have_reviewers=0
   while [ $# -gt 0 ]; do
     case "$1" in
       # Guard $2 so a trailing `--reviewers` (or one followed by a flag) is a clean usage
       # error, not a `set -u` unbound-variable crash.
       --reviewers)   [ $# -ge 2 ] || die "--reviewers needs a list (e.g. --reviewers codex,qwen)."
                      case "$2" in -*) die "--reviewers needs a list, got the flag '$2'.";; esac
-                     reviewers="$2"; shift 2;;
+                     reviewers="$2"; have_reviewers=1; shift 2;;
       --reviewers=*) die "pass reviewers as two tokens: --reviewers <list> (the --reviewers=... form isn't supported)." ;;
       --parallel)    parallel=1; shift;;
       -h|--help)     echo "usage: ship-feature plan-review [<plan-file>] [--reviewers a,b,c] [--parallel]"; return 0;;
@@ -209,8 +210,14 @@ cmd_plan_review() {
   # Panel: --reviewers > SHIP_FEATURE_REVIEWERS > refuse. The resolved panel is your
   # QUORUM: every named+supported reviewer is required (a missing CLI fails the round),
   # so a review never silently passes on a thinned panel. agy/opencode are the exception.
-  [ -z "$reviewers" ] && reviewers="${SHIP_FEATURE_REVIEWERS:-}"
-  [ -n "$reviewers" ] || die "no reviewers — pass --reviewers <list> or set SHIP_FEATURE_REVIEWERS (e.g. codex,qwen)."
+  # An explicit but empty `--reviewers ""` is a usage error, not a silent fall-through to
+  # the env panel (which would surprise a user who meant to name a list).
+  if [ "$have_reviewers" = 1 ]; then
+    [ -n "$reviewers" ] || die "--reviewers was empty — name at least one (e.g. --reviewers codex,qwen)."
+  else
+    reviewers="${SHIP_FEATURE_REVIEWERS:-}"
+    [ -n "$reviewers" ] || die "no reviewers — pass --reviewers <list> or set SHIP_FEATURE_REVIEWERS (e.g. codex,qwen)."
+  fi
 
   # Portable timeout: GNU `timeout`, else Homebrew `gtimeout`, else run WITHOUT a limit
   # (stock macOS ships neither) — a missing timeout must never break the reviewer.
@@ -236,13 +243,20 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # (same technique as pr-review-relay). The trap embeds the path by value — no live
   # variable to go unbound — and kills any parallel reviewer children so an interrupt
   # doesn't leave agents running and burning credits.
-  # umask 077 so the buffered plan/review temp files created below are 0600 — defence in
-  # depth on a shared machine, on top of the 0700 dir mktemp gives us. Not restored: this
-  # is the CLI's terminal command, the process exits right after.
+  # umask 077 so the buffered review/diagnostic/status temp files created below are 0600 —
+  # defence in depth on a shared machine, on top of the 0700 dir mktemp gives us. Not
+  # restored: this is the CLI's terminal command, the process exits right after.
   umask 077
   local STATUS_DIR; STATUS_DIR="$(mktemp -d)" || die "cannot create temp dir"
-  trap "rm -rf '$STATUS_DIR'" EXIT
-  trap 'p=$(jobs -p 2>/dev/null); [ -n "$p" ] && kill $p 2>/dev/null; exit 130' INT TERM
+  # Single-quoted trap body, double-quoted var: evaluated safely at exit even if a path
+  # ever held a quote.
+  trap 'rm -rf "$STATUS_DIR"' EXIT
+  # On interrupt, tear down the parallel reviewers so they don't keep burning credits.
+  # Kill the backgrounded jobs AND their descendants (the reviewer runs under `timeout`
+  # inside a command-substitution, so it's a grandchild): `pkill -P "$$"` reaps the direct
+  # children, whose own children get SIGTERM as those exit. Best-effort — a stray grandchild
+  # is still bounded by the per-reviewer timeout. `trap -` first, so a second ^C exits now.
+  trap 'trap - INT TERM; p=$(jobs -p 2>/dev/null); [ -n "$p" ] && kill $p 2>/dev/null; pkill -P "$$" 2>/dev/null; exit 130' INT TERM
   skey() { printf 'k_%s' "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
 
   # Run a reviewer command under the timeout when one is available, else directly.
@@ -258,7 +272,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
     Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
     case "$name" in
-      claude) out=$(printf '%s' "$plan" | run_reviewer claude -p --permission-mode plan "$PROMPT" 2>"$errf"); rc=$?;;
+      claude) out=$(printf '%s' "$plan" | run_reviewer claude -p --permission-mode plan --safe-mode "$PROMPT" 2>"$errf"); rc=$?;;
       codex)  out=$(printf '%s' "$plan" | run_reviewer codex exec --sandbox read-only "$PROMPT" 2>"$errf"); rc=$?;;
       cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask 2>"$errf"); rc=$?;;
       qwen)   out=$(printf '%s' "$plan" | run_reviewer qwen --safe-mode --approval-mode plan -p "$PROMPT" 2>"$errf"); rc=$?;;

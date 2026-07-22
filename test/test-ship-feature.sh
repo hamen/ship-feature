@@ -155,7 +155,11 @@ printf '%s' "$out" | grep -q "REVIEW-codex" && printf '%s' "$out" | grep -q "REV
 # read-only argv contract: EVERY supported reviewer must carry its read-only flag, so the
 # "nothing is written" guarantee is real. A dropped flag here is a security regression.
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,cursor,qwen 2>/dev/null)
-printf '%s' "$out" | grep -q -- "--permission-mode plan"       && { echo "  ok   [-] claude runs read-only (--permission-mode plan)"; PASS=$((PASS+1)); } || { echo "  FAIL claude not read-only in plan-review"; FAIL=$((FAIL+1)); }
+# claude's own line must carry BOTH --permission-mode plan AND --safe-mode (safe-mode
+# stops checkout hooks/plugins/MCP from loading). Grep claude's line specifically so
+# qwen's --safe-mode can't satisfy this by accident.
+cl=$(printf '%s' "$out" | grep 'REVIEW-claude')
+printf '%s' "$cl" | grep -q -- "--permission-mode plan" && printf '%s' "$cl" | grep -q -- "--safe-mode" && { echo "  ok   [-] claude runs read-only (--permission-mode plan --safe-mode)"; PASS=$((PASS+1)); } || { echo "  FAIL claude not fully read-only (plan + safe-mode) in plan-review"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q -- "--sandbox read-only"          && { echo "  ok   [-] codex runs read-only (--sandbox read-only)"; PASS=$((PASS+1)); } || { echo "  FAIL codex not read-only in plan-review"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q -- "--mode=ask"                   && { echo "  ok   [-] cursor runs in ask (Q&A) mode"; PASS=$((PASS+1)); } || { echo "  FAIL cursor not in ask mode"; FAIL=$((FAIL+1)); }
 # qwen must use --approval-mode PLAN (read-only: denies edit/write/shell), never yolo
@@ -232,6 +236,8 @@ printf '%s' "$out" | grep -q "REVIEW-codex" && { echo "  ok   [-] plan-review re
 
 # a trailing --reviewers with no value → clean usage error, NOT a set -u crash
 ( printf 'p\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers >/dev/null 2>&1 ); check "plan-review: bare --reviewers → usage error (1)" $? 1
+# an explicitly EMPTY --reviewers "" is a usage error, not a silent fall-through to the env panel
+( printf 'p\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=codex bash "$CLI" plan-review --reviewers '' >/dev/null 2>&1 ); check "plan-review: --reviewers '' → usage error, no env fallback (1)" $? 1
 # --reviewers immediately followed by a flag is also a usage error (not a reviewer named --parallel)
 ( printf 'p\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers --parallel >/dev/null 2>&1 ); check "plan-review: --reviewers <flag> → usage error (1)" $? 1
 
