@@ -51,6 +51,7 @@ load_config() {
       SHIP_FEATURE_EXCLUDE_MARKER) [ -n "${SHIP_FEATURE_EXCLUDE_MARKER+x}" ] || SHIP_FEATURE_EXCLUDE_MARKER="$val" ;;
       SHIP_FEATURE_DENYLIST) [ -n "${SHIP_FEATURE_DENYLIST+x}" ] || SHIP_FEATURE_DENYLIST="$val" ;;
       SHIP_FEATURE_REVIEWERS) [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || SHIP_FEATURE_REVIEWERS="$val" ;;
+      SHIP_FEATURE_PLAN_REVIEWERS) [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || SHIP_FEATURE_PLAN_REVIEWERS="$val" ;;
     esac
   done < "$cfg"
 }
@@ -228,8 +229,10 @@ cmd_plan_review() {
   if [ "$have_reviewers" = 1 ]; then
     [ -n "$reviewers" ] || die "--reviewers was empty — name at least one (e.g. --reviewers codex,qwen)."
   else
-    reviewers="${SHIP_FEATURE_REVIEWERS:-}"
-    [ -n "$reviewers" ] || die "no reviewers — pass --reviewers <list> or set SHIP_FEATURE_REVIEWERS (e.g. codex,qwen)."
+    # Plan review can want a different (usually smaller) panel than the PR cross-review:
+    # SHIP_FEATURE_PLAN_REVIEWERS is preferred, falling back to the shared quorum.
+    reviewers="${SHIP_FEATURE_PLAN_REVIEWERS:-${SHIP_FEATURE_REVIEWERS:-}}"
+    [ -n "$reviewers" ] || die "no reviewers — pass --reviewers <list> or set SHIP_FEATURE_PLAN_REVIEWERS / SHIP_FEATURE_REVIEWERS (e.g. claude,codex)."
   fi
 
   # Portable timeout: GNU `timeout`, else Homebrew `gtimeout`, else run WITHOUT a limit

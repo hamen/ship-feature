@@ -174,6 +174,14 @@ printf '%s' "$out" | grep -q "REVIEW-claude" && printf '%s' "$out" | grep -q "RE
   && { echo "  ok   [-] plan-review ran the configured default panel"; PASS=$((PASS+1)); } \
   || { echo "  FAIL plan-review did not run the configured panel"; FAIL=$((FAIL+1)); }
 
+# SHIP_FEATURE_PLAN_REVIEWERS overrides the shared quorum for plan-review (a smaller panel
+# than the PR cross-review). When both are set, the plan-specific one wins.
+out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,codex,cursor,qwen SHIP_FEATURE_PLAN_REVIEWERS=claude,codex bash "$CLI" plan-review 2>/dev/null); rc=$?
+check "plan-review prefers SHIP_FEATURE_PLAN_REVIEWERS" "$rc" 0
+if printf '%s' "$out" | grep -q "REVIEW-claude" && printf '%s' "$out" | grep -q "REVIEW-codex" && ! printf '%s' "$out" | grep -q "REVIEW-cursor"; then
+  echo "  ok   [-] the plan-specific panel wins over the quorum"; PASS=$((PASS+1))
+else echo "  FAIL plan-review did not prefer SHIP_FEATURE_PLAN_REVIEWERS"; FAIL=$((FAIL+1)); fi
+
 # a reviewer that returns an EMPTY review → not clean (exit 3)
 printf '#!/usr/bin/env bash\nexit 0\n' > "$PBIN/codex"; chmod +x "$PBIN/codex"
 ( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,qwen >/dev/null 2>&1 ); check "plan-review empty review → not clean (3)" $? 3

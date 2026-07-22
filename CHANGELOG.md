@@ -10,8 +10,10 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 - **`ship-feature plan-review`** — step 2 as a first-class command. It fans an implementation plan (a file
   argument, stdin, or `./plan.md`) out to a panel of agents for a **read-only** review and prints each
-  review to the terminal; nothing is written or posted. The panel defaults to `SHIP_FEATURE_REVIEWERS`
-  and is overridable with `--reviewers`; `--parallel` runs them concurrently. Fail-closed exit codes
+  review to the terminal; nothing is written or posted. The panel defaults to `SHIP_FEATURE_PLAN_REVIEWERS`
+  (a plan gate often wants a smaller panel than the PR cross-review), falling back to
+  `SHIP_FEATURE_REVIEWERS`, and is overridable with `--reviewers`; `--parallel` runs them concurrently.
+  Fail-closed exit codes
   mirror the relay: `0` every reviewer responded, `3` a reviewer failed/timed out/returned empty (a
   supported reviewer from the panel whose CLI is missing also fails — the panel is the quorum), `1` usage
   error.
