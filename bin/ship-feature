@@ -21,6 +21,19 @@ die()  { echo "✖ $*" >&2; exit 1; }
 warn() { echo "  ! $*" >&2; }
 ok()   { echo "  ✓ $*"; }
 
+# Kill a process AND its whole descendant tree, children first. Walking by PPID
+# (`pgrep -P`) rather than by process group is deliberate: `timeout` puts its child in
+# a NEW process group, so a group-kill of the backgrounded job would miss the reviewer
+# two levels down (subshell → $() → timeout → agent). Children-before-parent so a killed
+# parent can't reparent its children to init before we've found them. pgrep is present on
+# Linux and macOS. Best-effort (a process forking mid-sweep can still slip), which is why
+# each reviewer also runs under a `timeout`.
+kill_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$child"; done
+  kill -TERM "$pid" 2>/dev/null || true
+}
+
 # Load ~/.config/ship-feature/config as plain KEY=value lines — NEVER shell-`source`d, and only known
 # SHIP_FEATURE_* keys are honored. Environment variables win over the file.
 load_config() {
@@ -240,9 +253,9 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   echo "▶ Plan review — reviewers: $reviewers${src:+ — plan: $src}$([ "$parallel" = 1 ] && printf ' — parallel')" >&2
 
   # Per-reviewer state lives in files so it survives the subshells used under --parallel
-  # (same technique as pr-review-relay). The trap embeds the path by value — no live
-  # variable to go unbound — and kills any parallel reviewer children so an interrupt
-  # doesn't leave agents running and burning credits.
+  # (same technique as pr-review-relay). The EXIT trap removes the dir; the INT/TERM trap
+  # (below) tears down the reviewer process trees so an interrupt doesn't leave agents
+  # running and burning credits.
   # umask 077 so the buffered review/diagnostic/status temp files created below are 0600 —
   # defence in depth on a shared machine, on top of the 0700 dir mktemp gives us. Not
   # restored: this is the CLI's terminal command, the process exits right after.
@@ -252,11 +265,10 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # ever held a quote.
   trap 'rm -rf "$STATUS_DIR"' EXIT
   # On interrupt, tear down the parallel reviewers so they don't keep burning credits.
-  # Kill the backgrounded jobs AND their descendants (the reviewer runs under `timeout`
-  # inside a command-substitution, so it's a grandchild): `pkill -P "$$"` reaps the direct
-  # children, whose own children get SIGTERM as those exit. Best-effort — a stray grandchild
-  # is still bounded by the per-reviewer timeout. `trap -` first, so a second ^C exits now.
-  trap 'trap - INT TERM; p=$(jobs -p 2>/dev/null); [ -n "$p" ] && kill $p 2>/dev/null; pkill -P "$$" 2>/dev/null; exit 130' INT TERM
+  # kill_tree walks each backgrounded job's whole descendant tree (subshell → $() →
+  # timeout → agent), which a group-kill can't reach because `timeout` re-groups its child.
+  # `trap -` first, so a second ^C exits immediately.
+  trap 'trap - INT TERM; for j in $(jobs -p 2>/dev/null); do kill_tree "$j"; done; exit 130' INT TERM
   skey() { printf 'k_%s' "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
 
   # Run a reviewer command under the timeout when one is available, else directly.

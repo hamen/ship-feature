@@ -259,6 +259,35 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$PBIN/codex"; chmod +x "$PBIN/codex"
 ( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,qwen --parallel >/dev/null 2>&1 ); check "plan-review --parallel stays fail-closed (3)" $? 3
 make_reviewer codex 0 codex   # restore
 
+# Interrupt teardown: ^C during --parallel must kill the reviewer's deep descendants
+# (subshell -> $() -> timeout -> agent), not leak them. A slow stub holds a `sleep`
+# grandchild; we record every descendant PID, SIGINT the CLI, then assert they're gone.
+# pgrep is required for kill_tree; skip cleanly where it's absent rather than false-fail.
+if command -v pgrep >/dev/null 2>&1; then
+  _descendants() { local p="$1" c; for c in $(pgrep -P "$p" 2>/dev/null); do echo "$c"; _descendants "$c"; done; }
+  printf 'a plan\n' > "$WORK/intplan.md"
+  printf '#!/usr/bin/env bash\nsleep 30\n' > "$PBIN/codex"; chmod +x "$PBIN/codex"   # a "slow agent"
+  PATH="$PBIN:$PATH" bash "$CLI" plan-review "$WORK/intplan.md" --reviewers codex --parallel >/dev/null 2>&1 &
+  cli=$!
+  # Wait (up to ~4s) for the sleep grandchild to materialize under the CLI.
+  sleeppids=""
+  for _i in $(seq 1 20); do
+    for k in $(_descendants "$cli"); do case "$(ps -o comm= -p "$k" 2>/dev/null)" in *sleep) sleeppids="$sleeppids $k";; esac; done
+    [ -n "$sleeppids" ] && break; sleep 0.2
+  done
+  kill -INT "$cli" 2>/dev/null; wait "$cli" 2>/dev/null; sleep 0.5
+  if [ -z "$sleeppids" ]; then
+    echo "  FAIL interrupt test: reviewer subtree never materialized (inconclusive)"; FAIL=$((FAIL+1))
+  else
+    alive=0; for p in $sleeppids; do kill -0 "$p" 2>/dev/null && alive=1; done
+    if [ "$alive" = 0 ]; then echo "  ok   [-] ^C during --parallel kills the reviewer's descendants"; PASS=$((PASS+1))
+    else echo "  FAIL interrupt left a reviewer descendant alive"; FAIL=$((FAIL+1)); for p in $sleeppids; do kill -9 "$p" 2>/dev/null; done; fi
+  fi
+  make_reviewer codex 0 codex   # restore
+else
+  echo "  ok   [-] interrupt teardown test skipped (no pgrep)"; PASS=$((PASS+1))
+fi
+
 echo "-------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]

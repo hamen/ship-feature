@@ -25,9 +25,13 @@ All notable changes to **ship-feature** are documented here. This project follow
     `opencode` needs the file-attach path — so the "nothing is written" guarantee holds for everything
     that runs.
   - Portable `timeout` (falls back to `gtimeout`, then runs without a limit on stock macOS); the reviewer
-    list is not glob-expanded; `--reviewers` with no value / a following flag is a clean usage error;
-    a file after `--` is honored; an empty stdin pipe falls back to `./plan.md`; a zero timeout is
-    rejected. Timeout via `SHIP_FEATURE_PLAN_TIMEOUT` (default 300s).
+    list is not glob-expanded; `--reviewers` with no value / an empty value / a following flag is a clean
+    usage error; a file after `--` or `-` (stdin) is honored; an empty stdin pipe falls back to
+    `./plan.md`; a zero timeout is rejected. Timeout via `SHIP_FEATURE_PLAN_TIMEOUT` (default 300s).
+  - `^C` during `--parallel` tears the reviewers down: an interrupt kills each backgrounded reviewer's
+    whole descendant tree (subshell → `$()` → `timeout` → agent) by walking PPIDs — a plain group-kill
+    would miss the agent because `timeout` re-groups its child — so it stops burning credits instead of
+    orphaning the agents. Covered by a regression test.
 
   This makes "review the plan with codex and qwen" a single command.
 
