@@ -27,13 +27,22 @@ Write a short, concrete plan: the problem, the approach, the files you expect to
 verified. Keep it in a plan file (not the repo).
 
 ### 2. Plan review
-Have a second agent review the plan before writing code. A convenient default:
+Have a second agent — or a panel — review the plan before writing code. Use the `plan-review` command,
+which fans the plan out to your reviewer panel read-only and prints each review:
 
 ```
-cat plan.md | codex exec --sandbox read-only
+ship-feature plan-review plan.md --reviewers codex,qwen     # or pipe it: cat plan.md | ship-feature plan-review
 ```
 
-Read the feedback, revise, and iterate (≈2 rounds). The reviewer catches wrong assumptions and stale
+With no `--reviewers` it uses `SHIP_FEATURE_REVIEWERS` (your quorum); with no file and no stdin it reads
+`./plan.md`. Reviewers run **read-only** and nothing is written or posted — supported: `claude`
+(`--permission-mode plan`), `codex` (`--sandbox read-only`), `cursor` (ask mode), `qwen`
+(`--approval-mode plan` + `--safe-mode`); `agy`/`opencode` are relay-only and skipped with a warning.
+Exit `0` = every reviewer responded, `3` = a
+reviewer failed/timed out/returned empty (re-run), `1` = usage error. The single-reviewer default still
+works too: `cat plan.md | codex exec --sandbox read-only`.
+
+Read the feedback, revise, and iterate (≈2 rounds). The reviewers catch wrong assumptions and stale
 facts before they become code.
 
 ### 3. 🚦 Gate 1 — human approves the plan

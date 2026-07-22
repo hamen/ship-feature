@@ -4,6 +4,39 @@ All notable changes to **ship-feature** are documented here. This project follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`ship-feature plan-review`** — step 2 as a first-class command. It fans an implementation plan (a file
+  argument, stdin, or `./plan.md`) out to a panel of agents for a **read-only** review and prints each
+  review to the terminal; nothing is written or posted. The panel defaults to `SHIP_FEATURE_PLAN_REVIEWERS`
+  (a plan gate often wants a smaller panel than the PR cross-review), falling back to
+  `SHIP_FEATURE_REVIEWERS`, and is overridable with `--reviewers`; `--parallel` runs them concurrently.
+  Fail-closed exit codes
+  mirror the relay: `0` every reviewer responded, `3` a reviewer failed/timed out/returned empty (a
+  supported reviewer from the panel whose CLI is missing also fails — the panel is the quorum), `1` usage
+  error.
+  - **Read-only is enforced, not just asked.** Supported reviewers are only those that can be constrained:
+    `claude --permission-mode plan --safe-mode` (safe-mode also stops checkout hooks/plugins/MCP loading),
+    `codex --sandbox read-only`, `cursor --mode=ask` (Q&A),
+    `qwen --approval-mode plan` (qwen's read-only mode — denies edit/write/shell) plus `--safe-mode` (which
+    also blocks any checkout config/hooks/MCP from executing). Each flag is guarded by an argv-contract
+    test that also asserts qwen never uses the auto-approving `yolo` mode. `agy` and `opencode` are **relay-only** and
+    skipped with a warning — `agy` has no read-only mode (its relay flag disables all permissions) and
+    `opencode` needs the file-attach path — so the "nothing is written" guarantee holds for everything
+    that runs.
+  - Portable `timeout` (falls back to `gtimeout`, then runs without a limit on stock macOS); the reviewer
+    list is not glob-expanded; `--reviewers` with no value / an empty value / a following flag is a clean
+    usage error; a file after `--` or `-` (stdin) is honored; an empty stdin pipe falls back to
+    `./plan.md`; a zero timeout is rejected. Timeout via `SHIP_FEATURE_PLAN_TIMEOUT` (default 300s).
+  - `^C` during `--parallel` tears the reviewers down: an interrupt kills each backgrounded reviewer's
+    whole descendant tree (subshell → `$()` → `timeout` → agent) by walking PPIDs — a plain group-kill
+    would miss the agent because `timeout` re-groups its child — so it stops burning credits instead of
+    orphaning the agents. Covered by a regression test.
+
+  This makes "review the plan with codex and qwen" a single command.
+
 ## [0.1.0] — 2026-07-16
 
 First release.

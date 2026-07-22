@@ -74,6 +74,18 @@ ship-feature skill for any feature/fix.
 
 - `ship-feature preflight` — assert you're in a feature worktree branched off the default branch, with
   the worktree marker git-excluded (run before you start implementing).
+- `ship-feature plan-review [<file>] [--reviewers a,b,c] [--parallel]` — step 2: fan an implementation
+  plan (a file, stdin, or `./plan.md`) out to a panel of agents for a **read-only** review and print each
+  one. Defaults the panel to `SHIP_FEATURE_REVIEWERS`; nothing is written or posted. Supported reviewers
+  are the ones that can actually be constrained: `claude` (`--permission-mode plan --safe-mode`), `codex`
+  (`--sandbox read-only`), `cursor` (ask/Q&A mode), `qwen` (`--approval-mode plan` + `--safe-mode`) —
+  `--safe-mode` on claude/qwen also stops any hooks/plugins/MCP in the checkout from loading.
+  `agy` and `opencode` are
+  relay-only and skipped with a warning (agy has no read-only mode; opencode needs the attach path). The
+  panel is your quorum — a supported reviewer whose CLI is missing **fails** the round rather than
+  thinning it. Exit `0` = every reviewer responded, `3` = one failed/timed out/returned empty (re-run),
+  `1` = usage error. Per-reviewer timeout is `SHIP_FEATURE_PLAN_TIMEOUT` (env-only), which falls back to
+  `PR_RELAY_AGENT_TIMEOUT`, then 300s. Lets you say "review this plan with codex and qwen" as one command.
 - `ship-feature relay [args…]` — a **transparent** wrapper over
   [`pr-review-relay`](https://github.com/hamen/pr-review-relay) that preserves its stdout and exact exit
   code, and reminds you what each code means (`0` = everyone ran, not "clean"; `3` = re-run;

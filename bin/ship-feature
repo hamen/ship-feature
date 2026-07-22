@@ -7,6 +7,10 @@
 #   ship-feature relay [..]  Transparent pass-through to `pr-review-relay`: forwards all args, preserves
 #                            stdout and the EXACT exit code, and prints (on stderr) a one-line reminder of
 #                            what each code means for the workflow.
+#   ship-feature plan-review [<file>] [--reviewers a,b,c] [--parallel]
+#                            Step 2: fan an implementation PLAN (a file, stdin, or ./plan.md) out to a
+#                            panel of agents for a read-only review; prints each review. Defaults the
+#                            panel to SHIP_FEATURE_REVIEWERS. Exit 0 clean, 3 not-clean, 1 usage error.
 #   ship-feature help        This message.
 #
 # The workflow itself lives in WORKFLOW.md; this tool does not drive it. State/resume is intentionally
@@ -16,6 +20,19 @@ set -uo pipefail
 die()  { echo "✖ $*" >&2; exit 1; }
 warn() { echo "  ! $*" >&2; }
 ok()   { echo "  ✓ $*"; }
+
+# Kill a process AND its whole descendant tree, children first. Walking by PPID
+# (`pgrep -P`) rather than by process group is deliberate: `timeout` puts its child in
+# a NEW process group, so a group-kill of the backgrounded job would miss the reviewer
+# two levels down (subshell → $() → timeout → agent). Children-before-parent so a killed
+# parent can't reparent its children to init before we've found them. pgrep is present on
+# Linux and macOS. Best-effort (a process forking mid-sweep can still slip), which is why
+# each reviewer also runs under a `timeout`.
+kill_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$child"; done
+  kill -TERM "$pid" 2>/dev/null || true
+}
 
 # Load ~/.config/ship-feature/config as plain KEY=value lines — NEVER shell-`source`d, and only known
 # SHIP_FEATURE_* keys are honored. Environment variables win over the file.
@@ -34,6 +51,7 @@ load_config() {
       SHIP_FEATURE_EXCLUDE_MARKER) [ -n "${SHIP_FEATURE_EXCLUDE_MARKER+x}" ] || SHIP_FEATURE_EXCLUDE_MARKER="$val" ;;
       SHIP_FEATURE_DENYLIST) [ -n "${SHIP_FEATURE_DENYLIST+x}" ] || SHIP_FEATURE_DENYLIST="$val" ;;
       SHIP_FEATURE_REVIEWERS) [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || SHIP_FEATURE_REVIEWERS="$val" ;;
+      SHIP_FEATURE_PLAN_REVIEWERS) [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || SHIP_FEATURE_PLAN_REVIEWERS="$val" ;;
     esac
   done < "$cfg"
 }
@@ -144,13 +162,214 @@ cmd_relay() {
   return $rc
 }
 
+# --- plan review (step 2 of the workflow) ------------------------------------
+# Fan an implementation PLAN out to a panel of agents for a read-only review, BEFORE
+# any code is written — the cheap gate that catches wrong assumptions and stale facts.
+# Unlike `relay` (which reviews a PR via pr-review-relay and posts comments), this
+# reviews a local plan file / stdin and prints each review to the terminal. Nothing
+# is posted anywhere; nothing is written.
+#
+# Supported reviewers are ONLY those that can be run genuinely read-only over the plan
+# text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
+# load either), codex (--sandbox read-only), cursor (--mode=ask,
+# Q&A), qwen (--approval-mode plan, its read-only mode that denies edit/write/shell, plus
+# --safe-mode to also block checkout config). agy and opencode are RELAY-ONLY here — agy
+# has no read-only mode (its relay flag disables ALL permissions) and opencode needs the
+# file-attach path — so if listed they are skipped with a warning, never run. That keeps
+# the "read-only, nothing is written" guarantee true for the whole set that actually runs.
+plan_tool_for() { case "$1" in
+  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; qwen) echo qwen;; *) echo "";; esac; }
+# Named but deliberately not run in plan-review (available in `relay`).
+plan_relay_only() { case "$1" in opencode|antigravity|agy) return 0;; *) return 1;; esac; }
+
+cmd_plan_review() {
+  load_config
+  local reviewers="" file="" parallel=0 have_file=0 have_reviewers=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      # Guard $2 so a trailing `--reviewers` (or one followed by a flag) is a clean usage
+      # error, not a `set -u` unbound-variable crash.
+      --reviewers)   [ $# -ge 2 ] || die "--reviewers needs a list (e.g. --reviewers codex,qwen)."
+                     case "$2" in -*) die "--reviewers needs a list, got the flag '$2'.";; esac
+                     reviewers="$2"; have_reviewers=1; shift 2;;
+      --reviewers=*) die "pass reviewers as two tokens: --reviewers <list> (the --reviewers=... form isn't supported)." ;;
+      --parallel)    parallel=1; shift;;
+      -h|--help)     echo "usage: ship-feature plan-review [<plan-file>] [--reviewers a,b,c] [--parallel]"; return 0;;
+      # Everything after `--` is positional — collect the plan file from there too, don't drop it.
+      --)            shift; while [ $# -gt 0 ]; do [ "$have_file" = 0 ] || die "only one plan file may be given."; file="$1"; have_file=1; shift; done; break;;
+      -)             [ "$have_file" = 0 ] || die "only one plan file may be given (got '$file' and '-')."; file="-"; have_file=1; shift;;   # '-' = read stdin
+      -*)            die "unknown arg: $1" ;;
+      *)             [ "$have_file" = 0 ] || die "only one plan file may be given (got '$file' and '$1')."; file="$1"; have_file=1; shift;;
+    esac
+  done
+
+  # Resolve the plan text. Explicit `-` means "read stdin" even on a TTY (and never
+  # falls back to ./plan.md). An explicit file wins next. Otherwise read stdin if it is
+  # a pipe; an EMPTY pipe (common in CI / subprocesses) must NOT shadow ./plan.md, so
+  # fall back to it when stdin yielded nothing.
+  local plan="" src=""
+  if [ "$have_file" = 1 ] && [ "$file" = "-" ]; then
+    plan="$(cat)"; src="(stdin)"
+    [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "no plan on stdin (you passed '-')."
+  elif [ "$have_file" = 1 ]; then
+    [ -f "$file" ] || die "plan file not found: $file"
+    plan="$(cat -- "$file")"; src="$file"
+    [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "plan file is empty: $file"
+  else
+    if [ ! -t 0 ]; then plan="$(cat)"; [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && src="(stdin)"; fi
+    if [ -z "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && [ -f plan.md ]; then plan="$(cat plan.md)"; src="plan.md"; fi
+    [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "no plan given — pass a file, pipe it on stdin, or create a non-empty ./plan.md."
+  fi
+
+  # Panel: --reviewers > SHIP_FEATURE_REVIEWERS > refuse. The resolved panel is your
+  # QUORUM: every named+supported reviewer is required (a missing CLI fails the round),
+  # so a review never silently passes on a thinned panel. agy/opencode are the exception.
+  # An explicit but empty `--reviewers ""` is a usage error, not a silent fall-through to
+  # the env panel (which would surprise a user who meant to name a list).
+  if [ "$have_reviewers" = 1 ]; then
+    [ -n "$reviewers" ] || die "--reviewers was empty — name at least one (e.g. --reviewers codex,qwen)."
+  else
+    # Plan review can want a different (usually smaller) panel than the PR cross-review:
+    # SHIP_FEATURE_PLAN_REVIEWERS is preferred, falling back to the shared quorum.
+    reviewers="${SHIP_FEATURE_PLAN_REVIEWERS:-${SHIP_FEATURE_REVIEWERS:-}}"
+    [ -n "$reviewers" ] || die "no reviewers — pass --reviewers <list> or set SHIP_FEATURE_PLAN_REVIEWERS / SHIP_FEATURE_REVIEWERS (e.g. claude,codex)."
+  fi
+
+  # Portable timeout: GNU `timeout`, else Homebrew `gtimeout`, else run WITHOUT a limit
+  # (stock macOS ships neither) — a missing timeout must never break the reviewer.
+  local TIMEOUT_BIN; TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
+  local timeout_s="${SHIP_FEATURE_PLAN_TIMEOUT:-${PR_RELAY_AGENT_TIMEOUT:-300}}"
+  # Reject non-digits AND values that are numerically zero ("0", "00", …): GNU
+  # `timeout 0` DISABLES the timeout, the opposite of the intent. 10# forces base-10 so
+  # a leading zero isn't read as octal.
+  case "$timeout_s" in ''|*[!0-9]*) die "invalid SHIP_FEATURE_PLAN_TIMEOUT: '$timeout_s' (want a positive integer)";; esac
+  [ "$((10#$timeout_s))" -gt 0 ] || die "invalid SHIP_FEATURE_PLAN_TIMEOUT: '$timeout_s' (must be > 0)"
+
+  local PROMPT
+  PROMPT="$(printf '%s' \
+'You are reviewing an IMPLEMENTATION PLAN (provided on stdin), BEFORE any code is written.
+Judge it for: wrong assumptions, stale or incorrect facts about the codebase, missing edge
+cases, unhandled failure modes, risky or out-of-order steps, and anything it overlooks.
+You have read-only access — do NOT write code or modify anything. Be concise. Group findings
+by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one line.')"
+
+  echo "▶ Plan review — reviewers: $reviewers${src:+ — plan: $src}$([ "$parallel" = 1 ] && printf ' — parallel')" >&2
+
+  # Per-reviewer state lives in files so it survives the subshells used under --parallel
+  # (same technique as pr-review-relay). The EXIT trap removes the dir; the INT/TERM trap
+  # (below) tears down the reviewer process trees so an interrupt doesn't leave agents
+  # running and burning credits.
+  # umask 077 so the buffered review/diagnostic/status temp files created below are 0600 —
+  # defence in depth on a shared machine, on top of the 0700 dir mktemp gives us. Not
+  # restored: this is the CLI's terminal command, the process exits right after.
+  umask 077
+  local STATUS_DIR; STATUS_DIR="$(mktemp -d)" || die "cannot create temp dir"
+  # Single-quoted trap body, double-quoted var: evaluated safely at exit even if a path
+  # ever held a quote.
+  trap 'rm -rf "$STATUS_DIR"' EXIT
+  # On interrupt, tear down the parallel reviewers so they don't keep burning credits.
+  # kill_tree walks each backgrounded job's whole descendant tree (subshell → $() →
+  # timeout → agent), which a group-kill can't reach because `timeout` re-groups its child.
+  # `trap -` first, so a second ^C exits immediately.
+  trap 'trap - INT TERM; for j in $(jobs -p 2>/dev/null); do kill_tree "$j"; done; exit 130' INT TERM
+  skey() { printf 'k_%s' "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+
+  # Run a reviewer command under the timeout when one is available, else directly.
+  run_reviewer() { if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$timeout_s" "$@"; else "$@"; fi; }
+
+  # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
+  # under --parallel neither the reviews nor the failure messages interleave; the caller
+  # emits them in panel order after the barrier. qwen runs `--approval-mode plan` — its
+  # genuine read-only mode that denies edit/write/shell — NOT `yolo` (which auto-approves
+  # those). `--safe-mode` additionally blocks any checkout config from loading.
+  plan_review_with() {
+    local name="$1" out rc=0 errf key Name why
+    key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
+    Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
+    case "$name" in
+      claude) out=$(printf '%s' "$plan" | run_reviewer claude -p --permission-mode plan --safe-mode "$PROMPT" 2>"$errf"); rc=$?;;
+      codex)  out=$(printf '%s' "$plan" | run_reviewer codex exec --sandbox read-only "$PROMPT" 2>"$errf"); rc=$?;;
+      cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask 2>"$errf"); rc=$?;;
+      qwen)   out=$(printf '%s' "$plan" | run_reviewer qwen --safe-mode --approval-mode plan -p "$PROMPT" 2>"$errf"); rc=$?;;
+    esac
+    if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
+      why="exited with code $rc"
+      case "$rc" in 0) why="ran but returned an empty review";; 124) why="timed out after ${timeout_s}s (raise SHIP_FEATURE_PLAN_TIMEOUT)";; 127) why="command not found";; esac
+      { printf '  ! %s: no review — %s\n' "$name" "$why"; [ "$rc" != 124 ] && [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /'; } > "$STATUS_DIR/diag_$key"
+      echo fail > "$STATUS_DIR/$key"; return 0
+    fi
+    printf '\n========== %s (plan review) ==========\n%s\n=======================================\n' "$Name" "$out" > "$STATUS_DIR/out_$key"
+    if [ "$rc" -ne 0 ]; then
+      # Name the timeout explicitly: a bare "exited with code 124" is opaque.
+      if [ "$rc" = 124 ]; then printf '  ! %s: timed out after %ss — review may be truncated (not clean)\n' "$name" "$timeout_s" > "$STATUS_DIR/diag_$key"
+      else printf '  ! %s: exited with code %s — review may be truncated (not clean)\n' "$name" "$rc" > "$STATUS_DIR/diag_$key"; fi
+      echo fail > "$STATUS_DIR/$key"
+    else echo ok > "$STATUS_DIR/$key"; fi
+  }
+
+  # Dispatch, de-duping the panel. `set -f` guards the word-split from pathname expansion
+  # (an unquoted `$reviewers` would otherwise glob a value like `a*`).
+  local r rk tool seen="" order=""
+  local IFS_SAVE="$IFS"; set -f; IFS=','; set -- $reviewers; IFS="$IFS_SAVE"; set +f
+  for r in "$@"; do
+    r="$(printf '%s' "$r" | tr -d '[:space:]')"; [ -z "$r" ] && continue
+    [ "$r" = "agy" ] && r=antigravity
+    rk="$(skey "$r")"
+    case " $seen " in *" $rk "*) continue;; esac
+    seen="$seen $rk"
+    if plan_relay_only "$r"; then warn "$r is relay-only (no read-only mode / needs file-attach) — not run in plan-review; skipping."; continue; fi
+    tool="$(plan_tool_for "$r")"
+    # A named reviewer that is unknown, or supported-but-not-installed, is a hard failure:
+    # the panel is the quorum, so a review must not quietly pass with it missing.
+    if [ -z "$tool" ]; then echo fail > "$STATUS_DIR/$rk"; warn "unknown reviewer '$r' → fail"; continue; fi
+    if ! command -v "$tool" >/dev/null 2>&1; then echo fail > "$STATUS_DIR/$rk"; warn "$tool not installed (required by the panel) → fail"; continue; fi
+    order="$order $rk"
+    echo "  → $r reviewing…" >&2
+    echo pending > "$STATUS_DIR/$rk"
+    if [ "$parallel" = 1 ]; then
+      plan_review_with "$r" &
+    else
+      # Sequential: run and stream this review immediately (no interleave risk), so a
+      # slow first reviewer doesn't make the whole panel silent until the end.
+      plan_review_with "$r"
+      [ -f "$STATUS_DIR/out_$rk" ]  && cat "$STATUS_DIR/out_$rk"
+      [ -f "$STATUS_DIR/diag_$rk" ] && cat "$STATUS_DIR/diag_$rk" >&2
+    fi
+  done
+  [ "$parallel" = 1 ] && wait
+
+  # Parallel: reviews and diagnostics were buffered per reviewer; emit them in panel
+  # order now, so neither the stdout reviews nor the stderr failures interleave.
+  if [ "$parallel" = 1 ]; then
+    local e; for e in $order; do
+      [ -f "$STATUS_DIR/out_$e" ]  && cat "$STATUS_DIR/out_$e"
+      [ -f "$STATUS_DIR/diag_$e" ] && cat "$STATUS_DIR/diag_$e" >&2
+    done
+  fi
+
+  # Fail-closed verdict. Only status files (k_*) are counted — out_/err_ are excluded.
+  local f ran=0 failed=0 names=""
+  for f in "$STATUS_DIR"/k_*; do
+    [ -e "$f" ] || continue
+    ran=$((ran + 1))
+    if [ "$(cat "$f")" != ok ]; then failed=$((failed + 1)); names="$names ${f##*/k_}"; fi
+  done
+  if [ "$ran" = 0 ]; then
+    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, qwen (agy/opencode are relay-only). Pass --reviewers with a supported agent."
+  fi
+  if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Fix and re-run." >&2; return 3; fi
+  echo "✔ Plan review done — $ran/$ran reviewer(s) responded. READ the findings and revise the plan before Gate 1." >&2
+  return 0
+}
+
 main() {
   local sub="${1:-help}"
   [ $# -gt 0 ] && shift
   case "$sub" in
-    preflight) cmd_preflight "$@" ;;
-    relay)     cmd_relay "$@" ;;
-    help|-h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+    preflight)   cmd_preflight "$@" ;;
+    relay)       cmd_relay "$@" ;;
+    plan-review) cmd_plan_review "$@" ;;
+    help|-h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
     *) die "unknown command: $sub (try: ship-feature help)" ;;
   esac
 }
