@@ -158,7 +158,10 @@ out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers c
 printf '%s' "$out" | grep -q -- "--permission-mode plan"       && { echo "  ok   [-] claude runs read-only (--permission-mode plan)"; PASS=$((PASS+1)); } || { echo "  FAIL claude not read-only in plan-review"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q -- "--sandbox read-only"          && { echo "  ok   [-] codex runs read-only (--sandbox read-only)"; PASS=$((PASS+1)); } || { echo "  FAIL codex not read-only in plan-review"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q -- "--mode=ask"                   && { echo "  ok   [-] cursor runs in ask (Q&A) mode"; PASS=$((PASS+1)); } || { echo "  FAIL cursor not in ask mode"; FAIL=$((FAIL+1)); }
-printf '%s' "$out" | grep -q -- "--safe-mode --approval-mode yolo" && { echo "  ok   [-] qwen runs with --safe-mode --approval-mode yolo"; PASS=$((PASS+1)); } || { echo "  FAIL qwen missing enforced flags in plan-review"; FAIL=$((FAIL+1)); }
+# qwen must use --approval-mode PLAN (read-only: denies edit/write/shell), never yolo
+# (which auto-approves them). yolo + a plan review is the exact hole round 2 caught.
+printf '%s' "$out" | grep -q -- "--safe-mode --approval-mode plan" && { echo "  ok   [-] qwen runs read-only (--safe-mode --approval-mode plan)"; PASS=$((PASS+1)); } || { echo "  FAIL qwen not in read-only plan mode"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep -q -- "--approval-mode yolo"         && { echo "  FAIL qwen still uses the auto-approving yolo mode"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] qwen never uses the auto-approving yolo mode"; PASS=$((PASS+1)); }
 
 # default panel comes from SHIP_FEATURE_REVIEWERS when --reviewers is omitted
 out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,cursor bash "$CLI" plan-review 2>/dev/null); rc=$?
@@ -214,6 +217,15 @@ printf '%s' "$out" | grep -q "REVIEW-codex" && { echo "  ok   [-] plan-review re
 
 # a missing file argument fails clearly
 ( PATH="$PBIN:$PATH" bash "$CLI" plan-review "$WORK/nope.md" --reviewers codex >/dev/null 2>&1 ); check "plan-review fails on a missing file" $? 1
+
+# explicit `-` reads stdin (even conceptually on a TTY) and does NOT fall back to plan.md
+out=$( cd "$PDIR" && printf 'STDIN PLAN VIA DASH\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review - --reviewers codex 2>/dev/null ); rc=$?
+check "plan-review reads stdin on explicit -" "$rc" 0
+printf '%s' "$out" | grep -q "REVIEW-codex" && { echo "  ok   [-] plan-review reviewed the '-' stdin plan"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not read '-' stdin"; FAIL=$((FAIL+1)); }
+
+# an explicit but EMPTY plan file fails with a file-specific message (exit 1)
+: > "$WORK/blank.md"
+( PATH="$PBIN:$PATH" bash "$CLI" plan-review "$WORK/blank.md" --reviewers codex >/dev/null 2>&1 ); check "plan-review rejects an empty explicit file (1)" $? 1
 
 # the --reviewers= form is rejected (two-token only), matching relay
 ( printf 'p\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers=codex >/dev/null 2>&1 ); check "plan-review rejects the --reviewers= form" $? 1

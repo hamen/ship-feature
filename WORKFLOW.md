@@ -36,8 +36,9 @@ ship-feature plan-review plan.md --reviewers codex,qwen     # or pipe it: cat pl
 
 With no `--reviewers` it uses `SHIP_FEATURE_REVIEWERS` (your quorum); with no file and no stdin it reads
 `./plan.md`. Reviewers run **read-only** and nothing is written or posted — supported: `claude`
-(`--permission-mode plan`), `codex` (`--sandbox read-only`), `cursor` (ask mode), `qwen` (`--safe-mode`);
-`agy`/`opencode` are relay-only and skipped with a warning. Exit `0` = every reviewer responded, `3` = a
+(`--permission-mode plan`), `codex` (`--sandbox read-only`), `cursor` (ask mode), `qwen`
+(`--approval-mode plan` + `--safe-mode`); `agy`/`opencode` are relay-only and skipped with a warning.
+Exit `0` = every reviewer responded, `3` = a
 reviewer failed/timed out/returned empty (re-run), `1` = usage error. The single-reviewer default still
 works too: `cat plan.md | codex exec --sandbox read-only`.
 

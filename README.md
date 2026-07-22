@@ -78,7 +78,8 @@ ship-feature skill for any feature/fix.
   plan (a file, stdin, or `./plan.md`) out to a panel of agents for a **read-only** review and print each
   one. Defaults the panel to `SHIP_FEATURE_REVIEWERS`; nothing is written or posted. Supported reviewers
   are the ones that can actually be constrained: `claude` (`--permission-mode plan`), `codex`
-  (`--sandbox read-only`), `cursor` (ask/Q&A mode), `qwen` (`--safe-mode`). `agy` and `opencode` are
+  (`--sandbox read-only`), `cursor` (ask/Q&A mode), `qwen` (`--approval-mode plan` + `--safe-mode`).
+  `agy` and `opencode` are
   relay-only and skipped with a warning (agy has no read-only mode; opencode needs the attach path). The
   panel is your quorum — a supported reviewer whose CLI is missing **fails** the round rather than
   thinning it. Exit `0` = every reviewer responded, `3` = one failed/timed out/returned empty (re-run),

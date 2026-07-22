@@ -157,11 +157,11 @@ cmd_relay() {
 #
 # Supported reviewers are ONLY those that can be run genuinely read-only over the plan
 # text: claude (--permission-mode plan), codex (--sandbox read-only), cursor (--mode=ask,
-# Q&A), qwen (--safe-mode, which also blocks any checkout config from executing). agy and
-# opencode are RELAY-ONLY here — agy has no read-only mode (its relay flag disables ALL
-# permissions) and opencode needs the file-attach path — so if listed they are skipped
-# with a warning, never run. That keeps the "read-only, nothing is written" guarantee
-# true for the whole set that actually runs.
+# Q&A), qwen (--approval-mode plan, its read-only mode that denies edit/write/shell, plus
+# --safe-mode to also block checkout config). agy and opencode are RELAY-ONLY here — agy
+# has no read-only mode (its relay flag disables ALL permissions) and opencode needs the
+# file-attach path — so if listed they are skipped with a warning, never run. That keeps
+# the "read-only, nothing is written" guarantee true for the whole set that actually runs.
 plan_tool_for() { case "$1" in
   claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; qwen) echo qwen;; *) echo "";; esac; }
 # Named but deliberately not run in plan-review (available in `relay`).
@@ -182,23 +182,29 @@ cmd_plan_review() {
       -h|--help)     echo "usage: ship-feature plan-review [<plan-file>] [--reviewers a,b,c] [--parallel]"; return 0;;
       # Everything after `--` is positional — collect the plan file from there too, don't drop it.
       --)            shift; while [ $# -gt 0 ]; do [ "$have_file" = 0 ] || die "only one plan file may be given."; file="$1"; have_file=1; shift; done; break;;
+      -)             [ "$have_file" = 0 ] || die "only one plan file may be given (got '$file' and '-')."; file="-"; have_file=1; shift;;   # '-' = read stdin
       -*)            die "unknown arg: $1" ;;
       *)             [ "$have_file" = 0 ] || die "only one plan file may be given (got '$file' and '$1')."; file="$1"; have_file=1; shift;;
     esac
   done
 
-  # Resolve the plan text. An explicit file wins. Otherwise read stdin if it is a pipe;
-  # an EMPTY pipe (common in CI / subprocesses) must NOT shadow ./plan.md, so fall back
-  # to it when stdin yielded nothing.
+  # Resolve the plan text. Explicit `-` means "read stdin" even on a TTY (and never
+  # falls back to ./plan.md). An explicit file wins next. Otherwise read stdin if it is
+  # a pipe; an EMPTY pipe (common in CI / subprocesses) must NOT shadow ./plan.md, so
+  # fall back to it when stdin yielded nothing.
   local plan="" src=""
-  if [ "$have_file" = 1 ] && [ "$file" != "-" ]; then
+  if [ "$have_file" = 1 ] && [ "$file" = "-" ]; then
+    plan="$(cat)"; src="(stdin)"
+    [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "no plan on stdin (you passed '-')."
+  elif [ "$have_file" = 1 ]; then
     [ -f "$file" ] || die "plan file not found: $file"
     plan="$(cat -- "$file")"; src="$file"
+    [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "plan file is empty: $file"
   else
     if [ ! -t 0 ]; then plan="$(cat)"; [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && src="(stdin)"; fi
     if [ -z "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && [ -f plan.md ]; then plan="$(cat plan.md)"; src="plan.md"; fi
+    [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "no plan given — pass a file, pipe it on stdin, or create a non-empty ./plan.md."
   fi
-  [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "no plan given — pass a file, pipe it on stdin, or create a non-empty ./plan.md."
 
   # Panel: --reviewers > SHIP_FEATURE_REVIEWERS > refuse. The resolved panel is your
   # QUORUM: every named+supported reviewer is required (a missing CLI fails the round),
@@ -230,6 +236,10 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # (same technique as pr-review-relay). The trap embeds the path by value — no live
   # variable to go unbound — and kills any parallel reviewer children so an interrupt
   # doesn't leave agents running and burning credits.
+  # umask 077 so the buffered plan/review temp files created below are 0600 — defence in
+  # depth on a shared machine, on top of the 0700 dir mktemp gives us. Not restored: this
+  # is the CLI's terminal command, the process exits right after.
+  umask 077
   local STATUS_DIR; STATUS_DIR="$(mktemp -d)" || die "cannot create temp dir"
   trap "rm -rf '$STATUS_DIR'" EXIT
   trap 'p=$(jobs -p 2>/dev/null); [ -n "$p" ] && kill $p 2>/dev/null; exit 130' INT TERM
@@ -238,32 +248,39 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # Run a reviewer command under the timeout when one is available, else directly.
   run_reviewer() { if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$timeout_s" "$@"; else "$@"; fi; }
 
+  # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
+  # under --parallel neither the reviews nor the failure messages interleave; the caller
+  # emits them in panel order after the barrier. qwen runs `--approval-mode plan` — its
+  # genuine read-only mode that denies edit/write/shell — NOT `yolo` (which auto-approves
+  # those). `--safe-mode` additionally blocks any checkout config from loading.
   plan_review_with() {
-    local name="$1" out rc=0 errf key Name
+    local name="$1" out rc=0 errf key Name why
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
     Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
     case "$name" in
       claude) out=$(printf '%s' "$plan" | run_reviewer claude -p --permission-mode plan "$PROMPT" 2>"$errf"); rc=$?;;
       codex)  out=$(printf '%s' "$plan" | run_reviewer codex exec --sandbox read-only "$PROMPT" 2>"$errf"); rc=$?;;
       cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask 2>"$errf"); rc=$?;;
-      qwen)   out=$(printf '%s' "$plan" | run_reviewer env QWEN_CODE_SUPPRESS_YOLO_WARNING=1 qwen --safe-mode --approval-mode yolo -p "$PROMPT" 2>"$errf"); rc=$?;;
+      qwen)   out=$(printf '%s' "$plan" | run_reviewer qwen --safe-mode --approval-mode plan -p "$PROMPT" 2>"$errf"); rc=$?;;
     esac
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
-      local why="exited with code $rc"
+      why="exited with code $rc"
       case "$rc" in 0) why="ran but returned an empty review";; 124) why="timed out after ${timeout_s}s (raise SHIP_FEATURE_PLAN_TIMEOUT)";; 127) why="command not found";; esac
-      { printf '  ! %s: no review — %s\n' "$name" "$why"; [ "$rc" != 124 ] && [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /'; } >&2
+      { printf '  ! %s: no review — %s\n' "$name" "$why"; [ "$rc" != 124 ] && [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /'; } > "$STATUS_DIR/diag_$key"
       echo fail > "$STATUS_DIR/$key"; return 0
     fi
-    # Buffer the printable review to a file so concurrent --parallel writers can't
-    # interleave on the terminal; the caller prints them in panel order after the barrier.
     printf '\n========== %s (plan review) ==========\n%s\n=======================================\n' "$Name" "$out" > "$STATUS_DIR/out_$key"
-    if [ "$rc" -ne 0 ]; then printf '  ! %s: exited with code %s — review may be truncated (not clean)\n' "$name" "$rc" >&2; echo fail > "$STATUS_DIR/$key"
+    if [ "$rc" -ne 0 ]; then
+      # Name the timeout explicitly: a bare "exited with code 124" is opaque.
+      if [ "$rc" = 124 ]; then printf '  ! %s: timed out after %ss — review may be truncated (not clean)\n' "$name" "$timeout_s" > "$STATUS_DIR/diag_$key"
+      else printf '  ! %s: exited with code %s — review may be truncated (not clean)\n' "$name" "$rc" > "$STATUS_DIR/diag_$key"; fi
+      echo fail > "$STATUS_DIR/$key"
     else echo ok > "$STATUS_DIR/$key"; fi
   }
 
   # Dispatch, de-duping the panel. `set -f` guards the word-split from pathname expansion
   # (an unquoted `$reviewers` would otherwise glob a value like `a*`).
-  local r rk tool seen="" launched=0 order=""
+  local r rk tool seen="" order=""
   local IFS_SAVE="$IFS"; set -f; IFS=','; set -- $reviewers; IFS="$IFS_SAVE"; set +f
   for r in "$@"; do
     r="$(printf '%s' "$r" | tr -d '[:space:]')"; [ -z "$r" ] && continue
@@ -277,15 +294,29 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
     # the panel is the quorum, so a review must not quietly pass with it missing.
     if [ -z "$tool" ]; then echo fail > "$STATUS_DIR/$rk"; warn "unknown reviewer '$r' → fail"; continue; fi
     if ! command -v "$tool" >/dev/null 2>&1; then echo fail > "$STATUS_DIR/$rk"; warn "$tool not installed (required by the panel) → fail"; continue; fi
-    launched=$((launched + 1)); order="$order $rk"
+    order="$order $rk"
     echo "  → $r reviewing…" >&2
     echo pending > "$STATUS_DIR/$rk"
-    if [ "$parallel" = 1 ]; then plan_review_with "$r" & else plan_review_with "$r"; fi
+    if [ "$parallel" = 1 ]; then
+      plan_review_with "$r" &
+    else
+      # Sequential: run and stream this review immediately (no interleave risk), so a
+      # slow first reviewer doesn't make the whole panel silent until the end.
+      plan_review_with "$r"
+      [ -f "$STATUS_DIR/out_$rk" ]  && cat "$STATUS_DIR/out_$rk"
+      [ -f "$STATUS_DIR/diag_$rk" ] && cat "$STATUS_DIR/diag_$rk" >&2
+    fi
   done
   [ "$parallel" = 1 ] && wait
 
-  # Print buffered reviews in panel order — deterministic even under --parallel.
-  local e; for e in $order; do [ -f "$STATUS_DIR/out_$e" ] && cat "$STATUS_DIR/out_$e"; done
+  # Parallel: reviews and diagnostics were buffered per reviewer; emit them in panel
+  # order now, so neither the stdout reviews nor the stderr failures interleave.
+  if [ "$parallel" = 1 ]; then
+    local e; for e in $order; do
+      [ -f "$STATUS_DIR/out_$e" ]  && cat "$STATUS_DIR/out_$e"
+      [ -f "$STATUS_DIR/diag_$e" ] && cat "$STATUS_DIR/diag_$e" >&2
+    done
+  fi
 
   # Fail-closed verdict. Only status files (k_*) are counted — out_/err_ are excluded.
   local f ran=0 failed=0 names=""

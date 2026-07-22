@@ -17,8 +17,9 @@ All notable changes to **ship-feature** are documented here. This project follow
   error.
   - **Read-only is enforced, not just asked.** Supported reviewers are only those that can be constrained:
     `claude --permission-mode plan`, `codex --sandbox read-only`, `cursor --mode=ask` (Q&A),
-    `qwen --safe-mode --approval-mode yolo` (safe-mode also blocks any checkout config/hooks/MCP from
-    executing). Each flag is guarded by an argv-contract test. `agy` and `opencode` are **relay-only** and
+    `qwen --approval-mode plan` (qwen's read-only mode — denies edit/write/shell) plus `--safe-mode` (which
+    also blocks any checkout config/hooks/MCP from executing). Each flag is guarded by an argv-contract
+    test that also asserts qwen never uses the auto-approving `yolo` mode. `agy` and `opencode` are **relay-only** and
     skipped with a warning — `agy` has no read-only mode (its relay flag disables all permissions) and
     `opencode` needs the file-attach path — so the "nothing is written" guarantee holds for everything
     that runs.
