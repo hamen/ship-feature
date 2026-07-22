@@ -6,6 +6,8 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-22
+
 ### Added
 
 - **`ship-feature plan-review`** — step 2 as a first-class command. It fans an implementation plan (a file
