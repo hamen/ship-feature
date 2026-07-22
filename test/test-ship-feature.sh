@@ -136,7 +136,7 @@ if printf '%s' "$out" | grep -q -- "--reviewers codex,cursor" && ! printf '%s' "
 
 # --- plan-review: fan a plan out to a panel of stubbed reviewers -------------
 # Stub the reviewer CLIs so no network/real agent is touched. Each echoes a marker
-# plus its argv (so the argv contract can be asserted). cursor's binary is
+# plus its argv (so the argv/read-only contract can be asserted). cursor's binary is
 # `cursor-agent`; the rest match their reviewer name.
 PBIN="$WORK/pbin"; mkdir -p "$PBIN"
 make_reviewer() { printf '#!/usr/bin/env bash\necho "REVIEW-%s argv=[$*]"\nexit %s\n' "$1" "${2:-0}" > "$PBIN/$3"; chmod +x "$PBIN/$3"; }
@@ -152,10 +152,13 @@ printf '%s' "$out" | grep -q "REVIEW-codex" && printf '%s' "$out" | grep -q "REV
   && { echo "  ok   [-] plan-review prints each reviewer's output"; PASS=$((PASS+1)); } \
   || { echo "  FAIL plan-review dropped a reviewer's output"; FAIL=$((FAIL+1)); }
 
-# argv contract: codex runs read-only; qwen runs --safe-mode --approval-mode yolo.
-# A dropped flag here is a security regression (checkout config could execute).
-printf '%s' "$out" | grep -q -- "--sandbox read-only" && { echo "  ok   [-] plan-review runs codex read-only"; PASS=$((PASS+1)); } || { echo "  FAIL codex not read-only in plan-review"; FAIL=$((FAIL+1)); }
-printf '%s' "$out" | grep -q -- "--safe-mode --approval-mode yolo" && { echo "  ok   [-] plan-review runs qwen with --safe-mode --approval-mode yolo"; PASS=$((PASS+1)); } || { echo "  FAIL qwen missing enforced flags in plan-review"; FAIL=$((FAIL+1)); }
+# read-only argv contract: EVERY supported reviewer must carry its read-only flag, so the
+# "nothing is written" guarantee is real. A dropped flag here is a security regression.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,cursor,qwen 2>/dev/null)
+printf '%s' "$out" | grep -q -- "--permission-mode plan"       && { echo "  ok   [-] claude runs read-only (--permission-mode plan)"; PASS=$((PASS+1)); } || { echo "  FAIL claude not read-only in plan-review"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep -q -- "--sandbox read-only"          && { echo "  ok   [-] codex runs read-only (--sandbox read-only)"; PASS=$((PASS+1)); } || { echo "  FAIL codex not read-only in plan-review"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep -q -- "--mode=ask"                   && { echo "  ok   [-] cursor runs in ask (Q&A) mode"; PASS=$((PASS+1)); } || { echo "  FAIL cursor not in ask mode"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep -q -- "--safe-mode --approval-mode yolo" && { echo "  ok   [-] qwen runs with --safe-mode --approval-mode yolo"; PASS=$((PASS+1)); } || { echo "  FAIL qwen missing enforced flags in plan-review"; FAIL=$((FAIL+1)); }
 
 # default panel comes from SHIP_FEATURE_REVIEWERS when --reviewers is omitted
 out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,cursor bash "$CLI" plan-review 2>/dev/null); rc=$?
@@ -165,7 +168,7 @@ printf '%s' "$out" | grep -q "REVIEW-claude" && printf '%s' "$out" | grep -q "RE
   || { echo "  FAIL plan-review did not run the configured panel"; FAIL=$((FAIL+1)); }
 
 # a reviewer that returns an EMPTY review → not clean (exit 3)
-make_reviewer codex 0 codex; printf '#!/usr/bin/env bash\nexit 0\n' > "$PBIN/codex"; chmod +x "$PBIN/codex"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$PBIN/codex"; chmod +x "$PBIN/codex"
 ( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,qwen >/dev/null 2>&1 ); check "plan-review empty review → not clean (3)" $? 3
 make_reviewer codex 0 codex   # restore
 
@@ -174,13 +177,17 @@ make_reviewer codex 1 codex
 ( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex >/dev/null 2>&1 ); check "plan-review non-zero reviewer → not clean (3)" $? 3
 make_reviewer codex 0 codex   # restore
 
-# explicitly-requested reviewer whose CLI is missing → fail (3), like the relay
-( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,doesnotexist >/dev/null 2>&1 ); check "plan-review missing explicit reviewer → fail (3)" $? 3
+# a supported reviewer from the panel whose CLI is missing → fail (3): the panel is the
+# quorum, so it never quietly passes on a thinned set.
+( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,doesnotexist >/dev/null 2>&1 ); check "plan-review missing panel reviewer → fail (3)" $? 3
 
-# opencode is relay-only: skipped with a warning, the rest of the panel still runs (0)
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers opencode,codex 2>&1); rc=$?
-check "plan-review skips opencode but still runs the panel" "$rc" 0
-printf '%s' "$out" | grep -qi "opencode is not supported" && { echo "  ok   [-] plan-review warns that opencode is skipped"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not warn about opencode"; FAIL=$((FAIL+1)); }
+# agy and opencode are RELAY-ONLY: skipped with a warning, the rest of the panel still runs (0)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers agy,opencode,codex 2>&1); rc=$?
+check "plan-review skips relay-only agents, runs the rest" "$rc" 0
+printf '%s' "$out" | grep -qi "relay-only" && { echo "  ok   [-] plan-review warns that agy/opencode are relay-only"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not warn about relay-only agents"; FAIL=$((FAIL+1)); }
+
+# a panel of ONLY relay-only agents → nobody supported ran → clear error (1)
+( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers agy,opencode >/dev/null 2>&1 ); check "plan-review with only relay-only agents → error (1)" $? 1
 
 # no panel at all (unset + none passed) → usage error (1)
 ( printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS= bash "$CLI" plan-review >/dev/null 2>&1 ); check "plan-review with no panel → usage error (1)" $? 1
@@ -194,16 +201,45 @@ out=$(PATH="$PBIN:$PATH" bash "$CLI" plan-review "$WORK/aplan.md" --reviewers co
 check "plan-review reads a plan from a file argument" "$rc" 0
 printf '%s' "$out" | grep -q "REVIEW-codex" && { echo "  ok   [-] plan-review reviewed the file's contents"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not review the file"; FAIL=$((FAIL+1)); }
 
+# a file given after `--` is still reviewed (not dropped)
+out=$(PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex -- "$WORK/aplan.md" 2>/dev/null); rc=$?
+check "plan-review honors a file after --" "$rc" 0
+printf '%s' "$out" | grep -q "REVIEW-codex" && { echo "  ok   [-] plan-review reviewed the file passed after --"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review dropped the file after --"; FAIL=$((FAIL+1)); }
+
+# an EMPTY stdin pipe must fall back to ./plan.md, not shadow it with "empty plan"
+PDIR="$WORK/plandir"; mkdir -p "$PDIR"; printf 'plan.md content\n' > "$PDIR/plan.md"
+out=$( cd "$PDIR" && printf '' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex 2>/dev/null ); rc=$?
+check "plan-review falls back to ./plan.md on empty stdin" "$rc" 0
+printf '%s' "$out" | grep -q "REVIEW-codex" && { echo "  ok   [-] plan-review reviewed ./plan.md"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not fall back to ./plan.md"; FAIL=$((FAIL+1)); }
+
 # a missing file argument fails clearly
 ( PATH="$PBIN:$PATH" bash "$CLI" plan-review "$WORK/nope.md" --reviewers codex >/dev/null 2>&1 ); check "plan-review fails on a missing file" $? 1
 
 # the --reviewers= form is rejected (two-token only), matching relay
 ( printf 'p\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers=codex >/dev/null 2>&1 ); check "plan-review rejects the --reviewers= form" $? 1
 
-# --parallel runs every reviewer and stays fail-closed on success
+# a trailing --reviewers with no value → clean usage error, NOT a set -u crash
+( printf 'p\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers >/dev/null 2>&1 ); check "plan-review: bare --reviewers → usage error (1)" $? 1
+# --reviewers immediately followed by a flag is also a usage error (not a reviewer named --parallel)
+( printf 'p\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers --parallel >/dev/null 2>&1 ); check "plan-review: --reviewers <flag> → usage error (1)" $? 1
+
+# a numerically-zero timeout is rejected (GNU `timeout 0` would DISABLE the timeout)
+( printf 'p\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_PLAN_TIMEOUT=00 bash "$CLI" plan-review --reviewers codex >/dev/null 2>&1 ); check "plan-review rejects a zero timeout (00)" $? 1
+
+# the reviewer list is NOT glob-expanded: a wildcard in a dir with matching files stays
+# literal (→ unknown reviewer → fail 3), it does not become those filenames.
+GDIR="$WORK/globdir"; mkdir -p "$GDIR"; : > "$GDIR/aaa"; : > "$GDIR/abb"
+( cd "$GDIR" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers 'a*' >/dev/null 2>&1 ); check "plan-review does not glob-expand the reviewer list" $? 3
+
+# --parallel: clean run exits 0 and prints every reviewer (order-independent)
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,qwen --parallel 2>/dev/null); rc=$?
 check "plan-review --parallel clean run exits 0" "$rc" 0
 n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review --parallel ran all three reviewers" "$n" 3
+
+# --parallel is still fail-closed: one empty reviewer fails the whole round (3)
+printf '#!/usr/bin/env bash\nexit 0\n' > "$PBIN/codex"; chmod +x "$PBIN/codex"
+( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,qwen --parallel >/dev/null 2>&1 ); check "plan-review --parallel stays fail-closed (3)" $? 3
+make_reviewer codex 0 codex   # restore
 
 echo "-------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"
