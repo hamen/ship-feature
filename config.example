@@ -26,3 +26,6 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 
 # Escape hatch, ENV-ONLY (export it — it is NOT read from this file): set SHIP_FEATURE_ALLOW_BEHIND=1 to
 # let `ship-feature preflight` proceed when your branch is behind/diverged from the default branch.
+
+# Per-reviewer timeout for `ship-feature plan-review`, in seconds. ENV-ONLY (not read from this file);
+# falls back to PR_RELAY_AGENT_TIMEOUT, then 300. e.g. export SHIP_FEATURE_PLAN_TIMEOUT=480

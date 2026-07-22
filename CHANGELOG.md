@@ -4,6 +4,21 @@ All notable changes to **ship-feature** are documented here. This project follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`ship-feature plan-review`** — step 2 as a first-class command. It fans an implementation plan (a file
+  argument, stdin, or `./plan.md`) out to a panel of agents for a **read-only** review and prints each
+  review to the terminal; nothing is written or posted. The panel defaults to `SHIP_FEATURE_REVIEWERS`
+  and is overridable with `--reviewers`; `--parallel` runs them concurrently. Fail-closed exit codes
+  mirror the relay: `0` every reviewer responded, `3` a reviewer failed/timed out/returned empty (an
+  explicitly-requested missing reviewer also fails), `1` usage error. Reviewers run read-only — codex via
+  `--sandbox read-only`, qwen via `--safe-mode --approval-mode yolo` (safe-mode blocks any checkout config
+  from executing) — asserted by argv-contract tests. `opencode` is relay-only and skipped with a warning.
+  Timeout via `SHIP_FEATURE_PLAN_TIMEOUT` (default 300s). This makes "review the plan with codex and qwen"
+  a single command.
+
 ## [0.1.0] — 2026-07-16
 
 First release.

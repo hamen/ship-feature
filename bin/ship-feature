@@ -7,6 +7,10 @@
 #   ship-feature relay [..]  Transparent pass-through to `pr-review-relay`: forwards all args, preserves
 #                            stdout and the EXACT exit code, and prints (on stderr) a one-line reminder of
 #                            what each code means for the workflow.
+#   ship-feature plan-review [<file>] [--reviewers a,b,c] [--parallel]
+#                            Step 2: fan an implementation PLAN (a file, stdin, or ./plan.md) out to a
+#                            panel of agents for a read-only review; prints each review. Defaults the
+#                            panel to SHIP_FEATURE_REVIEWERS. Exit 0 clean, 3 not-clean, 1 usage error.
 #   ship-feature help        This message.
 #
 # The workflow itself lives in WORKFLOW.md; this tool does not drive it. State/resume is intentionally
@@ -144,13 +148,148 @@ cmd_relay() {
   return $rc
 }
 
+# --- plan review (step 2 of the workflow) ------------------------------------
+# Fan an implementation PLAN out to a panel of agents for a read-only review, BEFORE
+# any code is written — the cheap gate that catches wrong assumptions and stale facts.
+# Unlike `relay` (which reviews a PR via pr-review-relay and posts comments), this
+# reviews a local plan file / stdin and prints each review to the terminal. Nothing
+# is posted anywhere; nothing is written.
+#
+# Reviewers receive the plan on stdin (agy takes it as an argument — it doesn't read
+# stdin) and are asked to be read-only. The panel defaults to SHIP_FEATURE_REVIEWERS,
+# overridable with --reviewers. Only the text-on-stdin agents are supported here
+# (claude / codex / cursor / antigravity / qwen); `opencode` is relay-only (it needs
+# the file-attach path) and is skipped with a warning if listed.
+plan_tool_for() { case "$1" in
+  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;;
+  antigravity|agy) echo agy;; qwen) echo qwen;; *) echo "";; esac; }
+
+cmd_plan_review() {
+  load_config
+  local reviewers="" file="" parallel=0 explicit=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reviewers)   reviewers="$2"; explicit=1; shift 2;;
+      --reviewers=*) die "pass reviewers as two tokens: --reviewers <list> (the --reviewers=... form isn't supported)." ;;
+      --parallel)    parallel=1; shift;;
+      -h|--help)     echo "usage: ship-feature plan-review [<plan-file>] [--reviewers a,b,c] [--parallel]"; return 0;;
+      --) shift; break;;
+      -*)  die "unknown arg: $1" ;;
+      *)   [ -z "$file" ] || die "only one plan file may be given (got '$file' and '$1')."; file="$1"; shift;;
+    esac
+  done
+
+  # Resolve the plan text: explicit file, else stdin (a pipe), else ./plan.md, else give up.
+  local plan=""
+  if [ -n "$file" ] && [ "$file" != "-" ]; then
+    [ -f "$file" ] || die "plan file not found: $file"
+    plan="$(cat "$file")"
+  elif [ ! -t 0 ]; then
+    plan="$(cat)"                 # piped in on stdin
+  elif [ -f plan.md ]; then
+    file="plan.md"; plan="$(cat plan.md)"
+  else
+    die "no plan given — pass a file (ship-feature plan-review plan.md), pipe it on stdin, or create ./plan.md."
+  fi
+  [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "the plan is empty."
+
+  # Resolve the panel: --reviewers > SHIP_FEATURE_REVIEWERS > refuse (a plan review with
+  # nobody is not a review). Matches `relay`'s fail-closed stance on an unset quorum.
+  [ -z "$reviewers" ] && reviewers="${SHIP_FEATURE_REVIEWERS:-}"
+  [ -n "$reviewers" ] || die "no reviewers — pass --reviewers <list> or set SHIP_FEATURE_REVIEWERS (e.g. codex,qwen)."
+
+  local timeout_s="${SHIP_FEATURE_PLAN_TIMEOUT:-${PR_RELAY_AGENT_TIMEOUT:-300}}"
+  case "$timeout_s" in ''|*[!0-9]*|0) die "invalid SHIP_FEATURE_PLAN_TIMEOUT: '$timeout_s' (want a positive integer)";; esac
+
+  local PROMPT
+  PROMPT="$(printf '%s' \
+'You are reviewing an IMPLEMENTATION PLAN (provided on stdin), BEFORE any code is written.
+Judge it for: wrong assumptions, stale or incorrect facts about the codebase, missing edge
+cases, unhandled failure modes, risky or out-of-order steps, and anything it overlooks.
+You have read-only access — do NOT write code or modify anything. Be concise. Group findings
+by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one line.')"
+
+  echo "▶ Plan review — reviewers: $reviewers${file:+ — plan: $file}${parallel:+ — parallel}" >&2
+
+  # Per-reviewer outcome tracked as files so it survives the subshells used under
+  # --parallel (same technique as pr-review-relay).
+  local STATUS_DIR; STATUS_DIR="$(mktemp -d)" || die "cannot create temp dir"
+  skey() { printf 'k_%s' "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+
+  plan_review_with() {
+    local name="$1" tool out errf rc=0 Name
+    tool="$(plan_tool_for "$name")"
+    Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
+    errf="$(mktemp)"
+    case "$name" in
+      claude)      out=$(printf '%s' "$plan" | timeout "$timeout_s" claude -p "$PROMPT" 2>"$errf"); rc=$?;;
+      codex)       out=$(printf '%s' "$plan" | timeout "$timeout_s" codex exec --sandbox read-only "$PROMPT" 2>"$errf"); rc=$?;;
+      cursor)      out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | timeout "$timeout_s" cursor-agent -p --mode=ask 2>"$errf"); rc=$?;;
+      antigravity) out=$(timeout "$timeout_s" agy --dangerously-skip-permissions -p "$(printf '%s\n\n---\n%s' "$PROMPT" "$plan")" 2>"$errf"); rc=$?;;
+      qwen)        out=$(printf '%s' "$plan" | QWEN_CODE_SUPPRESS_YOLO_WARNING=1 timeout "$timeout_s" qwen --safe-mode --approval-mode yolo -p "$PROMPT" 2>"$errf"); rc=$?;;
+    esac
+    if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
+      local why="exited with code $rc"
+      case "$rc" in 0) why="ran but returned an empty review";; 124) why="timed out after ${timeout_s}s (raise SHIP_FEATURE_PLAN_TIMEOUT)";; 127) why="command not found";; esac
+      warn "$name: no review — $why"
+      [ "$rc" != 124 ] && [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /' >&2
+      echo fail > "$STATUS_DIR/$(skey "$name")"; rm -f "$errf"; return 0
+    fi
+    rm -f "$errf"
+    printf '\n========== %s (plan review) ==========\n%s\n=======================================\n' "$Name" "$out"
+    if [ "$rc" -ne 0 ]; then warn "$name: exited with code $rc — review may be truncated (not clean)"; echo fail > "$STATUS_DIR/$(skey "$name")"
+    else echo ok > "$STATUS_DIR/$(skey "$name")"; fi
+  }
+
+  # Dispatch, de-duping the panel; skip unknown/unsupported and missing CLIs (an
+  # explicitly-requested one that is missing is a hard failure, like the relay).
+  local r rk tool seen="" launched=0
+  local IFS_SAVE="$IFS"; IFS=','; set -- $reviewers; IFS="$IFS_SAVE"
+  for r in "$@"; do
+    r="$(printf '%s' "$r" | tr -d '[:space:]')"; [ -z "$r" ] && continue
+    [ "$r" = "agy" ] && r=antigravity
+    rk="$(skey "$r")"
+    case " $seen " in *" $rk "*) continue;; esac
+    seen="$seen $rk"
+    if [ "$r" = "opencode" ]; then warn "opencode is not supported in plan-review (relay-only); skipping."; continue; fi
+    tool="$(plan_tool_for "$r")"
+    if [ -z "$tool" ]; then
+      if [ "$explicit" = 1 ]; then echo fail > "$STATUS_DIR/$rk"; warn "unknown reviewer '$r' (explicitly requested → fail)"; else warn "unknown reviewer '$r' (skip)"; fi
+      continue
+    fi
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      if [ "$explicit" = 1 ]; then echo fail > "$STATUS_DIR/$rk"; warn "$tool not installed but explicitly requested → fail"; else warn "$tool not installed (skip $r)"; fi
+      continue
+    fi
+    launched=$((launched + 1))
+    echo "  → $r reviewing…" >&2
+    echo pending > "$STATUS_DIR/$rk"
+    if [ "$parallel" = 1 ]; then plan_review_with "$r" & else plan_review_with "$r"; fi
+  done
+  [ "$parallel" = 1 ] && wait
+
+  # Fail-closed verdict.
+  local f ran=0 failed=0 names=""
+  for f in "$STATUS_DIR"/*; do
+    [ -e "$f" ] || continue
+    ran=$((ran + 1))
+    if [ "$(cat "$f")" != ok ]; then failed=$((failed + 1)); names="$names ${f##*/k_}"; fi
+  done
+  rm -rf "$STATUS_DIR"
+  if [ "$ran" = 0 ]; then die "no reviewers ran — check the panel and installed CLIs."; fi
+  if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Fix and re-run." >&2; return 3; fi
+  echo "✔ Plan review done — $ran/$ran reviewer(s) responded. READ the findings and revise the plan before Gate 1." >&2
+  return 0
+}
+
 main() {
   local sub="${1:-help}"
   [ $# -gt 0 ] && shift
   case "$sub" in
-    preflight) cmd_preflight "$@" ;;
-    relay)     cmd_relay "$@" ;;
-    help|-h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+    preflight)   cmd_preflight "$@" ;;
+    relay)       cmd_relay "$@" ;;
+    plan-review) cmd_plan_review "$@" ;;
+    help|-h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
     *) die "unknown command: $sub (try: ship-feature help)" ;;
   esac
 }
