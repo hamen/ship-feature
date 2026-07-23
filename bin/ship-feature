@@ -347,7 +347,12 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
           # copy can't be made the reviewer just fails auth → fail-closed.
           local realhome="${HOME:-}"
           local cf; for cf in oauth_creds.json google_accounts.json; do
-            [ -e "$realhome/.gemini/$cf" ] && cp -L -p "$realhome/.gemini/$cf" "$giso/.gemini/$cf" 2>/dev/null || true
+            if [ -e "$realhome/.gemini/$cf" ]; then
+              # Warn (into $errf, surfaced if the reviewer then fails) when a real cred exists but can't
+              # be copied — otherwise an OAuth user just sees an opaque auth failure.
+              cp -L -p "$realhome/.gemini/$cf" "$giso/.gemini/$cf" 2>/dev/null \
+                || echo "warning: could not copy ~/.gemini/$cf into the isolated home; OAuth auth may fail (GEMINI_API_KEY auth is unaffected)" >> "$errf"
+            fi
           done
           # $errf is absolute, so the redirect survives the cd.
           out=$( cd "$giso" && printf '%s' "$plan" | run_reviewer env \

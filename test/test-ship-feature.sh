@@ -220,7 +220,8 @@ printf '%s' "$iso" | grep -q -- "homeiso=yes" && { echo "  ok   [-] antigravity 
 # so /etc/gemini-cli or an inherited hostile GEMINI_CLI_SYSTEM_SETTINGS_PATH can't re-enable anything.
 printf '%s' "$iso" | grep -q -- "sysiso=yes" && { echo "  ok   [-] antigravity isolates the SYSTEM settings scope too"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not isolate the system settings scope"; FAIL=$((FAIL+1)); }
 # And it must NOT run in the caller's CWD (where a checkout's .gemini/ would live).
-printf '%s' "$iso" | grep -q -- "cwd=$PWD " && { echo "  FAIL antigravity/gemini ran in the caller CWD (checkout .gemini/ could load)"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] antigravity/gemini ran outside the caller CWD"; PASS=$((PASS+1)); }
+# grep -F: $PWD may contain regex metacharacters (e.g. a dotted TMPDIR), so match it as a literal.
+printf '%s' "$iso" | grep -Fq -- "cwd=$PWD " && { echo "  FAIL antigravity/gemini ran in the caller CWD (checkout .gemini/ could load)"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] antigravity/gemini ran outside the caller CWD"; PASS=$((PASS+1)); }
 
 # agy and gemini are ALIASES of antigravity: the panel collapses them to a SINGLE gemini invocation.
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers antigravity,agy,gemini 2>/dev/null); rc=$?
