@@ -338,12 +338,14 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
           #   - cd $giso                 → WORKSPACE scope is the same locked file;
           #   - SYSTEM_SETTINGS_PATH     → SYSTEM scope (highest precedence) is the same locked file;
           #   - SYSTEM_DEFAULTS_PATH     → SYSTEM-DEFAULTS scope is an empty {}.
-          # GEMINI_CLI_HOME also moves where gemini looks for OAuth creds, so symlink the real ones in
-          # (GEMINI_API_KEY-based auth needs nothing — it rides the inherited env). If a symlink can't be
-          # made the reviewer just fails auth → fail-closed, never a silent unprotected run.
+          # GEMINI_CLI_HOME also moves where gemini looks for OAuth creds, so COPY the real ones in
+          # (GEMINI_API_KEY-based auth needs nothing — it rides the inherited env). COPY, not symlink: a
+          # symlink would let gemini's internal token-refresh writeFile follow it and mutate the user's
+          # REAL ~/.gemini creds; the copies (0600 under the 0700 temp dir) absorb any refresh write and
+          # are discarded on exit. If a copy can't be made the reviewer just fails auth → fail-closed.
           local realhome="${HOME:-}"
           local cf; for cf in oauth_creds.json google_accounts.json; do
-            [ -e "$realhome/.gemini/$cf" ] && ln -s "$realhome/.gemini/$cf" "$giso/.gemini/$cf" 2>/dev/null || true
+            [ -e "$realhome/.gemini/$cf" ] && cp -p "$realhome/.gemini/$cf" "$giso/.gemini/$cf" 2>/dev/null || true
           done
           # $errf is absolute, so the redirect survives the cd.
           out=$( cd "$giso" && printf '%s' "$plan" | run_reviewer env \
