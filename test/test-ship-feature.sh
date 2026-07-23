@@ -173,6 +173,9 @@ fi
 homeiso=no; [ -n "$GEMINI_CLI_HOME" ] && [ "$GEMINI_CLI_HOME" != "$PWD" ] && homeiso=yes
 # credsafe=yes when no OAuth credential file sits in the workspace (CWD) tree.
 credsafe=yes; { [ -e .gemini/oauth_creds.json ] || [ -e .gemini/google_accounts.json ]; } && credsafe=no
+# envstop=yes when a controlled .gemini/.env sits in the workspace, halting gemini's ancestor .env walk
+# (so a hostile /tmp/.env can't inject CODE_ASSIST_ENDPOINT / a base-URL override).
+envstop=no; [ -f .gemini/.env ] && envstop=yes
 # sysiso=yes when the SYSTEM + SYSTEM_DEFAULTS scopes are redirected under GEMINI_CLI_HOME (so
 # /etc/gemini-cli or an inherited hostile GEMINI_CLI_SYSTEM_SETTINGS_PATH can't apply).
 sysiso=no
@@ -180,7 +183,7 @@ case "$GEMINI_CLI_SYSTEM_SETTINGS_PATH" in "$GEMINI_CLI_HOME"/*)
   case "$GEMINI_CLI_SYSTEM_DEFAULTS_PATH" in "$GEMINI_CLI_HOME"/*) sysiso=yes;; esac;; esac
 # Isolation facts go on their OWN first line: the prompt (in argv) contains newlines, so anything
 # after argv=[$*] would land on an unrelated line and a single-line grep would miss it.
-echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso credsafe=$credsafe sysiso=$sysiso xdg=${XDG_CONFIG_HOME-UNSET}"
+echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso credsafe=$credsafe sysiso=$sysiso xdg=${XDG_CONFIG_HOME-UNSET} envstop=$envstop"
 echo "REVIEW-gemini argv=[$*]"
 exit 0
 GEMINISTUB
@@ -229,6 +232,8 @@ printf '%s' "$iso" | grep -q -- "homeiso=yes" && { echo "  ok   [-] antigravity 
 printf '%s' "$iso" | grep -q -- "credsafe=yes" && { echo "  ok   [-] antigravity keeps OAuth creds out of the workspace"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini left OAuth creds reachable in the workspace"; FAIL=$((FAIL+1)); }
 # XDG_CONFIG_HOME must be UNSET for the run (defence-in-depth against an XDG-honoring gemini).
 printf '%s' "$iso" | grep -q -- "xdg=UNSET" && { echo "  ok   [-] antigravity unsets XDG_CONFIG_HOME for the run"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not unset XDG_CONFIG_HOME"; FAIL=$((FAIL+1)); }
+# A controlled workspace .gemini/.env must halt gemini's ancestor .env walk (no hostile /tmp/.env).
+printf '%s' "$iso" | grep -q -- "envstop=yes" && { echo "  ok   [-] antigravity plants a controlled .env (blocks ancestor .env injection)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not block ancestor .env lookup"; FAIL=$((FAIL+1)); }
 # The SYSTEM scope (highest precedence) + system-defaults must also be redirected under GEMINI_CLI_HOME,
 # so /etc/gemini-cli or an inherited hostile GEMINI_CLI_SYSTEM_SETTINGS_PATH can't re-enable anything.
 printf '%s' "$iso" | grep -q -- "sysiso=yes" && { echo "  ok   [-] antigravity isolates the SYSTEM settings scope too"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not isolate the system settings scope"; FAIL=$((FAIL+1)); }
@@ -246,14 +251,17 @@ n=$(printf '%s\n' "$out" | grep -c 'REVIEW-gemini')
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_GEMINI_MODEL=my-model bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
 printf '%s' "$out" | grep 'REVIEW-gemini' | grep -q -- "-m my-model" && { echo "  ok   [-] SHIP_FEATURE_GEMINI_MODEL overrides the model"; PASS=$((PASS+1)); } || { echo "  FAIL SHIP_FEATURE_GEMINI_MODEL did not reach gemini argv"; FAIL=$((FAIL+1)); }
 
+# A model value starting with '-' must be rejected (can't be smuggled in as a gemini flag).
+( printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_GEMINI_MODEL=--dangerous bash "$CLI" plan-review --reviewers antigravity >/dev/null 2>&1 ); check "plan-review rejects a model name starting with '-' (1)" $? 1
+
 # antigravity in the panel but the gemini CLI missing → hard quorum failure (3), never a silent pass.
 # Build a SELF-CONTAINED PATH: the reviewer stubs plus symlinks to only the coreutils plan-review
 # needs — but deliberately NO gemini. Using a curated PATH (not the system one) means the test can't
 # be fooled by a real gemini sitting in /usr/bin on some machine (Cursor's nit).
 mkdir -p "$WORK/pbin-nogemini"
 for b in claude codex qwen cursor-agent; do cp "$PBIN/$b" "$WORK/pbin-nogemini/$b" 2>/dev/null; done
-# Include mkdir/cp so the antigravity branch's isolation setup (mkdir -p, cp -L the creds) would
-# succeed — the reviewer must then fail specifically because the `gemini` binary is absent, not the setup.
+# `command -v gemini` fails at dispatch BEFORE the antigravity branch runs, so exit 3 comes purely from
+# the missing binary. mkdir/cp are symlinked anyway so the curated PATH is a realistic minimal toolset.
 for t in bash env mkdir cp mktemp rm cat sed tail tr pgrep timeout grep; do
   p=$(command -v "$t" 2>/dev/null) && ln -sf "$p" "$WORK/pbin-nogemini/$t"
 done

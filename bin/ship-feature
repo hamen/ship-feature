@@ -311,6 +311,9 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # SHIP_FEATURE_GEMINI_MODEL). TRADEOFF: full isolation means gemini sees only the plan on stdin, not
   # the checkout's files (deep codebase fact-checking is the PR cross-review's job).
   local GEMINI_MODEL="${SHIP_FEATURE_GEMINI_MODEL:-gemini-3.1-pro-preview}"
+  # SHIP_FEATURE_GEMINI_MODEL is user config; reject a leading '-' so it can't be parsed as a gemini flag
+  # (e.g. `-m --dangerous`) instead of a model name.
+  case "$GEMINI_MODEL" in -*) die "invalid SHIP_FEATURE_GEMINI_MODEL: '$GEMINI_MODEL' (must not start with '-').";; esac
   # The locked, read-only settings the isolated gemini run loads (single line so the heredoc-free printf
   # stays Bash 3.2-safe). `tools.core` is an ALLOWLIST: gemini enables ONLY the tools named here, so any
   # write/exec/network tool — including one a future gemini-cli adds or renames — is disabled by
@@ -337,10 +340,14 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
         # never reach the credentials in ghome — a malicious plan cannot make gemini disclose them.
         local giso="$STATUS_DIR/gemini_iso_$key" ghome gwork
         ghome="$giso/home"; gwork="$giso/work"
+        # An empty `.gemini/.env` in the workspace (and home) stops gemini's ancestor `.env` search at
+        # our controlled dir, so it can't pick up a hostile `/tmp/.env` (or any ancestor .env) that sets
+        # CODE_ASSIST_ENDPOINT / a base-URL override and redirects auth or bearer tokens to an attacker.
         if mkdir -p "$ghome/.gemini" "$gwork/.gemini" \
            && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$ghome/.gemini/settings.json" \
            && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$gwork/.gemini/settings.json" \
-           && printf '%s' '{}' > "$ghome/.gemini/system-defaults.json"; then
+           && printf '%s' '{}' > "$ghome/.gemini/system-defaults.json" \
+           && : > "$ghome/.gemini/.env" && : > "$gwork/.gemini/.env"; then
           # Lock EVERY gemini settings scope to controlled files so no hostile config (user, workspace,
           # OR system — /etc/gemini-cli or an inherited GEMINI_CLI_SYSTEM_SETTINGS_PATH) can re-enable a
           # write tool, hook, or MCP server:
@@ -355,19 +362,27 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
           # write and are discarded on exit. `cp -L` DEREFERENCES: if the source cred is itself a symlink
           # we still get a real file (a plain `cp` would recreate the symlink and defeat this). A failed
           # copy just fails auth → fail-closed.
-          local realhome="${HOME:-}"
+          # Auth: GEMINI_API_KEY / GOOGLE_API_KEY (env) is the verified path — it rides the inherited
+          # env and needs nothing here. For OAuth users we also copy the real creds into ghome; because
+          # the locked settings drop the user's `security.auth.selectedType`, non-interactive gemini
+          # would refuse OAuth, so when creds are present we opt in with GOOGLE_GENAI_USE_GCA=true.
+          local realhome="${HOME:-}" gca_env=""
           local cf; for cf in oauth_creds.json google_accounts.json; do
             if [ -e "$realhome/.gemini/$cf" ]; then
               # Warn (into $errf, surfaced if the reviewer then fails) when a real cred exists but can't
               # be copied — otherwise an OAuth user just sees an opaque auth failure.
-              cp -L -p "$realhome/.gemini/$cf" "$ghome/.gemini/$cf" 2>/dev/null \
-                || echo "warning: could not copy ~/.gemini/$cf into the isolated home; OAuth auth may fail (GEMINI_API_KEY auth is unaffected)" >> "$errf"
+              if cp -L -p "$realhome/.gemini/$cf" "$ghome/.gemini/$cf" 2>/dev/null; then
+                gca_env="GOOGLE_GENAI_USE_GCA=true"
+              else
+                echo "warning: could not copy ~/.gemini/$cf into the isolated home; OAuth auth may fail (GEMINI_API_KEY auth is unaffected)" >> "$errf"
+              fi
             fi
           done
           # $errf is absolute, so the redirect survives the cd.
           # -u XDG_CONFIG_HOME: defence-in-depth in case a future gemini honors an XDG config path.
           out=$( cd "$gwork" && printf '%s' "$plan" | run_reviewer env \
                    -u XDG_CONFIG_HOME \
+                   ${gca_env:+"$gca_env"} \
                    GEMINI_CLI_HOME="$ghome" \
                    GEMINI_CLI_SYSTEM_SETTINGS_PATH="$ghome/.gemini/settings.json" \
                    GEMINI_CLI_SYSTEM_DEFAULTS_PATH="$ghome/.gemini/system-defaults.json" \
