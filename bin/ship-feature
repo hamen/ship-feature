@@ -175,13 +175,15 @@ cmd_relay() {
 # text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
 # load either), codex (--sandbox read-only), cursor (--mode=ask,
 # Q&A), qwen (--approval-mode plan, its read-only mode that denies edit/write/shell, plus
-# --safe-mode to also block checkout config), and antigravity/gemini via the `gemini` CLI
-# (default non-interactive mode already excludes shell/edit/write_file/web_fetch, and `-e none`
-# disables extensions). NOTE the deliberate overloading: in plan-review the reviewer name
+# --safe-mode to also block checkout config), and antigravity/gemini via the `gemini` CLI run
+# FAIL-CLOSED (see plan_review_with below): an isolated GEMINI_CLI_HOME + working dir with a locked
+# settings.json that hard-excludes the write tools, disables hooks, and loads no MCP — so NO user- or
+# checkout-scope config (mcpServers, hooks, tools.allowed) loads at all. This is the gemini analog of
+# claude/qwen `--safe-mode`. NOTE the deliberate overloading: in plan-review the reviewer name
 # `antigravity` (alias `agy`, `gemini`) maps to the `gemini` CLI — the only Gemini binary with a
-# read-only mode — whereas in `relay` `antigravity` maps to `agy`. The gemini read-only guarantee
-# is slightly WEAKER than claude/qwen `--safe-mode`: it cannot block a checkout's `.gemini/`
-# hooks/MCP, only its extensions, so run the plan gate from a trusted checkout.
+# read-only mode — whereas in `relay` `antigravity` maps to `agy`. TRADEOFF: because the run is fully
+# isolated, gemini reviews the PLAN TEXT ONLY and has no access to the checkout's files — deep codebase
+# fact-checking is the PR cross-review stage's job, not this cheap plan gate.
 # opencode is RELAY-ONLY here (it needs the file-attach path) — if listed it is skipped with a
 # warning, never run. That keeps the "read-only, nothing is written" guarantee true for the whole
 # set that actually runs.
@@ -290,19 +292,22 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # emits them in panel order after the barrier. qwen runs `--approval-mode plan` — its
   # genuine read-only mode that denies edit/write/shell — NOT `yolo` (which auto-approves
   # those). `--safe-mode` additionally blocks any checkout config from loading.
-  # antigravity runs the `gemini` CLI FAIL-CLOSED. Three layers, because default non-interactive
-  # mode alone is not enough — a checkout's `tools.allowed` can re-enable write tools and its hooks
-  # still fire:
-  #   1. an isolated working dir whose `.gemini/settings.json` HARD-excludes the write tools
-  #      (`tools.exclude` is an unconditional blocklist, unaffected by any `tools.allowed`), disables
-  #      hooks (`hooksConfig.enabled:false`, so no SessionStart shell), and loads no MCP;
-  #   2. we run gemini FROM that dir, so the reviewed checkout's own `.gemini/` never loads;
-  #   3. default non-interactive mode + `-e none` (extensions off) on top.
-  # This is the gemini analog of claude/qwen `--safe-mode`: it neutralizes the CHECKOUT's config; the
-  # user's own global ~/.gemini is trusted, exactly as --safe-mode trusts the user's global claude
-  # config. NOT `--approval-mode plan` (throws in v0.26.0 unless `experimental.plan` is enabled). `-m`
-  # pins a model because the CLI's built-in default is a retired model that 404s (override via
-  # SHIP_FEATURE_GEMINI_MODEL).
+  # antigravity runs the `gemini` CLI FAIL-CLOSED. Default non-interactive mode alone is NOT enough —
+  # a checkout's (or the user's) `tools.allowed` can re-enable write tools, and hooks/MCP still load.
+  # So we run gemini with BOTH an isolated GEMINI_CLI_HOME and an isolated working dir set to the same
+  # locked directory, whose `.gemini/settings.json`:
+  #   - HARD-excludes the write tools via `tools.exclude` (an unconditional blocklist, unaffected by
+  #     any `tools.allowed`);
+  #   - disables hooks (`hooksConfig.enabled:false`, so no SessionStart shell);
+  #   - declares no MCP servers.
+  # Because GEMINI_CLI_HOME (the gemini CLI honors it over $HOME/os.homedir) redirects the USER settings
+  # scope and the CWD is that same dir, NEITHER the user's real ~/.gemini NOR the reviewed checkout's
+  # .gemini contributes any mcpServers, hooks, or tools.allowed — closing the shallow-merge hole where a
+  # `mcpServers:{}` override would leave global MCP servers loaded. Plus `-e none` (extensions off) and
+  # default non-interactive mode. NOT `--approval-mode plan` (throws in v0.26.0 unless `experimental.plan`
+  # is enabled). This is the gemini analog of claude/qwen `--safe-mode`. `-m` pins a model because the
+  # CLI's built-in default is a retired model that 404s (override via SHIP_FEATURE_GEMINI_MODEL).
+  # TRADEOFF: full isolation means gemini sees only the plan on stdin, not the checkout's files.
   local GEMINI_MODEL="${SHIP_FEATURE_GEMINI_MODEL:-gemini-3.1-pro-preview}"
   # The locked, read-only settings the isolated gemini run loads (single line so the heredoc-free
   # printf stays Bash 3.2-safe). save_memory is excluded too so it can't write to the config dir.
@@ -317,11 +322,17 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
       cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask 2>"$errf"); rc=$?;;
       qwen)   out=$(printf '%s' "$plan" | run_reviewer qwen --safe-mode --approval-mode plan -p "$PROMPT" 2>"$errf"); rc=$?;;
       antigravity)
+        # Security-critical: if we can't create the locked settings, FAIL — never fall through to a
+        # gemini run without the read-only config. $giso lives under STATUS_DIR (mktemp, 0700, cleaned
+        # on exit) which normally sits in $TMPDIR, outside any reviewed checkout.
         local giso="$STATUS_DIR/gemini_iso_$key"
-        mkdir -p "$giso/.gemini"
-        printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$giso/.gemini/settings.json"
-        # Run FROM the isolated dir ($errf is absolute, so the redirect survives the cd).
-        out=$( cd "$giso" && printf '%s' "$plan" | run_reviewer gemini -e none -m "$GEMINI_MODEL" -p "$PROMPT" 2>"$errf" ); rc=$?;;
+        if mkdir -p "$giso/.gemini" && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$giso/.gemini/settings.json"; then
+          # GEMINI_CLI_HOME=$giso redirects the USER settings scope; cd $giso makes it the workspace too,
+          # so no real user/checkout config loads. $errf is absolute, so the redirect survives the cd.
+          out=$( cd "$giso" && printf '%s' "$plan" | run_reviewer env GEMINI_CLI_HOME="$giso" gemini -e none -m "$GEMINI_MODEL" -p "$PROMPT" 2>"$errf" ); rc=$?
+        else
+          echo "could not create the isolated read-only gemini settings" > "$errf"; rc=1; out=""
+        fi;;
     esac
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
       why="exited with code $rc"

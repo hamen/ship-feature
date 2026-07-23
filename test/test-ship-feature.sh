@@ -149,14 +149,21 @@ make_reviewer cursor 0 cursor-agent
 # off) is present in that CWD — so the read-only isolation contract can be asserted, not just argv.
 cat > "$PBIN/gemini" <<'GEMINISTUB'
 #!/usr/bin/env bash
+# locked=yes only if the CWD settings hard-exclude ALL FIVE write tools and disable hooks.
 locked=no
-if [ -f .gemini/settings.json ] \
-   && grep -q '"write_file"' .gemini/settings.json \
-   && grep -q '"run_shell_command"' .gemini/settings.json \
-   && grep -q '"enabled":false' .gemini/settings.json; then locked=yes; fi
+if [ -f .gemini/settings.json ]; then
+  ok=yes
+  for tool in run_shell_command replace write_file web_fetch save_memory; do
+    grep -q "\"$tool\"" .gemini/settings.json || ok=no
+  done
+  grep -q '"enabled":false' .gemini/settings.json || ok=no
+  locked=$ok
+fi
+# homeiso=yes when GEMINI_CLI_HOME is set to this same isolated CWD (so no real ~/.gemini loads).
+homeiso=no; [ -n "$GEMINI_CLI_HOME" ] && [ "$GEMINI_CLI_HOME" = "$PWD" ] && homeiso=yes
 # Isolation facts go on their OWN first line: the prompt (in argv) contains newlines, so anything
 # after argv=[$*] would land on an unrelated line and a single-line grep would miss it.
-echo "GEMINI-ISO cwd=$PWD locked=$locked"
+echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso"
 echo "REVIEW-gemini argv=[$*]"
 exit 0
 GEMINISTUB
@@ -197,9 +204,11 @@ printf '%s' "$ag" | grep -q -- "yolo" && { echo "  FAIL gemini uses the auto-app
 # hard-excludes the write tools and disables hooks, so a reviewed checkout's own config can't
 # re-enable writes. The stub reports locked=yes only when that settings file is present in its CWD.
 iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
-printf '%s' "$iso" | grep -q -- "locked=yes" && { echo "  ok   [-] antigravity runs fail-closed (isolated CWD + locked tools.exclude/hooks-off settings)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini not isolated with locked read-only settings"; FAIL=$((FAIL+1)); }
+printf '%s' "$iso" | grep -q -- "locked=yes" && { echo "  ok   [-] antigravity runs fail-closed (all 5 write tools excluded + hooks off)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini not isolated with locked read-only settings"; FAIL=$((FAIL+1)); }
+# GEMINI_CLI_HOME must point at that same isolated dir, so no real user ~/.gemini (mcpServers/hooks) loads.
+printf '%s' "$iso" | grep -q -- "homeiso=yes" && { echo "  ok   [-] antigravity isolates GEMINI_CLI_HOME (no user-scope mcpServers/hooks)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not isolate GEMINI_CLI_HOME"; FAIL=$((FAIL+1)); }
 # And it must NOT run in the caller's CWD (where a checkout's .gemini/ would live).
-printf '%s' "$iso" | grep -q -- "cwd=$PWD$" && { echo "  FAIL antigravity/gemini ran in the caller CWD (checkout .gemini/ could load)"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] antigravity/gemini ran outside the caller CWD"; PASS=$((PASS+1)); }
+printf '%s' "$iso" | grep -q -- "cwd=$PWD " && { echo "  FAIL antigravity/gemini ran in the caller CWD (checkout .gemini/ could load)"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] antigravity/gemini ran outside the caller CWD"; PASS=$((PASS+1)); }
 
 # agy and gemini are ALIASES of antigravity: the panel collapses them to a SINGLE gemini invocation.
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers antigravity,agy,gemini 2>/dev/null); rc=$?
@@ -220,7 +229,9 @@ for b in claude codex qwen cursor-agent; do cp "$PBIN/$b" "$WORK/pbin-nogemini/$
 for t in bash env mktemp rm cat sed tail tr pgrep timeout grep; do
   p=$(command -v "$t" 2>/dev/null) && ln -sf "$p" "$WORK/pbin-nogemini/$t"
 done
-( printf 'plan\n' | env -i PATH="$WORK/pbin-nogemini" HOME="$HOME" bash "$CLI" plan-review --reviewers codex,antigravity >/dev/null 2>&1 ); check "plan-review fails the quorum when the gemini CLI is missing (3)" $? 3
+# SHIP_FEATURE_CONFIG=/dev/null is passed explicitly: env -i clears the exported one, and without it
+# the subshell would load the user's real ~/.config/ship-feature/config and become non-deterministic.
+( printf 'plan\n' | env -i PATH="$WORK/pbin-nogemini" HOME="$HOME" SHIP_FEATURE_CONFIG=/dev/null bash "$CLI" plan-review --reviewers codex,antigravity >/dev/null 2>&1 ); check "plan-review fails the quorum when the gemini CLI is missing (3)" $? 3
 
 # default panel comes from SHIP_FEATURE_REVIEWERS when --reviewers is omitted
 out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,cursor bash "$CLI" plan-review 2>/dev/null); rc=$?

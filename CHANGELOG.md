@@ -9,15 +9,19 @@ All notable changes to **ship-feature** are documented here. This project follow
 ### Added
 
 - **`antigravity`/`gemini` is now a read-only reviewer in `ship-feature plan-review`.** It runs the
-  `gemini` CLI **fail-closed**: from an isolated working dir whose locked `.gemini/settings.json`
-  hard-excludes the write tools (`run_shell_command`, `replace`, `write_file`, `web_fetch`,
-  `save_memory` via `tools.exclude`, an unconditional blocklist), disables hooks
-  (`hooksConfig.enabled:false`, so no `SessionStart` shell), and loads no MCP — so a reviewed checkout's
-  own `.gemini/` can never re-enable a write tool or fire a hook. Default non-interactive mode and
-  `-e none` (extensions off) are layered on top. `--approval-mode plan` is **not** used: in gemini-cli
-  v0.26.0 it throws unless `experimental.plan` is enabled. This is the gemini analog of claude/qwen
-  `--safe-mode`. The reviewer names `antigravity`, `agy`, and `gemini` are aliases that collapse to a
-  single Gemini run.
+  `gemini` CLI **fail-closed**: an isolated `GEMINI_CLI_HOME` **and** working dir with a locked
+  `.gemini/settings.json` that hard-excludes the write tools (`run_shell_command`, `replace`,
+  `write_file`, `web_fetch`, `save_memory` via `tools.exclude`, an unconditional blocklist), disables
+  hooks (`hooksConfig.enabled:false`, so no `SessionStart` shell), and declares no MCP. Because
+  `GEMINI_CLI_HOME` redirects the USER settings scope and the CWD is that same dir, **neither the user's
+  real `~/.gemini` nor a reviewed checkout's `.gemini/` contributes any `mcpServers`, hooks, or
+  `tools.allowed`** — closing the shallow-merge hole where a `mcpServers:{}` override would still leave
+  global MCP servers loaded. Default non-interactive mode and `-e none` (extensions off) are layered on
+  top. `--approval-mode plan` is **not** used: in gemini-cli v0.26.0 it throws unless `experimental.plan`
+  is enabled. This is the gemini analog of claude/qwen `--safe-mode`. **Tradeoff:** the isolated run sees
+  only the plan text, not the checkout's files (deep codebase fact-checking is the PR cross-review's
+  job). The reviewer names `antigravity`, `agy`, and `gemini` are aliases that collapse to a single
+  Gemini run.
 - **`SHIP_FEATURE_GEMINI_MODEL`** (env or config) pins the model for that reviewer. Default
   `gemini-3.1-pro-preview`, because the CLI's own built-in default is a retired model that 404s.
 
@@ -32,9 +36,10 @@ All notable changes to **ship-feature** are documented here. This project follow
 ### Notes
 
 - The `antigravity` name maps to two different binaries by command: the `gemini` CLI in `plan-review`
-  (the only Gemini binary with a read-only mode) and `agy` in `relay` (unchanged). As with claude/qwen
-  `--safe-mode`, the isolation neutralizes the reviewed *checkout's* config; the user's own global
-  `~/.gemini` is trusted (exactly as `--safe-mode` trusts the user's global claude config).
+  (the only Gemini binary with a read-only mode) and `agy` in `relay` (unchanged). The `plan-review`
+  isolation is stronger than a pure `--safe-mode`: it neutralizes both the reviewed *checkout's* config
+  and the user's own global `~/.gemini` (via `GEMINI_CLI_HOME`), at the cost of the reviewer not seeing
+  the checkout's files.
 
 ## [0.2.0] — 2026-07-22
 
