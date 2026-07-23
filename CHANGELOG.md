@@ -9,11 +9,15 @@ All notable changes to **ship-feature** are documented here. This project follow
 ### Added
 
 - **`antigravity`/`gemini` is now a read-only reviewer in `ship-feature plan-review`.** It runs the
-  `gemini` CLI in its default non-interactive mode — which already excludes the `shell`, `edit`,
-  `write_file`, and `web_fetch` tools — with `-e none` to disable extensions. `--approval-mode plan` is
-  **not** used: in gemini-cli v0.26.0 it throws unless `experimental.plan` is enabled, and default mode
-  gives the same tool exclusions. The reviewer names `antigravity`, `agy`, and `gemini` are aliases that
-  collapse to a single Gemini run.
+  `gemini` CLI **fail-closed**: from an isolated working dir whose locked `.gemini/settings.json`
+  hard-excludes the write tools (`run_shell_command`, `replace`, `write_file`, `web_fetch`,
+  `save_memory` via `tools.exclude`, an unconditional blocklist), disables hooks
+  (`hooksConfig.enabled:false`, so no `SessionStart` shell), and loads no MCP — so a reviewed checkout's
+  own `.gemini/` can never re-enable a write tool or fire a hook. Default non-interactive mode and
+  `-e none` (extensions off) are layered on top. `--approval-mode plan` is **not** used: in gemini-cli
+  v0.26.0 it throws unless `experimental.plan` is enabled. This is the gemini analog of claude/qwen
+  `--safe-mode`. The reviewer names `antigravity`, `agy`, and `gemini` are aliases that collapse to a
+  single Gemini run.
 - **`SHIP_FEATURE_GEMINI_MODEL`** (env or config) pins the model for that reviewer. Default
   `gemini-3.1-pro-preview`, because the CLI's own built-in default is a retired model that 404s.
 
@@ -28,9 +32,9 @@ All notable changes to **ship-feature** are documented here. This project follow
 ### Notes
 
 - The `antigravity` name maps to two different binaries by command: the `gemini` CLI in `plan-review`
-  (the only Gemini binary with a read-only mode) and `agy` in `relay` (unchanged). The gemini read-only
-  guarantee is slightly weaker than claude/qwen `--safe-mode`: it disables extensions but cannot block a
-  checkout's `.gemini/` hooks or MCP servers, so run the plan gate from a trusted checkout.
+  (the only Gemini binary with a read-only mode) and `agy` in `relay` (unchanged). As with claude/qwen
+  `--safe-mode`, the isolation neutralizes the reviewed *checkout's* config; the user's own global
+  `~/.gemini` is trusted (exactly as `--safe-mode` trusts the user's global claude config).
 
 ## [0.2.0] — 2026-07-22
 

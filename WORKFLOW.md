@@ -38,12 +38,13 @@ With no `--reviewers` it uses `SHIP_FEATURE_PLAN_REVIEWERS` (falling back to `SH
 your quorum); with no file and no stdin it reads `./plan.md`. Reviewers run **read-only** and nothing is
 written or posted — supported: `claude` (`--permission-mode plan`), `codex` (`--sandbox read-only`),
 `cursor` (ask mode), `qwen` (`--approval-mode plan` + `--safe-mode`), and `antigravity`/`gemini` via the
-`gemini` CLI (default non-interactive mode excludes shell/edit/write, `-e none` disables extensions;
-model pinned to `gemini-3.1-pro-preview`, override with `SHIP_FEATURE_GEMINI_MODEL`). Note the
-`antigravity` name maps to the `gemini` CLI **here** but to `agy` in `relay` — only `gemini` has a
-read-only mode; its guarantee is slightly weaker than claude/qwen `--safe-mode` (it can't block a
-checkout's `.gemini/` hooks/MCP), so run the plan gate from a trusted checkout. `opencode` is relay-only
-and skipped with a warning. Exit `0` = every reviewer responded, `3` = a reviewer
+`gemini` CLI. The gemini run is fail-closed: it runs from an isolated dir whose locked
+`.gemini/settings.json` hard-excludes the write tools (`run_shell_command`, `replace`, `write_file`,
+`web_fetch`, `save_memory`), disables hooks, and loads no MCP — so a reviewed checkout's own `.gemini/`
+can never re-enable writes or fire a `SessionStart` hook (the gemini analog of claude/qwen `--safe-mode`;
+default non-interactive mode + `-e none` on top). Model pinned to `gemini-3.1-pro-preview`, override with
+`SHIP_FEATURE_GEMINI_MODEL`. Note the `antigravity` name maps to the `gemini` CLI **here** but to `agy` in
+`relay` — only `gemini` has a read-only mode. `opencode` is relay-only and skipped with a warning. Exit `0` = every reviewer responded, `3` = a reviewer
 failed/timed out/returned empty (re-run), `1` = usage error. The single-reviewer default still works too:
 `cat plan.md | codex exec --sandbox read-only`.
 
