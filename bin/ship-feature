@@ -329,42 +329,48 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
       qwen)   out=$(printf '%s' "$plan" | run_reviewer qwen --safe-mode --approval-mode plan -p "$PROMPT" 2>"$errf"); rc=$?;;
       antigravity)
         # Security-critical: if we can't create the locked settings, FAIL — never fall through to a
-        # gemini run without the read-only config. $giso lives under STATUS_DIR (mktemp, 0700, cleaned
-        # on exit) which normally sits in $TMPDIR, outside any reviewed checkout.
-        local giso="$STATUS_DIR/gemini_iso_$key"
-        if mkdir -p "$giso/.gemini" \
-           && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$giso/.gemini/settings.json" \
-           && printf '%s' '{}' > "$giso/.gemini/system-defaults.json"; then
+        # gemini run without the read-only config. Everything lives under STATUS_DIR (mktemp, 0700,
+        # cleaned on exit), normally in $TMPDIR, outside any reviewed checkout. Use TWO sibling dirs:
+        #   ghome = GEMINI_CLI_HOME (holds the copied OAuth creds)
+        #   gwork = the CWD / workspace
+        # kept SEPARATE so the allowlisted read_file tool (which gemini restricts to the workspace) can
+        # never reach the credentials in ghome — a malicious plan cannot make gemini disclose them.
+        local giso="$STATUS_DIR/gemini_iso_$key" ghome gwork
+        ghome="$giso/home"; gwork="$giso/work"
+        if mkdir -p "$ghome/.gemini" "$gwork/.gemini" \
+           && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$ghome/.gemini/settings.json" \
+           && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$gwork/.gemini/settings.json" \
+           && printf '%s' '{}' > "$ghome/.gemini/system-defaults.json"; then
           # Lock EVERY gemini settings scope to controlled files so no hostile config (user, workspace,
           # OR system — /etc/gemini-cli or an inherited GEMINI_CLI_SYSTEM_SETTINGS_PATH) can re-enable a
           # write tool, hook, or MCP server:
-          #   - GEMINI_CLI_HOME=$giso    → USER scope reads $giso/.gemini/settings.json (the locked file);
-          #   - cd $giso                 → WORKSPACE scope is the same locked file;
-          #   - SYSTEM_SETTINGS_PATH     → SYSTEM scope (highest precedence) is the same locked file;
+          #   - GEMINI_CLI_HOME=$ghome   → USER scope reads $ghome/.gemini/settings.json (locked);
+          #   - cd $gwork                → WORKSPACE scope reads $gwork/.gemini/settings.json (locked);
+          #   - SYSTEM_SETTINGS_PATH     → SYSTEM scope (highest precedence) is the locked file;
           #   - SYSTEM_DEFAULTS_PATH     → SYSTEM-DEFAULTS scope is an empty {}.
-          # GEMINI_CLI_HOME also moves where gemini looks for OAuth creds, so COPY the real ones in
-          # (GEMINI_API_KEY-based auth needs nothing — it rides the inherited env). COPY, not symlink: a
-          # symlink would let gemini's internal token-refresh writeFile follow it and mutate the user's
-          # REAL ~/.gemini creds; the copies (0600 under the 0700 temp dir) absorb any refresh write and
-          # are discarded on exit. `cp -L` DEREFERENCES: if the source cred is itself a symlink, we still
-          # get a real file in the sandbox (a plain `cp` would recreate the symlink and defeat this). If a
-          # copy can't be made the reviewer just fails auth → fail-closed.
+          # GEMINI_CLI_HOME also moves where gemini looks for OAuth creds, so COPY the real ones into
+          # ghome (GEMINI_API_KEY-based auth needs nothing — it rides the inherited env). COPY, not
+          # symlink: a symlink would let gemini's internal token-refresh writeFile follow it and mutate
+          # the user's REAL ~/.gemini creds; the copies (0600 under the 0700 temp dir) absorb any refresh
+          # write and are discarded on exit. `cp -L` DEREFERENCES: if the source cred is itself a symlink
+          # we still get a real file (a plain `cp` would recreate the symlink and defeat this). A failed
+          # copy just fails auth → fail-closed.
           local realhome="${HOME:-}"
           local cf; for cf in oauth_creds.json google_accounts.json; do
             if [ -e "$realhome/.gemini/$cf" ]; then
               # Warn (into $errf, surfaced if the reviewer then fails) when a real cred exists but can't
               # be copied — otherwise an OAuth user just sees an opaque auth failure.
-              cp -L -p "$realhome/.gemini/$cf" "$giso/.gemini/$cf" 2>/dev/null \
+              cp -L -p "$realhome/.gemini/$cf" "$ghome/.gemini/$cf" 2>/dev/null \
                 || echo "warning: could not copy ~/.gemini/$cf into the isolated home; OAuth auth may fail (GEMINI_API_KEY auth is unaffected)" >> "$errf"
             fi
           done
           # $errf is absolute, so the redirect survives the cd.
           # -u XDG_CONFIG_HOME: defence-in-depth in case a future gemini honors an XDG config path.
-          out=$( cd "$giso" && printf '%s' "$plan" | run_reviewer env \
+          out=$( cd "$gwork" && printf '%s' "$plan" | run_reviewer env \
                    -u XDG_CONFIG_HOME \
-                   GEMINI_CLI_HOME="$giso" \
-                   GEMINI_CLI_SYSTEM_SETTINGS_PATH="$giso/.gemini/settings.json" \
-                   GEMINI_CLI_SYSTEM_DEFAULTS_PATH="$giso/.gemini/system-defaults.json" \
+                   GEMINI_CLI_HOME="$ghome" \
+                   GEMINI_CLI_SYSTEM_SETTINGS_PATH="$ghome/.gemini/settings.json" \
+                   GEMINI_CLI_SYSTEM_DEFAULTS_PATH="$ghome/.gemini/system-defaults.json" \
                    gemini -e none -m "$GEMINI_MODEL" -p "$PROMPT" 2>"$errf" ); rc=$?
         else
           echo "could not create the isolated read-only gemini settings" > "$errf"; rc=1; out=""

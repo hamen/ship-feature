@@ -15,12 +15,14 @@ All notable changes to **ship-feature** are documented here. This project follow
   write/exec/network tool, including one a future gemini-cli adds or renames, is disabled by default
   rather than slipping past a denylist — with `tools.exclude` naming today's known write tools as extra
   defence-in-depth. It also disables hooks (`hooksConfig.enabled:false`, so no `SessionStart` shell) and
-  declares no MCP. Because
-  `GEMINI_CLI_HOME` redirects the USER settings scope and the CWD is that same dir, **neither the user's
-  real `~/.gemini` nor a reviewed checkout's `.gemini/` contributes any `mcpServers`, hooks, or
-  `tools.allowed`** — closing the shallow-merge hole where a `mcpServers:{}` override would still leave
-  global MCP servers loaded. Default non-interactive mode and `-e none` (extensions off) are layered on
-  top. `--approval-mode plan` is **not** used: in gemini-cli v0.26.0 it throws unless `experimental.plan`
+  declares no MCP. All four gemini settings scopes are redirected to controlled files (user via
+  `GEMINI_CLI_HOME`, workspace via the CWD, system + system-defaults via `GEMINI_CLI_SYSTEM_SETTINGS_PATH`
+  / `GEMINI_CLI_SYSTEM_DEFAULTS_PATH`), so **neither the user's real `~/.gemini`, nor a reviewed
+  checkout's `.gemini/`, nor `/etc/gemini-cli` contributes any `mcpServers`, hooks, or `tools.allowed`**
+  — closing the shallow-merge hole where a `mcpServers:{}` override would still leave global MCP servers
+  loaded. `GEMINI_CLI_HOME` and the workspace are **separate sibling dirs**, so the copied OAuth creds
+  live outside the workspace and the allowlisted `read_file` can't disclose them. `XDG_CONFIG_HOME` is
+  unset for the run. Default non-interactive mode and `-e none` (extensions off) are layered on top. `--approval-mode plan` is **not** used: in gemini-cli v0.26.0 it throws unless `experimental.plan`
   is enabled. This is the gemini analog of claude/qwen `--safe-mode`. **Tradeoff:** the isolated run sees
   only the plan text, not the checkout's files (deep codebase fact-checking is the PR cross-review's
   job). The reviewer names `antigravity`, `agy`, and `gemini` are aliases that collapse to a single

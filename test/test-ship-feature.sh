@@ -149,8 +149,9 @@ make_reviewer cursor 0 cursor-agent
 # off) is present in that CWD — so the read-only isolation contract can be asserted, not just argv.
 cat > "$PBIN/gemini" <<'GEMINISTUB'
 #!/usr/bin/env bash
-# locked=yes only if the CWD settings put ALL FIVE write tools inside "exclude" (NOT "allowed"),
-# disable hooks, and declare no MCP servers — a structural check, not just tool-name presence.
+# locked=yes only if the workspace settings allowlist exactly the read-only tools, deny-list ALL of
+# today's write tools, disable hooks (hooksConfig-specific), and declare no MCP — structural, not just
+# tool-name presence.
 locked=no
 if [ -f .gemini/settings.json ]; then
   ok=yes
@@ -158,24 +159,28 @@ if [ -f .gemini/settings.json ]; then
   # write tool) — assert the exact array, so a stray write tool added to core fails the test.
   grep -q '"core":\["read_file","read_many_files","glob","search_file_content","list_directory"\]' .gemini/settings.json || ok=no
   grep -q '"allowed"' .gemini/settings.json && ok=no        # a locked file must NOT re-allow anything
-  # Known write tools must also be named in the exclude denylist (defence-in-depth).
-  for tool in run_shell_command replace write_file web_fetch save_memory; do
+  # EVERY write tool named in GEMINI_LOCKED_SETTINGS must sit inside the "exclude" array (defence-in-depth).
+  for tool in run_shell_command replace write_file web_fetch google_web_search save_memory write_todos delegate_to_agent; do
     grep -q "\"exclude\":\[[^]]*\"$tool\"" .gemini/settings.json || ok=no
   done
-  grep -q '"enabled":false' .gemini/settings.json || ok=no
+  # Match hooksConfig specifically, so a stray "enabled":false elsewhere can't satisfy it.
+  grep -q '"hooksConfig":{"enabled":false}' .gemini/settings.json || ok=no
   grep -q '"mcpServers":{}' .gemini/settings.json || ok=no
   locked=$ok
 fi
-# homeiso=yes when GEMINI_CLI_HOME is this isolated CWD (so no real ~/.gemini settings load).
-homeiso=no; [ -n "$GEMINI_CLI_HOME" ] && [ "$GEMINI_CLI_HOME" = "$PWD" ] && homeiso=yes
-# sysiso=yes when the SYSTEM + SYSTEM_DEFAULTS scopes are also redirected under this isolated dir
-# (so /etc/gemini-cli or an inherited hostile GEMINI_CLI_SYSTEM_SETTINGS_PATH can't apply).
+# homeiso=yes when GEMINI_CLI_HOME is set to a SEPARATE dir from the workspace (CWD), so the copied
+# OAuth creds live outside the workspace and the allowlisted read_file can't reach them.
+homeiso=no; [ -n "$GEMINI_CLI_HOME" ] && [ "$GEMINI_CLI_HOME" != "$PWD" ] && homeiso=yes
+# credsafe=yes when no OAuth credential file sits in the workspace (CWD) tree.
+credsafe=yes; { [ -e .gemini/oauth_creds.json ] || [ -e .gemini/google_accounts.json ]; } && credsafe=no
+# sysiso=yes when the SYSTEM + SYSTEM_DEFAULTS scopes are redirected under GEMINI_CLI_HOME (so
+# /etc/gemini-cli or an inherited hostile GEMINI_CLI_SYSTEM_SETTINGS_PATH can't apply).
 sysiso=no
-case "$GEMINI_CLI_SYSTEM_SETTINGS_PATH" in "$PWD"/*)
-  case "$GEMINI_CLI_SYSTEM_DEFAULTS_PATH" in "$PWD"/*) sysiso=yes;; esac;; esac
+case "$GEMINI_CLI_SYSTEM_SETTINGS_PATH" in "$GEMINI_CLI_HOME"/*)
+  case "$GEMINI_CLI_SYSTEM_DEFAULTS_PATH" in "$GEMINI_CLI_HOME"/*) sysiso=yes;; esac;; esac
 # Isolation facts go on their OWN first line: the prompt (in argv) contains newlines, so anything
 # after argv=[$*] would land on an unrelated line and a single-line grep would miss it.
-echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso sysiso=$sysiso"
+echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso credsafe=$credsafe sysiso=$sysiso xdg=${XDG_CONFIG_HOME-UNSET}"
 echo "REVIEW-gemini argv=[$*]"
 exit 0
 GEMINISTUB
@@ -206,7 +211,8 @@ printf '%s' "$out" | grep -q -- "--approval-mode yolo"         && { echo "  FAIL
 # antigravity/gemini runs the `gemini` CLI in DEFAULT non-interactive mode (already excludes
 # shell/edit/write_file/web_fetch) with `-e none` to disable extensions. It must NOT pass
 # `--approval-mode plan` (throws unless experimental.plan is on) nor `yolo` (auto-approves writes).
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+# Set XDG_CONFIG_HOME so the assertion below can prove the run UNSETS it.
+out=$(printf 'plan\n' | XDG_CONFIG_HOME=/tmp/xdg-should-be-unset PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
 ag=$(printf '%s' "$out" | grep 'REVIEW-gemini')
 printf '%s' "$ag" | grep -q -- "-e none" && { echo "  ok   [-] antigravity runs gemini with extensions off (-e none)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not pass -e none"; FAIL=$((FAIL+1)); }
 printf '%s' "$ag" | grep -q -- "-m gemini-3.1-pro-preview" && { echo "  ok   [-] antigravity pins a working model by default"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not pin the default model"; FAIL=$((FAIL+1)); }
@@ -216,10 +222,14 @@ printf '%s' "$ag" | grep -q -- "yolo" && { echo "  FAIL gemini uses the auto-app
 # hard-excludes the write tools and disables hooks, so a reviewed checkout's own config can't
 # re-enable writes. The stub reports locked=yes only when that settings file is present in its CWD.
 iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
-printf '%s' "$iso" | grep -q -- "locked=yes" && { echo "  ok   [-] antigravity runs fail-closed (all 5 write tools excluded + hooks off)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini not isolated with locked read-only settings"; FAIL=$((FAIL+1)); }
-# GEMINI_CLI_HOME must point at that same isolated dir, so no real user ~/.gemini (mcpServers/hooks) loads.
-printf '%s' "$iso" | grep -q -- "homeiso=yes" && { echo "  ok   [-] antigravity isolates GEMINI_CLI_HOME (no user-scope mcpServers/hooks)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not isolate GEMINI_CLI_HOME"; FAIL=$((FAIL+1)); }
-# The SYSTEM scope (highest precedence) + system-defaults must also be redirected under the isolated dir,
+printf '%s' "$iso" | grep -q -- "locked=yes" && { echo "  ok   [-] antigravity runs fail-closed (read-only tools.core allowlist, all write tools excluded, hooks off, no MCP)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini not isolated with locked read-only settings"; FAIL=$((FAIL+1)); }
+# GEMINI_CLI_HOME must be a SEPARATE dir from the workspace so the copied OAuth creds live outside it.
+printf '%s' "$iso" | grep -q -- "homeiso=yes" && { echo "  ok   [-] antigravity isolates GEMINI_CLI_HOME separate from the workspace"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not separate GEMINI_CLI_HOME from the workspace"; FAIL=$((FAIL+1)); }
+# No OAuth credential file may sit in the workspace tree (else the allowlisted read_file could disclose it).
+printf '%s' "$iso" | grep -q -- "credsafe=yes" && { echo "  ok   [-] antigravity keeps OAuth creds out of the workspace"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini left OAuth creds reachable in the workspace"; FAIL=$((FAIL+1)); }
+# XDG_CONFIG_HOME must be UNSET for the run (defence-in-depth against an XDG-honoring gemini).
+printf '%s' "$iso" | grep -q -- "xdg=UNSET" && { echo "  ok   [-] antigravity unsets XDG_CONFIG_HOME for the run"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not unset XDG_CONFIG_HOME"; FAIL=$((FAIL+1)); }
+# The SYSTEM scope (highest precedence) + system-defaults must also be redirected under GEMINI_CLI_HOME,
 # so /etc/gemini-cli or an inherited hostile GEMINI_CLI_SYSTEM_SETTINGS_PATH can't re-enable anything.
 printf '%s' "$iso" | grep -q -- "sysiso=yes" && { echo "  ok   [-] antigravity isolates the SYSTEM settings scope too"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not isolate the system settings scope"; FAIL=$((FAIL+1)); }
 # And it must NOT run in the caller's CWD (where a checkout's .gemini/ would live).
