@@ -300,14 +300,16 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   #     any `tools.allowed`);
   #   - disables hooks (`hooksConfig.enabled:false`, so no SessionStart shell);
   #   - declares no MCP servers.
-  # Because GEMINI_CLI_HOME (the gemini CLI honors it over $HOME/os.homedir) redirects the USER settings
-  # scope and the CWD is that same dir, NEITHER the user's real ~/.gemini NOR the reviewed checkout's
-  # .gemini contributes any mcpServers, hooks, or tools.allowed — closing the shallow-merge hole where a
-  # `mcpServers:{}` override would leave global MCP servers loaded. Plus `-e none` (extensions off) and
-  # default non-interactive mode. NOT `--approval-mode plan` (throws in v0.26.0 unless `experimental.plan`
-  # is enabled). This is the gemini analog of claude/qwen `--safe-mode`. `-m` pins a model because the
-  # CLI's built-in default is a retired model that 404s (override via SHIP_FEATURE_GEMINI_MODEL).
-  # TRADEOFF: full isolation means gemini sees only the plan on stdin, not the checkout's files.
+  # gemini has FOUR settings scopes (user, workspace, system, system-defaults); the branch below points
+  # ALL of them at controlled files, so no scope — not the user's real ~/.gemini, not the checkout's
+  # .gemini, not /etc/gemini-cli nor an inherited GEMINI_CLI_SYSTEM_SETTINGS_PATH — contributes any
+  # mcpServers, hooks, or tools.allowed. That also closes the shallow-merge hole where a `mcpServers:{}`
+  # override would leave lower-scope MCP servers loaded (there simply are none). Plus `-e none`
+  # (extensions off) and default non-interactive mode. NOT `--approval-mode plan` (throws in v0.26.0
+  # unless `experimental.plan` is enabled). This is the gemini analog of claude/qwen `--safe-mode`. `-m`
+  # pins a model because the CLI's built-in default is a retired model that 404s (override via
+  # SHIP_FEATURE_GEMINI_MODEL). TRADEOFF: full isolation means gemini sees only the plan on stdin, not
+  # the checkout's files (deep codebase fact-checking is the PR cross-review's job).
   local GEMINI_MODEL="${SHIP_FEATURE_GEMINI_MODEL:-gemini-3.1-pro-preview}"
   # The locked, read-only settings the isolated gemini run loads (single line so the heredoc-free
   # printf stays Bash 3.2-safe). save_memory is excluded too so it can't write to the config dir.
@@ -326,10 +328,29 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
         # gemini run without the read-only config. $giso lives under STATUS_DIR (mktemp, 0700, cleaned
         # on exit) which normally sits in $TMPDIR, outside any reviewed checkout.
         local giso="$STATUS_DIR/gemini_iso_$key"
-        if mkdir -p "$giso/.gemini" && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$giso/.gemini/settings.json"; then
-          # GEMINI_CLI_HOME=$giso redirects the USER settings scope; cd $giso makes it the workspace too,
-          # so no real user/checkout config loads. $errf is absolute, so the redirect survives the cd.
-          out=$( cd "$giso" && printf '%s' "$plan" | run_reviewer env GEMINI_CLI_HOME="$giso" gemini -e none -m "$GEMINI_MODEL" -p "$PROMPT" 2>"$errf" ); rc=$?
+        if mkdir -p "$giso/.gemini" \
+           && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$giso/.gemini/settings.json" \
+           && printf '%s' '{}' > "$giso/.gemini/system-defaults.json"; then
+          # Lock EVERY gemini settings scope to controlled files so no hostile config (user, workspace,
+          # OR system — /etc/gemini-cli or an inherited GEMINI_CLI_SYSTEM_SETTINGS_PATH) can re-enable a
+          # write tool, hook, or MCP server:
+          #   - GEMINI_CLI_HOME=$giso    → USER scope reads $giso/.gemini/settings.json (the locked file);
+          #   - cd $giso                 → WORKSPACE scope is the same locked file;
+          #   - SYSTEM_SETTINGS_PATH     → SYSTEM scope (highest precedence) is the same locked file;
+          #   - SYSTEM_DEFAULTS_PATH     → SYSTEM-DEFAULTS scope is an empty {}.
+          # GEMINI_CLI_HOME also moves where gemini looks for OAuth creds, so symlink the real ones in
+          # (GEMINI_API_KEY-based auth needs nothing — it rides the inherited env). If a symlink can't be
+          # made the reviewer just fails auth → fail-closed, never a silent unprotected run.
+          local realhome="${HOME:-}"
+          local cf; for cf in oauth_creds.json google_accounts.json; do
+            [ -e "$realhome/.gemini/$cf" ] && ln -s "$realhome/.gemini/$cf" "$giso/.gemini/$cf" 2>/dev/null || true
+          done
+          # $errf is absolute, so the redirect survives the cd.
+          out=$( cd "$giso" && printf '%s' "$plan" | run_reviewer env \
+                   GEMINI_CLI_HOME="$giso" \
+                   GEMINI_CLI_SYSTEM_SETTINGS_PATH="$giso/.gemini/settings.json" \
+                   GEMINI_CLI_SYSTEM_DEFAULTS_PATH="$giso/.gemini/system-defaults.json" \
+                   gemini -e none -m "$GEMINI_MODEL" -p "$PROMPT" 2>"$errf" ); rc=$?
         else
           echo "could not create the isolated read-only gemini settings" > "$errf"; rc=1; out=""
         fi;;

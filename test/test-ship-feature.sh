@@ -149,21 +149,30 @@ make_reviewer cursor 0 cursor-agent
 # off) is present in that CWD — so the read-only isolation contract can be asserted, not just argv.
 cat > "$PBIN/gemini" <<'GEMINISTUB'
 #!/usr/bin/env bash
-# locked=yes only if the CWD settings hard-exclude ALL FIVE write tools and disable hooks.
+# locked=yes only if the CWD settings put ALL FIVE write tools inside "exclude" (NOT "allowed"),
+# disable hooks, and declare no MCP servers — a structural check, not just tool-name presence.
 locked=no
 if [ -f .gemini/settings.json ]; then
   ok=yes
+  grep -q '"exclude"' .gemini/settings.json || ok=no
+  grep -q '"allowed"' .gemini/settings.json && ok=no        # a locked file must NOT re-allow anything
   for tool in run_shell_command replace write_file web_fetch save_memory; do
     grep -q "\"$tool\"" .gemini/settings.json || ok=no
   done
   grep -q '"enabled":false' .gemini/settings.json || ok=no
+  grep -q '"mcpServers":{}' .gemini/settings.json || ok=no
   locked=$ok
 fi
-# homeiso=yes when GEMINI_CLI_HOME is set to this same isolated CWD (so no real ~/.gemini loads).
+# homeiso=yes when GEMINI_CLI_HOME is this isolated CWD (so no real ~/.gemini settings load).
 homeiso=no; [ -n "$GEMINI_CLI_HOME" ] && [ "$GEMINI_CLI_HOME" = "$PWD" ] && homeiso=yes
+# sysiso=yes when the SYSTEM + SYSTEM_DEFAULTS scopes are also redirected under this isolated dir
+# (so /etc/gemini-cli or an inherited hostile GEMINI_CLI_SYSTEM_SETTINGS_PATH can't apply).
+sysiso=no
+case "$GEMINI_CLI_SYSTEM_SETTINGS_PATH" in "$PWD"/*)
+  case "$GEMINI_CLI_SYSTEM_DEFAULTS_PATH" in "$PWD"/*) sysiso=yes;; esac;; esac
 # Isolation facts go on their OWN first line: the prompt (in argv) contains newlines, so anything
 # after argv=[$*] would land on an unrelated line and a single-line grep would miss it.
-echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso"
+echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso sysiso=$sysiso"
 echo "REVIEW-gemini argv=[$*]"
 exit 0
 GEMINISTUB
@@ -207,6 +216,9 @@ iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
 printf '%s' "$iso" | grep -q -- "locked=yes" && { echo "  ok   [-] antigravity runs fail-closed (all 5 write tools excluded + hooks off)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini not isolated with locked read-only settings"; FAIL=$((FAIL+1)); }
 # GEMINI_CLI_HOME must point at that same isolated dir, so no real user ~/.gemini (mcpServers/hooks) loads.
 printf '%s' "$iso" | grep -q -- "homeiso=yes" && { echo "  ok   [-] antigravity isolates GEMINI_CLI_HOME (no user-scope mcpServers/hooks)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not isolate GEMINI_CLI_HOME"; FAIL=$((FAIL+1)); }
+# The SYSTEM scope (highest precedence) + system-defaults must also be redirected under the isolated dir,
+# so /etc/gemini-cli or an inherited hostile GEMINI_CLI_SYSTEM_SETTINGS_PATH can't re-enable anything.
+printf '%s' "$iso" | grep -q -- "sysiso=yes" && { echo "  ok   [-] antigravity isolates the SYSTEM settings scope too"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not isolate the system settings scope"; FAIL=$((FAIL+1)); }
 # And it must NOT run in the caller's CWD (where a checkout's .gemini/ would live).
 printf '%s' "$iso" | grep -q -- "cwd=$PWD " && { echo "  FAIL antigravity/gemini ran in the caller CWD (checkout .gemini/ could load)"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] antigravity/gemini ran outside the caller CWD"; PASS=$((PASS+1)); }
 
@@ -226,7 +238,9 @@ printf '%s' "$out" | grep 'REVIEW-gemini' | grep -q -- "-m my-model" && { echo "
 # be fooled by a real gemini sitting in /usr/bin on some machine (Cursor's nit).
 mkdir -p "$WORK/pbin-nogemini"
 for b in claude codex qwen cursor-agent; do cp "$PBIN/$b" "$WORK/pbin-nogemini/$b" 2>/dev/null; done
-for t in bash env mktemp rm cat sed tail tr pgrep timeout grep; do
+# Include mkdir/ln so the antigravity branch's isolation setup (mkdir -p, symlink creds) would succeed
+# — the reviewer must then fail specifically because the `gemini` binary is absent, not the setup.
+for t in bash env mkdir ln mktemp rm cat sed tail tr pgrep timeout grep; do
   p=$(command -v "$t" 2>/dev/null) && ln -sf "$p" "$WORK/pbin-nogemini/$t"
 done
 # SHIP_FEATURE_CONFIG=/dev/null is passed explicitly: env -i clears the exported one, and without it
