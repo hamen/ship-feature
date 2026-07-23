@@ -342,10 +342,12 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
           # (GEMINI_API_KEY-based auth needs nothing — it rides the inherited env). COPY, not symlink: a
           # symlink would let gemini's internal token-refresh writeFile follow it and mutate the user's
           # REAL ~/.gemini creds; the copies (0600 under the 0700 temp dir) absorb any refresh write and
-          # are discarded on exit. If a copy can't be made the reviewer just fails auth → fail-closed.
+          # are discarded on exit. `cp -L` DEREFERENCES: if the source cred is itself a symlink, we still
+          # get a real file in the sandbox (a plain `cp` would recreate the symlink and defeat this). If a
+          # copy can't be made the reviewer just fails auth → fail-closed.
           local realhome="${HOME:-}"
           local cf; for cf in oauth_creds.json google_accounts.json; do
-            [ -e "$realhome/.gemini/$cf" ] && cp -p "$realhome/.gemini/$cf" "$giso/.gemini/$cf" 2>/dev/null || true
+            [ -e "$realhome/.gemini/$cf" ] && cp -L -p "$realhome/.gemini/$cf" "$giso/.gemini/$cf" 2>/dev/null || true
           done
           # $errf is absolute, so the redirect survives the cd.
           out=$( cd "$giso" && printf '%s' "$plan" | run_reviewer env \

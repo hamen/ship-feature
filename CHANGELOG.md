@@ -40,6 +40,10 @@ All notable changes to **ship-feature** are documented here. This project follow
   isolation is stronger than a pure `--safe-mode`: it neutralizes both the reviewed *checkout's* config
   and the user's own global `~/.gemini` (via `GEMINI_CLI_HOME`), at the cost of the reviewer not seeing
   the checkout's files.
+- Maintenance caveat: the locked `tools.exclude` blocklist names five current gemini write tools
+  (`run_shell_command`, `replace`, `write_file`, `web_fetch`, `save_memory`). If a future gemini-cli
+  release adds a new write-capable tool under a different name, add it to `GEMINI_LOCKED_SETTINGS` in
+  `bin/ship-feature`.
 
 ## [0.2.0] — 2026-07-22
 

@@ -238,9 +238,9 @@ printf '%s' "$out" | grep 'REVIEW-gemini' | grep -q -- "-m my-model" && { echo "
 # be fooled by a real gemini sitting in /usr/bin on some machine (Cursor's nit).
 mkdir -p "$WORK/pbin-nogemini"
 for b in claude codex qwen cursor-agent; do cp "$PBIN/$b" "$WORK/pbin-nogemini/$b" 2>/dev/null; done
-# Include mkdir/ln so the antigravity branch's isolation setup (mkdir -p, symlink creds) would succeed
-# — the reviewer must then fail specifically because the `gemini` binary is absent, not the setup.
-for t in bash env mkdir ln mktemp rm cat sed tail tr pgrep timeout grep; do
+# Include mkdir/cp so the antigravity branch's isolation setup (mkdir -p, cp -L the creds) would
+# succeed — the reviewer must then fail specifically because the `gemini` binary is absent, not the setup.
+for t in bash env mkdir cp mktemp rm cat sed tail tr pgrep timeout grep; do
   p=$(command -v "$t" 2>/dev/null) && ln -sf "$p" "$WORK/pbin-nogemini/$t"
 done
 # SHIP_FEATURE_CONFIG=/dev/null is passed explicitly: env -i clears the exported one, and without it
