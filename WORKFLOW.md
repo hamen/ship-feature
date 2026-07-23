@@ -34,13 +34,22 @@ which fans the plan out to your reviewer panel read-only and prints each review:
 ship-feature plan-review plan.md --reviewers codex,qwen     # or pipe it: cat plan.md | ship-feature plan-review
 ```
 
-With no `--reviewers` it uses `SHIP_FEATURE_REVIEWERS` (your quorum); with no file and no stdin it reads
-`./plan.md`. Reviewers run **read-only** and nothing is written or posted — supported: `claude`
-(`--permission-mode plan`), `codex` (`--sandbox read-only`), `cursor` (ask mode), `qwen`
-(`--approval-mode plan` + `--safe-mode`); `agy`/`opencode` are relay-only and skipped with a warning.
-Exit `0` = every reviewer responded, `3` = a
-reviewer failed/timed out/returned empty (re-run), `1` = usage error. The single-reviewer default still
-works too: `cat plan.md | codex exec --sandbox read-only`.
+With no `--reviewers` it uses `SHIP_FEATURE_PLAN_REVIEWERS` (falling back to `SHIP_FEATURE_REVIEWERS`,
+your quorum); with no file and no stdin it reads `./plan.md`. Reviewers run **read-only** and nothing is
+written or posted — supported: `claude` (`--permission-mode plan`), `codex` (`--sandbox read-only`),
+`cursor` (ask mode), `qwen` (`--approval-mode plan` + `--safe-mode`), and `antigravity`/`gemini` via the
+`gemini` CLI. The gemini run is fail-closed: an isolated `GEMINI_CLI_HOME` **and** working dir with a
+locked `.gemini/settings.json` that **allowlists only the read-only tools** via `tools.core` (so any
+write/exec tool, even a future one, is off by default), names today's write tools in `tools.exclude` as
+defence-in-depth, disables hooks, and declares no MCP — so neither the user's real `~/.gemini` nor a
+reviewed checkout's `.gemini/` contributes any `mcpServers`, hooks, or `tools.allowed` (the gemini analog
+of claude/qwen `--safe-mode`; default non-interactive mode + `-e none` on top). Model pinned to `gemini-3.1-pro-preview`, override with `SHIP_FEATURE_GEMINI_MODEL`. **Tradeoff:**
+because the run is fully isolated, gemini reviews the plan text only — it has no access to the checkout's
+files (deep codebase fact-checking is the PR cross-review's job). The `antigravity` name maps to the
+`gemini` CLI **here** but to `agy` in `relay` — only `gemini` has a read-only mode. `opencode` is
+relay-only and skipped with a warning. Exit `0` = every reviewer responded, `3` = a reviewer
+failed/timed out/returned empty (re-run), `1` = usage error. The single-reviewer default still works too:
+`cat plan.md | codex exec --sandbox read-only`.
 
 Read the feedback, revise, and iterate (≈2 rounds). The reviewers catch wrong assumptions and stale
 facts before they become code.

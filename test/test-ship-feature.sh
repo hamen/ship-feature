@@ -12,7 +12,7 @@ trap 'rm -rf "$WORK"' EXIT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 # Isolate from the user's real config/env so the suite is deterministic outside CI.
 export SHIP_FEATURE_CONFIG=/dev/null
-unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS
+unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS SHIP_FEATURE_GEMINI_MODEL
 
 PASS=0; FAIL=0
 check() { # check <desc> <actual_rc> <want_rc>
@@ -144,6 +144,50 @@ make_reviewer claude 0 claude
 make_reviewer codex  0 codex
 make_reviewer qwen   0 qwen
 make_reviewer cursor 0 cursor-agent
+# antigravity/gemini reviewer (the `gemini` CLI). A richer stub than make_reviewer: it also reports
+# its CWD and whether the isolated, locked-down `.gemini/settings.json` (write tools excluded + hooks
+# off) is present in that CWD — so the read-only isolation contract can be asserted, not just argv.
+cat > "$PBIN/gemini" <<'GEMINISTUB'
+#!/usr/bin/env bash
+# locked=yes only if the workspace settings allowlist exactly the read-only tools, deny-list ALL of
+# today's write tools, disable hooks (hooksConfig-specific), and declare no MCP — structural, not just
+# tool-name presence.
+locked=no
+if [ -f .gemini/settings.json ]; then
+  ok=yes
+  # tools.core must be an ALLOWLIST of exactly the read-only tools (fail-closed to any new/renamed
+  # write tool) — assert the exact array, so a stray write tool added to core fails the test.
+  grep -q '"core":\["read_file","read_many_files","glob","search_file_content","list_directory"\]' .gemini/settings.json || ok=no
+  grep -q '"allowed"' .gemini/settings.json && ok=no        # a locked file must NOT re-allow anything
+  # EVERY write tool named in GEMINI_LOCKED_SETTINGS must sit inside the "exclude" array (defence-in-depth).
+  for tool in run_shell_command replace write_file web_fetch google_web_search save_memory write_todos delegate_to_agent; do
+    grep -q "\"exclude\":\[[^]]*\"$tool\"" .gemini/settings.json || ok=no
+  done
+  # Match hooksConfig specifically, so a stray "enabled":false elsewhere can't satisfy it.
+  grep -q '"hooksConfig":{"enabled":false}' .gemini/settings.json || ok=no
+  grep -q '"mcpServers":{}' .gemini/settings.json || ok=no
+  locked=$ok
+fi
+# homeiso=yes when GEMINI_CLI_HOME is set to a SEPARATE dir from the workspace (CWD), so the copied
+# OAuth creds live outside the workspace and the allowlisted read_file can't reach them.
+homeiso=no; [ -n "$GEMINI_CLI_HOME" ] && [ "$GEMINI_CLI_HOME" != "$PWD" ] && homeiso=yes
+# credsafe=yes when no OAuth credential file sits in the workspace (CWD) tree.
+credsafe=yes; { [ -e .gemini/oauth_creds.json ] || [ -e .gemini/google_accounts.json ]; } && credsafe=no
+# envstop=yes when a controlled .gemini/.env sits in the workspace, halting gemini's ancestor .env walk
+# (so a hostile /tmp/.env can't inject CODE_ASSIST_ENDPOINT / a base-URL override).
+envstop=no; [ -f .gemini/.env ] && envstop=yes
+# sysiso=yes when the SYSTEM + SYSTEM_DEFAULTS scopes are redirected under GEMINI_CLI_HOME (so
+# /etc/gemini-cli or an inherited hostile GEMINI_CLI_SYSTEM_SETTINGS_PATH can't apply).
+sysiso=no
+case "$GEMINI_CLI_SYSTEM_SETTINGS_PATH" in "$GEMINI_CLI_HOME"/*)
+  case "$GEMINI_CLI_SYSTEM_DEFAULTS_PATH" in "$GEMINI_CLI_HOME"/*) sysiso=yes;; esac;; esac
+# Isolation facts go on their OWN first line: the prompt (in argv) contains newlines, so anything
+# after argv=[$*] would land on an unrelated line and a single-line grep would miss it.
+echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso credsafe=$credsafe sysiso=$sysiso xdg=${XDG_CONFIG_HOME-UNSET} envstop=$envstop"
+echo "REVIEW-gemini argv=[$*]"
+exit 0
+GEMINISTUB
+chmod +x "$PBIN/gemini"
 
 # clean run with an explicit panel → exit 0, both reviews on stdout
 out=$(printf 'Step 1: X\nStep 2: Y\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,qwen 2>/dev/null); rc=$?
@@ -166,6 +210,64 @@ printf '%s' "$out" | grep -q -- "--mode=ask"                   && { echo "  ok  
 # (which auto-approves them). yolo + a plan review is the exact hole round 2 caught.
 printf '%s' "$out" | grep -q -- "--safe-mode --approval-mode plan" && { echo "  ok   [-] qwen runs read-only (--safe-mode --approval-mode plan)"; PASS=$((PASS+1)); } || { echo "  FAIL qwen not in read-only plan mode"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q -- "--approval-mode yolo"         && { echo "  FAIL qwen still uses the auto-approving yolo mode"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] qwen never uses the auto-approving yolo mode"; PASS=$((PASS+1)); }
+
+# antigravity/gemini runs the `gemini` CLI in DEFAULT non-interactive mode (already excludes
+# shell/edit/write_file/web_fetch) with `-e none` to disable extensions. It must NOT pass
+# `--approval-mode plan` (throws unless experimental.plan is on) nor `yolo` (auto-approves writes).
+# Set XDG_CONFIG_HOME so the assertion below can prove the run UNSETS it.
+out=$(printf 'plan\n' | XDG_CONFIG_HOME=/tmp/xdg-should-be-unset PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+ag=$(printf '%s' "$out" | grep 'REVIEW-gemini')
+printf '%s' "$ag" | grep -q -- "-e none" && { echo "  ok   [-] antigravity runs gemini with extensions off (-e none)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not pass -e none"; FAIL=$((FAIL+1)); }
+printf '%s' "$ag" | grep -q -- "-m gemini-3.1-pro-preview" && { echo "  ok   [-] antigravity pins a working model by default"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not pin the default model"; FAIL=$((FAIL+1)); }
+printf '%s' "$ag" | grep -q -- "--approval-mode plan" && { echo "  FAIL gemini uses --approval-mode plan (throws without experimental.plan)"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] antigravity avoids the experimental --approval-mode plan"; PASS=$((PASS+1)); }
+printf '%s' "$ag" | grep -q -- "yolo" && { echo "  FAIL gemini uses the auto-approving yolo mode"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] antigravity never uses yolo"; PASS=$((PASS+1)); }
+# FAIL-CLOSED isolation: gemini must run from an isolated dir whose locked .gemini/settings.json
+# hard-excludes the write tools and disables hooks, so a reviewed checkout's own config can't
+# re-enable writes. The stub reports locked=yes only when that settings file is present in its CWD.
+iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
+printf '%s' "$iso" | grep -q -- "locked=yes" && { echo "  ok   [-] antigravity runs fail-closed (read-only tools.core allowlist, all write tools excluded, hooks off, no MCP)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini not isolated with locked read-only settings"; FAIL=$((FAIL+1)); }
+# GEMINI_CLI_HOME must be a SEPARATE dir from the workspace so the copied OAuth creds live outside it.
+printf '%s' "$iso" | grep -q -- "homeiso=yes" && { echo "  ok   [-] antigravity isolates GEMINI_CLI_HOME separate from the workspace"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not separate GEMINI_CLI_HOME from the workspace"; FAIL=$((FAIL+1)); }
+# No OAuth credential file may sit in the workspace tree (else the allowlisted read_file could disclose it).
+printf '%s' "$iso" | grep -q -- "credsafe=yes" && { echo "  ok   [-] antigravity keeps OAuth creds out of the workspace"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini left OAuth creds reachable in the workspace"; FAIL=$((FAIL+1)); }
+# XDG_CONFIG_HOME must be UNSET for the run (defence-in-depth against an XDG-honoring gemini).
+printf '%s' "$iso" | grep -q -- "xdg=UNSET" && { echo "  ok   [-] antigravity unsets XDG_CONFIG_HOME for the run"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not unset XDG_CONFIG_HOME"; FAIL=$((FAIL+1)); }
+# A controlled workspace .gemini/.env must halt gemini's ancestor .env walk (no hostile /tmp/.env).
+printf '%s' "$iso" | grep -q -- "envstop=yes" && { echo "  ok   [-] antigravity plants a controlled .env (blocks ancestor .env injection)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not block ancestor .env lookup"; FAIL=$((FAIL+1)); }
+# The SYSTEM scope (highest precedence) + system-defaults must also be redirected under GEMINI_CLI_HOME,
+# so /etc/gemini-cli or an inherited hostile GEMINI_CLI_SYSTEM_SETTINGS_PATH can't re-enable anything.
+printf '%s' "$iso" | grep -q -- "sysiso=yes" && { echo "  ok   [-] antigravity isolates the SYSTEM settings scope too"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not isolate the system settings scope"; FAIL=$((FAIL+1)); }
+# And it must NOT run in the caller's CWD (where a checkout's .gemini/ would live).
+# grep -F: $PWD may contain regex metacharacters (e.g. a dotted TMPDIR), so match it as a literal.
+printf '%s' "$iso" | grep -Fq -- "cwd=$PWD " && { echo "  FAIL antigravity/gemini ran in the caller CWD (checkout .gemini/ could load)"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] antigravity/gemini ran outside the caller CWD"; PASS=$((PASS+1)); }
+
+# agy and gemini are ALIASES of antigravity: the panel collapses them to a SINGLE gemini invocation.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers antigravity,agy,gemini 2>/dev/null); rc=$?
+check "plan-review dedupes antigravity/agy/gemini aliases (exit 0)" "$rc" 0
+n=$(printf '%s\n' "$out" | grep -c 'REVIEW-gemini')
+[ "$n" = 1 ] && { echo "  ok   [-] antigravity/agy/gemini collapse to one Gemini run"; PASS=$((PASS+1)); } || { echo "  FAIL Gemini ran $n times for the three aliases (want 1)"; FAIL=$((FAIL+1)); }
+
+# SHIP_FEATURE_GEMINI_MODEL overrides the pinned default and reaches the argv.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_GEMINI_MODEL=my-model bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+printf '%s' "$out" | grep 'REVIEW-gemini' | grep -q -- "-m my-model" && { echo "  ok   [-] SHIP_FEATURE_GEMINI_MODEL overrides the model"; PASS=$((PASS+1)); } || { echo "  FAIL SHIP_FEATURE_GEMINI_MODEL did not reach gemini argv"; FAIL=$((FAIL+1)); }
+
+# A model value starting with '-' must be rejected (can't be smuggled in as a gemini flag).
+( printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_GEMINI_MODEL=--dangerous bash "$CLI" plan-review --reviewers antigravity >/dev/null 2>&1 ); check "plan-review rejects a model name starting with '-' (1)" $? 1
+
+# antigravity in the panel but the gemini CLI missing → hard quorum failure (3), never a silent pass.
+# Build a SELF-CONTAINED PATH: the reviewer stubs plus symlinks to only the coreutils plan-review
+# needs — but deliberately NO gemini. Using a curated PATH (not the system one) means the test can't
+# be fooled by a real gemini sitting in /usr/bin on some machine (Cursor's nit).
+mkdir -p "$WORK/pbin-nogemini"
+for b in claude codex qwen cursor-agent; do cp "$PBIN/$b" "$WORK/pbin-nogemini/$b" 2>/dev/null; done
+# `command -v gemini` fails at dispatch BEFORE the antigravity branch runs, so exit 3 comes purely from
+# the missing binary. mkdir/cp are symlinked anyway so the curated PATH is a realistic minimal toolset.
+for t in bash env mkdir cp mktemp rm cat sed tail tr pgrep timeout grep; do
+  p=$(command -v "$t" 2>/dev/null) && ln -sf "$p" "$WORK/pbin-nogemini/$t"
+done
+# SHIP_FEATURE_CONFIG=/dev/null is passed explicitly: env -i clears the exported one, and without it
+# the subshell would load the user's real ~/.config/ship-feature/config and become non-deterministic.
+( printf 'plan\n' | env -i PATH="$WORK/pbin-nogemini" HOME="$HOME" SHIP_FEATURE_CONFIG=/dev/null bash "$CLI" plan-review --reviewers codex,antigravity >/dev/null 2>&1 ); check "plan-review fails the quorum when the gemini CLI is missing (3)" $? 3
 
 # default panel comes from SHIP_FEATURE_REVIEWERS when --reviewers is omitted
 out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,cursor bash "$CLI" plan-review 2>/dev/null); rc=$?
@@ -196,13 +298,14 @@ make_reviewer codex 0 codex   # restore
 # quorum, so it never quietly passes on a thinned set.
 ( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,doesnotexist >/dev/null 2>&1 ); check "plan-review missing panel reviewer → fail (3)" $? 3
 
-# agy and opencode are RELAY-ONLY: skipped with a warning, the rest of the panel still runs (0)
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers agy,opencode,codex 2>&1); rc=$?
+# opencode is RELAY-ONLY: skipped with a warning, the rest of the panel still runs (0).
+# (agy is NO LONGER relay-only — it now aliases the read-only antigravity/gemini reviewer.)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers opencode,codex 2>&1); rc=$?
 check "plan-review skips relay-only agents, runs the rest" "$rc" 0
-printf '%s' "$out" | grep -qi "relay-only" && { echo "  ok   [-] plan-review warns that agy/opencode are relay-only"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not warn about relay-only agents"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep -qi "relay-only" && { echo "  ok   [-] plan-review warns that opencode is relay-only"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not warn about relay-only agents"; FAIL=$((FAIL+1)); }
 
 # a panel of ONLY relay-only agents → nobody supported ran → clear error (1)
-( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers agy,opencode >/dev/null 2>&1 ); check "plan-review with only relay-only agents → error (1)" $? 1
+( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers opencode >/dev/null 2>&1 ); check "plan-review with only relay-only agents → error (1)" $? 1
 
 # no panel at all (unset + none passed) → usage error (1)
 ( printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS= bash "$CLI" plan-review >/dev/null 2>&1 ); check "plan-review with no panel → usage error (1)" $? 1

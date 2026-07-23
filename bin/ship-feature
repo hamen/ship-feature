@@ -10,7 +10,8 @@
 #   ship-feature plan-review [<file>] [--reviewers a,b,c] [--parallel]
 #                            Step 2: fan an implementation PLAN (a file, stdin, or ./plan.md) out to a
 #                            panel of agents for a read-only review; prints each review. Defaults the
-#                            panel to SHIP_FEATURE_REVIEWERS. Exit 0 clean, 3 not-clean, 1 usage error.
+#                            panel to SHIP_FEATURE_PLAN_REVIEWERS, then SHIP_FEATURE_REVIEWERS. Exit 0
+#                            clean, 3 not-clean, 1 usage error.
 #   ship-feature help        This message.
 #
 # The workflow itself lives in WORKFLOW.md; this tool does not drive it. State/resume is intentionally
@@ -52,6 +53,7 @@ load_config() {
       SHIP_FEATURE_DENYLIST) [ -n "${SHIP_FEATURE_DENYLIST+x}" ] || SHIP_FEATURE_DENYLIST="$val" ;;
       SHIP_FEATURE_REVIEWERS) [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || SHIP_FEATURE_REVIEWERS="$val" ;;
       SHIP_FEATURE_PLAN_REVIEWERS) [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || SHIP_FEATURE_PLAN_REVIEWERS="$val" ;;
+      SHIP_FEATURE_GEMINI_MODEL) [ -n "${SHIP_FEATURE_GEMINI_MODEL+x}" ] || SHIP_FEATURE_GEMINI_MODEL="$val" ;;
     esac
   done < "$cfg"
 }
@@ -173,14 +175,22 @@ cmd_relay() {
 # text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
 # load either), codex (--sandbox read-only), cursor (--mode=ask,
 # Q&A), qwen (--approval-mode plan, its read-only mode that denies edit/write/shell, plus
-# --safe-mode to also block checkout config). agy and opencode are RELAY-ONLY here — agy
-# has no read-only mode (its relay flag disables ALL permissions) and opencode needs the
-# file-attach path — so if listed they are skipped with a warning, never run. That keeps
-# the "read-only, nothing is written" guarantee true for the whole set that actually runs.
+# --safe-mode to also block checkout config), and antigravity/gemini via the `gemini` CLI run
+# FAIL-CLOSED (see plan_review_with below): an isolated GEMINI_CLI_HOME + working dir with a locked
+# settings.json that hard-excludes the write tools, disables hooks, and loads no MCP — so NO user- or
+# checkout-scope config (mcpServers, hooks, tools.allowed) loads at all. This is the gemini analog of
+# claude/qwen `--safe-mode`. NOTE the deliberate overloading: in plan-review the reviewer name
+# `antigravity` (alias `agy`, `gemini`) maps to the `gemini` CLI — the only Gemini binary with a
+# read-only mode — whereas in `relay` `antigravity` maps to `agy`. TRADEOFF: because the run is fully
+# isolated, gemini reviews the PLAN TEXT ONLY and has no access to the checkout's files — deep codebase
+# fact-checking is the PR cross-review stage's job, not this cheap plan gate.
+# opencode is RELAY-ONLY here (it needs the file-attach path) — if listed it is skipped with a
+# warning, never run. That keeps the "read-only, nothing is written" guarantee true for the whole
+# set that actually runs.
 plan_tool_for() { case "$1" in
-  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; qwen) echo qwen;; *) echo "";; esac; }
+  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; qwen) echo qwen;; antigravity) echo gemini;; *) echo "";; esac; }
 # Named but deliberately not run in plan-review (available in `relay`).
-plan_relay_only() { case "$1" in opencode|antigravity|agy) return 0;; *) return 1;; esac; }
+plan_relay_only() { case "$1" in opencode) return 0;; *) return 1;; esac; }
 
 cmd_plan_review() {
   load_config
@@ -221,9 +231,9 @@ cmd_plan_review() {
     [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "no plan given — pass a file, pipe it on stdin, or create a non-empty ./plan.md."
   fi
 
-  # Panel: --reviewers > SHIP_FEATURE_REVIEWERS > refuse. The resolved panel is your
-  # QUORUM: every named+supported reviewer is required (a missing CLI fails the round),
-  # so a review never silently passes on a thinned panel. agy/opencode are the exception.
+  # Panel: --reviewers > SHIP_FEATURE_PLAN_REVIEWERS > SHIP_FEATURE_REVIEWERS > refuse. The resolved
+  # panel is your QUORUM: every named+supported reviewer is required (a missing CLI fails the round),
+  # so a review never silently passes on a thinned panel. opencode is the exception (relay-only).
   # An explicit but empty `--reviewers ""` is a usage error, not a silent fall-through to
   # the env panel (which would surprise a user who meant to name a list).
   if [ "$have_reviewers" = 1 ]; then
@@ -282,6 +292,35 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # emits them in panel order after the barrier. qwen runs `--approval-mode plan` — its
   # genuine read-only mode that denies edit/write/shell — NOT `yolo` (which auto-approves
   # those). `--safe-mode` additionally blocks any checkout config from loading.
+  # antigravity runs the `gemini` CLI FAIL-CLOSED. Default non-interactive mode alone is NOT enough —
+  # a checkout's (or the user's) `tools.allowed` can re-enable write tools, and hooks/MCP still load.
+  # So we run gemini with BOTH an isolated GEMINI_CLI_HOME and an isolated working dir set to the same
+  # locked directory, whose `.gemini/settings.json`:
+  #   - HARD-excludes the write tools via `tools.exclude` (an unconditional blocklist, unaffected by
+  #     any `tools.allowed`);
+  #   - disables hooks (`hooksConfig.enabled:false`, so no SessionStart shell);
+  #   - declares no MCP servers.
+  # gemini has FOUR settings scopes (user, workspace, system, system-defaults); the branch below points
+  # ALL of them at controlled files, so no scope — not the user's real ~/.gemini, not the checkout's
+  # .gemini, not /etc/gemini-cli nor an inherited GEMINI_CLI_SYSTEM_SETTINGS_PATH — contributes any
+  # mcpServers, hooks, or tools.allowed. That also closes the shallow-merge hole where a `mcpServers:{}`
+  # override would leave lower-scope MCP servers loaded (there simply are none). Plus `-e none`
+  # (extensions off) and default non-interactive mode. NOT `--approval-mode plan` (throws in v0.26.0
+  # unless `experimental.plan` is enabled). This is the gemini analog of claude/qwen `--safe-mode`. `-m`
+  # pins a model because the CLI's built-in default is a retired model that 404s (override via
+  # SHIP_FEATURE_GEMINI_MODEL). TRADEOFF: full isolation means gemini sees only the plan on stdin, not
+  # the checkout's files (deep codebase fact-checking is the PR cross-review's job).
+  local GEMINI_MODEL="${SHIP_FEATURE_GEMINI_MODEL:-gemini-3.1-pro-preview}"
+  # SHIP_FEATURE_GEMINI_MODEL is user config; reject a leading '-' so it can't be parsed as a gemini flag
+  # (e.g. `-m --dangerous`) instead of a model name.
+  case "$GEMINI_MODEL" in -*) die "invalid SHIP_FEATURE_GEMINI_MODEL: '$GEMINI_MODEL' (must not start with '-').";; esac
+  # The locked, read-only settings the isolated gemini run loads (single line so the heredoc-free printf
+  # stays Bash 3.2-safe). `tools.core` is an ALLOWLIST: gemini enables ONLY the tools named here, so any
+  # write/exec/network tool — including one a future gemini-cli adds or renames — is disabled by
+  # default (fail-CLOSED, not a denylist that a new tool could slip past). We allowlist just the
+  # read-only tools. `tools.exclude` additionally names today's known write tools as explicit
+  # defence-in-depth. hooks off + no MCP round it out.
+  local GEMINI_LOCKED_SETTINGS='{"tools":{"core":["read_file","read_many_files","glob","search_file_content","list_directory"],"exclude":["run_shell_command","replace","write_file","web_fetch","google_web_search","save_memory","write_todos","delegate_to_agent"]},"hooksConfig":{"enabled":false},"mcpServers":{}}'
   plan_review_with() {
     local name="$1" out rc=0 errf key Name why
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
@@ -291,6 +330,74 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
       codex)  out=$(printf '%s' "$plan" | run_reviewer codex exec --sandbox read-only "$PROMPT" 2>"$errf"); rc=$?;;
       cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask 2>"$errf"); rc=$?;;
       qwen)   out=$(printf '%s' "$plan" | run_reviewer qwen --safe-mode --approval-mode plan -p "$PROMPT" 2>"$errf"); rc=$?;;
+      antigravity)
+        # Security-critical: if we can't create the locked settings, FAIL — never fall through to a
+        # gemini run without the read-only config. Everything lives under STATUS_DIR (mktemp, 0700,
+        # cleaned on exit), normally in $TMPDIR, outside any reviewed checkout. Use TWO sibling dirs:
+        #   ghome = GEMINI_CLI_HOME (holds the copied OAuth creds)
+        #   gwork = the CWD / workspace
+        # kept SEPARATE so the allowlisted read_file tool (which gemini restricts to the workspace) can
+        # never reach the credentials in ghome — a malicious plan cannot make gemini disclose them.
+        local giso="$STATUS_DIR/gemini_iso_$key" ghome gwork
+        ghome="$giso/home"; gwork="$giso/work"
+        # An empty `.gemini/.env` in the workspace (and home) stops gemini's ancestor `.env` search at
+        # our controlled dir, so it can't pick up a hostile `/tmp/.env` (or any ancestor .env) that sets
+        # CODE_ASSIST_ENDPOINT / a base-URL override and redirects auth or bearer tokens to an attacker.
+        if mkdir -p "$ghome/.gemini" "$gwork/.gemini" \
+           && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$ghome/.gemini/settings.json" \
+           && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$gwork/.gemini/settings.json" \
+           && printf '%s' '{}' > "$ghome/.gemini/system-defaults.json" \
+           && : > "$ghome/.gemini/.env" && : > "$gwork/.gemini/.env"; then
+          # Lock EVERY gemini settings scope to controlled files so no hostile config (user, workspace,
+          # OR system — /etc/gemini-cli or an inherited GEMINI_CLI_SYSTEM_SETTINGS_PATH) can re-enable a
+          # write tool, hook, or MCP server:
+          #   - GEMINI_CLI_HOME=$ghome   → USER scope reads $ghome/.gemini/settings.json (locked);
+          #   - cd $gwork                → WORKSPACE scope reads $gwork/.gemini/settings.json (locked);
+          #   - SYSTEM_SETTINGS_PATH     → SYSTEM scope (highest precedence) is the locked file;
+          #   - SYSTEM_DEFAULTS_PATH     → SYSTEM-DEFAULTS scope is an empty {}.
+          # GEMINI_CLI_HOME also moves where gemini looks for OAuth creds, so COPY the real ones into
+          # ghome (GEMINI_API_KEY-based auth needs nothing — it rides the inherited env). COPY, not
+          # symlink: a symlink would let gemini's internal token-refresh writeFile follow it and mutate
+          # the user's REAL ~/.gemini creds; the copies (0600 under the 0700 temp dir) absorb any refresh
+          # write and are discarded on exit. `cp -L` DEREFERENCES: if the source cred is itself a symlink
+          # we still get a real file (a plain `cp` would recreate the symlink and defeat this). A failed
+          # copy just fails auth → fail-closed.
+          # Auth: an explicit environment method — GEMINI_API_KEY, GOOGLE_API_KEY, or Vertex
+          # (GOOGLE_GENAI_USE_VERTEXAI=true) — is the verified path; it rides the inherited env and needs
+          # nothing here. ONLY when NO such env auth is selected do we fall back to the user's OAuth: copy
+          # the real creds into ghome and opt in with GOOGLE_GENAI_USE_GCA=true (the locked settings drop
+          # the user's `security.auth.selectedType`, so non-interactive gemini would otherwise refuse
+          # OAuth). Gating on "no env auth" matters because GCA takes precedence over an API key, so a
+          # stale ~/.gemini would otherwise break a valid GEMINI_API_KEY run.
+          local realhome="${HOME:-}" gca_env=""
+          [ -n "$realhome" ] || realhome="$(cd ~ 2>/dev/null && pwd)"
+          local env_auth=""
+          { [ -n "${GEMINI_API_KEY:-}" ] || [ -n "${GOOGLE_API_KEY:-}" ] || [ "${GOOGLE_GENAI_USE_VERTEXAI:-}" = "true" ]; } && env_auth=1
+          if [ -z "$env_auth" ] && [ -n "$realhome" ]; then
+            local cf; for cf in oauth_creds.json google_accounts.json; do
+              if [ -e "$realhome/.gemini/$cf" ]; then
+                # Warn (into $errf, surfaced if the reviewer then fails) when a real cred exists but can't
+                # be copied — otherwise an OAuth user just sees an opaque auth failure.
+                if cp -L "$realhome/.gemini/$cf" "$ghome/.gemini/$cf" 2>/dev/null && chmod 600 "$ghome/.gemini/$cf" 2>/dev/null; then
+                  gca_env="GOOGLE_GENAI_USE_GCA=true"
+                else
+                  echo "warning: could not copy ~/.gemini/$cf into the isolated home; OAuth auth may fail (set GEMINI_API_KEY instead)" >> "$errf"
+                fi
+              fi
+            done
+          fi
+          # $errf is absolute, so the redirect survives the cd.
+          # -u XDG_CONFIG_HOME: defence-in-depth in case a future gemini honors an XDG config path.
+          out=$( cd "$gwork" && printf '%s' "$plan" | run_reviewer env \
+                   -u XDG_CONFIG_HOME \
+                   ${gca_env:+"$gca_env"} \
+                   GEMINI_CLI_HOME="$ghome" \
+                   GEMINI_CLI_SYSTEM_SETTINGS_PATH="$ghome/.gemini/settings.json" \
+                   GEMINI_CLI_SYSTEM_DEFAULTS_PATH="$ghome/.gemini/system-defaults.json" \
+                   gemini -e none -m "$GEMINI_MODEL" -p "$PROMPT" 2>"$errf" ); rc=$?
+        else
+          echo "could not create the isolated read-only gemini settings" > "$errf"; rc=1; out=""
+        fi;;
     esac
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
       why="exited with code $rc"
@@ -313,7 +420,9 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   local IFS_SAVE="$IFS"; set -f; IFS=','; set -- $reviewers; IFS="$IFS_SAVE"; set +f
   for r in "$@"; do
     r="$(printf '%s' "$r" | tr -d '[:space:]')"; [ -z "$r" ] && continue
-    [ "$r" = "agy" ] && r=antigravity
+    # In plan-review, agy/gemini are aliases of the antigravity reviewer (all run the `gemini` CLI
+    # read-only); they collapse to one identity so the panel can't run Gemini twice.
+    { [ "$r" = "agy" ] || [ "$r" = "gemini" ]; } && r=antigravity
     rk="$(skey "$r")"
     case " $seen " in *" $rk "*) continue;; esac
     seen="$seen $rk"
@@ -355,7 +464,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
     if [ "$(cat "$f")" != ok ]; then failed=$((failed + 1)); names="$names ${f##*/k_}"; fi
   done
   if [ "$ran" = 0 ]; then
-    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, qwen (agy/opencode are relay-only). Pass --reviewers with a supported agent."
+    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, qwen, antigravity/gemini (opencode is relay-only). Pass --reviewers with a supported agent."
   fi
   if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Fix and re-run." >&2; return 3; fi
   echo "✔ Plan review done — $ran/$ran reviewer(s) responded. READ the findings and revise the plan before Gate 1." >&2

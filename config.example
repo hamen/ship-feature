@@ -22,7 +22,13 @@ SHIP_FEATURE_EXCLUDE_MARKER=.claude/
 # Optional: a DIFFERENT (usually smaller) default panel for `ship-feature plan-review` — the cheap
 # read-only plan gate often wants fewer reviewers than the full PR cross-review. Falls back to
 # SHIP_FEATURE_REVIEWERS when unset. Override per-run with `--reviewers`.
-# SHIP_FEATURE_PLAN_REVIEWERS=claude,codex
+# `antigravity` (aliases: agy, gemini) is a supported read-only plan reviewer too — it runs the `gemini`
+# CLI. (In `relay`, `antigravity` still runs `agy`; only `gemini` has a read-only mode for the plan gate.)
+# SHIP_FEATURE_PLAN_REVIEWERS=claude,codex,antigravity
+
+# Model for the antigravity/gemini plan reviewer (the `gemini` CLI). Default gemini-3.1-pro-preview,
+# because the CLI's own built-in default is a retired model that 404s. Env wins over this file.
+# SHIP_FEATURE_GEMINI_MODEL=gemini-3.1-pro-preview
 
 # Path to a PRIVATE, newline-delimited deny-list for scripts/scan-personal-data.sh. Each line is a
 # literal string that must NEVER appear in the public repo (real project slugs, bundle-id prefixes,

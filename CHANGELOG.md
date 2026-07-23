@@ -6,6 +6,55 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
+### Added
+
+- **`antigravity`/`gemini` is now a read-only reviewer in `ship-feature plan-review`.** It runs the
+  `gemini` CLI **fail-closed**: an isolated `GEMINI_CLI_HOME` **and** working dir with a locked
+  `.gemini/settings.json` that **allowlists only the read-only tools** via `tools.core`
+  (`read_file`, `read_many_files`, `glob`, `search_file_content`, `list_directory`) — so any
+  write/exec/network tool, including one a future gemini-cli adds or renames, is disabled by default
+  rather than slipping past a denylist — with `tools.exclude` naming today's known write tools as extra
+  defence-in-depth. It also disables hooks (`hooksConfig.enabled:false`, so no `SessionStart` shell) and
+  declares no MCP. All four gemini settings scopes are redirected to controlled files (user via
+  `GEMINI_CLI_HOME`, workspace via the CWD, system + system-defaults via `GEMINI_CLI_SYSTEM_SETTINGS_PATH`
+  / `GEMINI_CLI_SYSTEM_DEFAULTS_PATH`), so **neither the user's real `~/.gemini`, nor a reviewed
+  checkout's `.gemini/`, nor `/etc/gemini-cli` contributes any `mcpServers`, hooks, or `tools.allowed`**
+  — closing the shallow-merge hole where a `mcpServers:{}` override would still leave global MCP servers
+  loaded. `GEMINI_CLI_HOME` and the workspace are **separate sibling dirs**, so the copied OAuth creds
+  live outside the workspace and the allowlisted `read_file` can't disclose them. `XDG_CONFIG_HOME` is
+  unset for the run, and a controlled empty `.gemini/.env` halts gemini's ancestor `.env` walk (so a
+  hostile `/tmp/.env` can't inject a `CODE_ASSIST_ENDPOINT` / base-URL override). Auth: an explicit
+  environment method — `GEMINI_API_KEY` (verified), `GOOGLE_API_KEY`, or Vertex
+  (`GOOGLE_GENAI_USE_VERTEXAI=true`) — is preferred; only when none is set does it fall back to the
+  user's OAuth creds (copied in, with `GOOGLE_GENAI_USE_GCA=true`) so a stale `~/.gemini` can't override
+  a valid API key. Default non-interactive mode and `-e none` (extensions off) are layered on top. `--approval-mode plan` is **not** used: in
+  gemini-cli v0.26.0 it throws unless `experimental.plan` is enabled. This is the gemini analog of claude/qwen `--safe-mode`. **Tradeoff:** the isolated run sees
+  only the plan text, not the checkout's files (deep codebase fact-checking is the PR cross-review's
+  job). The reviewer names `antigravity`, `agy`, and `gemini` are aliases that collapse to a single
+  Gemini run.
+- **`SHIP_FEATURE_GEMINI_MODEL`** (env or config) pins the model for that reviewer. Default
+  `gemini-3.1-pro-preview`, because the CLI's own built-in default is a retired model that 404s.
+
+### Changed
+
+- **`agy` is no longer relay-only in `plan-review`.** It (and `gemini`) now alias the read-only
+  `antigravity` reviewer above. Only `opencode` remains relay-only. **Behavior change:** a panel that
+  lists `antigravity` now **requires** the `gemini` CLI at the plan gate — where it used to be skipped
+  with a warning, a missing `gemini` binary now **fails the quorum** (exit `3`), so a review can't
+  silently pass on a thinned panel.
+
+### Notes
+
+- The `antigravity` name maps to two different binaries by command: the `gemini` CLI in `plan-review`
+  (the only Gemini binary with a read-only mode) and `agy` in `relay` (unchanged). The `plan-review`
+  isolation is stronger than a pure `--safe-mode`: it neutralizes both the reviewed *checkout's* config
+  and the user's own global `~/.gemini` (via `GEMINI_CLI_HOME`), at the cost of the reviewer not seeing
+  the checkout's files.
+- Because `tools.core` is an allowlist, a future gemini-cli release that adds a new read-only tool will
+  have it disabled until it is added to `GEMINI_LOCKED_SETTINGS` in `bin/ship-feature` — the safe
+  direction (a new *write* tool is disabled automatically; only new *read* conveniences need a manual
+  opt-in).
+
 ## [0.2.0] — 2026-07-22
 
 ### Added

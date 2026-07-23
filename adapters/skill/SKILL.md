@@ -16,8 +16,8 @@ It is the single source of truth — do not restate or fork it here.
 The essentials you must honor:
 
 1. **Plan** it, then **review the plan** with a panel: `ship-feature plan-review <file> --reviewers <your agents>`
-   (defaults to `SHIP_FEATURE_REVIEWERS`; read-only; exit `0` clean, `3` re-run). A single reviewer via
-   `codex exec --sandbox read-only` still works.
+   (defaults to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; read-only; exit `0` clean,
+   `3` re-run). A single reviewer via `codex exec --sandbox read-only` still works.
 2. 🚦 **Stop for the human to approve the plan.** Do not write to the source repository before that.
 3. Implement in a **git worktree** (never the main tree), stage explicit paths, open a **PR**. Run
    `ship-feature preflight` first.
