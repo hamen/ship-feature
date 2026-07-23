@@ -23,10 +23,11 @@ All notable changes to **ship-feature** are documented here. This project follow
   loaded. `GEMINI_CLI_HOME` and the workspace are **separate sibling dirs**, so the copied OAuth creds
   live outside the workspace and the allowlisted `read_file` can't disclose them. `XDG_CONFIG_HOME` is
   unset for the run, and a controlled empty `.gemini/.env` halts gemini's ancestor `.env` walk (so a
-  hostile `/tmp/.env` can't inject a `CODE_ASSIST_ENDPOINT` / base-URL override). Auth: `GEMINI_API_KEY`
-  / `GOOGLE_API_KEY` (env) is the verified path; OAuth users have their creds copied in with
-  `GOOGLE_GENAI_USE_GCA=true` so the non-interactive run still authenticates. Default non-interactive mode
-  and `-e none` (extensions off) are layered on top. `--approval-mode plan` is **not** used: in
+  hostile `/tmp/.env` can't inject a `CODE_ASSIST_ENDPOINT` / base-URL override). Auth: an explicit
+  environment method — `GEMINI_API_KEY` (verified), `GOOGLE_API_KEY`, or Vertex
+  (`GOOGLE_GENAI_USE_VERTEXAI=true`) — is preferred; only when none is set does it fall back to the
+  user's OAuth creds (copied in, with `GOOGLE_GENAI_USE_GCA=true`) so a stale `~/.gemini` can't override
+  a valid API key. Default non-interactive mode and `-e none` (extensions off) are layered on top. `--approval-mode plan` is **not** used: in
   gemini-cli v0.26.0 it throws unless `experimental.plan` is enabled. This is the gemini analog of claude/qwen `--safe-mode`. **Tradeoff:** the isolated run sees
   only the plan text, not the checkout's files (deep codebase fact-checking is the PR cross-review's
   job). The reviewer names `antigravity`, `agy`, and `gemini` are aliases that collapse to a single

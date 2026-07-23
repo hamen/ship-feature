@@ -362,22 +362,30 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
           # write and are discarded on exit. `cp -L` DEREFERENCES: if the source cred is itself a symlink
           # we still get a real file (a plain `cp` would recreate the symlink and defeat this). A failed
           # copy just fails auth → fail-closed.
-          # Auth: GEMINI_API_KEY / GOOGLE_API_KEY (env) is the verified path — it rides the inherited
-          # env and needs nothing here. For OAuth users we also copy the real creds into ghome; because
-          # the locked settings drop the user's `security.auth.selectedType`, non-interactive gemini
-          # would refuse OAuth, so when creds are present we opt in with GOOGLE_GENAI_USE_GCA=true.
+          # Auth: an explicit environment method — GEMINI_API_KEY, GOOGLE_API_KEY, or Vertex
+          # (GOOGLE_GENAI_USE_VERTEXAI=true) — is the verified path; it rides the inherited env and needs
+          # nothing here. ONLY when NO such env auth is selected do we fall back to the user's OAuth: copy
+          # the real creds into ghome and opt in with GOOGLE_GENAI_USE_GCA=true (the locked settings drop
+          # the user's `security.auth.selectedType`, so non-interactive gemini would otherwise refuse
+          # OAuth). Gating on "no env auth" matters because GCA takes precedence over an API key, so a
+          # stale ~/.gemini would otherwise break a valid GEMINI_API_KEY run.
           local realhome="${HOME:-}" gca_env=""
-          local cf; for cf in oauth_creds.json google_accounts.json; do
-            if [ -e "$realhome/.gemini/$cf" ]; then
-              # Warn (into $errf, surfaced if the reviewer then fails) when a real cred exists but can't
-              # be copied — otherwise an OAuth user just sees an opaque auth failure.
-              if cp -L -p "$realhome/.gemini/$cf" "$ghome/.gemini/$cf" 2>/dev/null; then
-                gca_env="GOOGLE_GENAI_USE_GCA=true"
-              else
-                echo "warning: could not copy ~/.gemini/$cf into the isolated home; OAuth auth may fail (GEMINI_API_KEY auth is unaffected)" >> "$errf"
+          [ -n "$realhome" ] || realhome="$(cd ~ 2>/dev/null && pwd)"
+          local env_auth=""
+          { [ -n "${GEMINI_API_KEY:-}" ] || [ -n "${GOOGLE_API_KEY:-}" ] || [ "${GOOGLE_GENAI_USE_VERTEXAI:-}" = "true" ]; } && env_auth=1
+          if [ -z "$env_auth" ] && [ -n "$realhome" ]; then
+            local cf; for cf in oauth_creds.json google_accounts.json; do
+              if [ -e "$realhome/.gemini/$cf" ]; then
+                # Warn (into $errf, surfaced if the reviewer then fails) when a real cred exists but can't
+                # be copied — otherwise an OAuth user just sees an opaque auth failure.
+                if cp -L "$realhome/.gemini/$cf" "$ghome/.gemini/$cf" 2>/dev/null && chmod 600 "$ghome/.gemini/$cf" 2>/dev/null; then
+                  gca_env="GOOGLE_GENAI_USE_GCA=true"
+                else
+                  echo "warning: could not copy ~/.gemini/$cf into the isolated home; OAuth auth may fail (set GEMINI_API_KEY instead)" >> "$errf"
+                fi
               fi
-            fi
-          done
+            done
+          fi
           # $errf is absolute, so the redirect survives the cd.
           # -u XDG_CONFIG_HOME: defence-in-depth in case a future gemini honors an XDG config path.
           out=$( cd "$gwork" && printf '%s' "$plan" | run_reviewer env \
