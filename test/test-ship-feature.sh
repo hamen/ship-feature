@@ -154,10 +154,13 @@ cat > "$PBIN/gemini" <<'GEMINISTUB'
 locked=no
 if [ -f .gemini/settings.json ]; then
   ok=yes
-  grep -q '"exclude"' .gemini/settings.json || ok=no
+  # tools.core must be an ALLOWLIST of exactly the read-only tools (fail-closed to any new/renamed
+  # write tool) — assert the exact array, so a stray write tool added to core fails the test.
+  grep -q '"core":\["read_file","read_many_files","glob","search_file_content","list_directory"\]' .gemini/settings.json || ok=no
   grep -q '"allowed"' .gemini/settings.json && ok=no        # a locked file must NOT re-allow anything
+  # Known write tools must also be named in the exclude denylist (defence-in-depth).
   for tool in run_shell_command replace write_file web_fetch save_memory; do
-    grep -q "\"$tool\"" .gemini/settings.json || ok=no
+    grep -q "\"exclude\":\[[^]]*\"$tool\"" .gemini/settings.json || ok=no
   done
   grep -q '"enabled":false' .gemini/settings.json || ok=no
   grep -q '"mcpServers":{}' .gemini/settings.json || ok=no

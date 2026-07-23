@@ -311,9 +311,13 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # SHIP_FEATURE_GEMINI_MODEL). TRADEOFF: full isolation means gemini sees only the plan on stdin, not
   # the checkout's files (deep codebase fact-checking is the PR cross-review's job).
   local GEMINI_MODEL="${SHIP_FEATURE_GEMINI_MODEL:-gemini-3.1-pro-preview}"
-  # The locked, read-only settings the isolated gemini run loads (single line so the heredoc-free
-  # printf stays Bash 3.2-safe). save_memory is excluded too so it can't write to the config dir.
-  local GEMINI_LOCKED_SETTINGS='{"tools":{"exclude":["run_shell_command","replace","write_file","web_fetch","save_memory"]},"hooksConfig":{"enabled":false},"mcpServers":{}}'
+  # The locked, read-only settings the isolated gemini run loads (single line so the heredoc-free printf
+  # stays Bash 3.2-safe). `tools.core` is an ALLOWLIST: gemini enables ONLY the tools named here, so any
+  # write/exec/network tool — including one a future gemini-cli adds or renames — is disabled by
+  # default (fail-CLOSED, not a denylist that a new tool could slip past). We allowlist just the
+  # read-only tools. `tools.exclude` additionally names today's known write tools as explicit
+  # defence-in-depth. hooks off + no MCP round it out.
+  local GEMINI_LOCKED_SETTINGS='{"tools":{"core":["read_file","read_many_files","glob","search_file_content","list_directory"],"exclude":["run_shell_command","replace","write_file","web_fetch","google_web_search","save_memory","write_todos","delegate_to_agent"]},"hooksConfig":{"enabled":false},"mcpServers":{}}'
   plan_review_with() {
     local name="$1" out rc=0 errf key Name why
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
@@ -355,7 +359,9 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
             fi
           done
           # $errf is absolute, so the redirect survives the cd.
+          # -u XDG_CONFIG_HOME: defence-in-depth in case a future gemini honors an XDG config path.
           out=$( cd "$giso" && printf '%s' "$plan" | run_reviewer env \
+                   -u XDG_CONFIG_HOME \
                    GEMINI_CLI_HOME="$giso" \
                    GEMINI_CLI_SYSTEM_SETTINGS_PATH="$giso/.gemini/settings.json" \
                    GEMINI_CLI_SYSTEM_DEFAULTS_PATH="$giso/.gemini/system-defaults.json" \

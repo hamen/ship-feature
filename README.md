@@ -81,10 +81,11 @@ ship-feature skill for any feature/fix.
   (`--permission-mode plan --safe-mode`), `codex` (`--sandbox read-only`), `cursor` (ask/Q&A mode), `qwen`
   (`--approval-mode plan` + `--safe-mode`) — `--safe-mode` on claude/qwen also stops any hooks/plugins/MCP
   in the checkout from loading — and `antigravity`/`gemini` via the `gemini` CLI, run **fail-closed**: an
-  isolated `GEMINI_CLI_HOME` and working dir with a locked `.gemini/settings.json` that hard-excludes the
-  write tools (`run_shell_command`, `replace`, `write_file`, `web_fetch`, `save_memory`), disables hooks,
-  and declares no MCP — so neither the user's real `~/.gemini` nor a reviewed checkout's `.gemini/`
-  contributes any `mcpServers`, hooks, or `tools.allowed` (the gemini analog of `--safe-mode`; default
+  isolated `GEMINI_CLI_HOME` and working dir with a locked `.gemini/settings.json` that allowlists only
+  the read-only tools via `tools.core` (any write/exec tool, even a future one, is off by default), names
+  today's write tools in `tools.exclude` as defence-in-depth, disables hooks, and declares no MCP — so
+  neither the user's real `~/.gemini` nor a reviewed checkout's `.gemini/` contributes any `mcpServers`,
+  hooks, or `tools.allowed` (the gemini analog of `--safe-mode`; default
   non-interactive mode + `-e none` on top; model pinned to `gemini-3.1-pro-preview`, override with
   `SHIP_FEATURE_GEMINI_MODEL`). Tradeoff: the isolated run sees only the plan text, not the checkout's
   files. The `antigravity` name maps to the `gemini` CLI here but to `agy` in `relay` — only `gemini` has a

@@ -10,9 +10,12 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 - **`antigravity`/`gemini` is now a read-only reviewer in `ship-feature plan-review`.** It runs the
   `gemini` CLI **fail-closed**: an isolated `GEMINI_CLI_HOME` **and** working dir with a locked
-  `.gemini/settings.json` that hard-excludes the write tools (`run_shell_command`, `replace`,
-  `write_file`, `web_fetch`, `save_memory` via `tools.exclude`, an unconditional blocklist), disables
-  hooks (`hooksConfig.enabled:false`, so no `SessionStart` shell), and declares no MCP. Because
+  `.gemini/settings.json` that **allowlists only the read-only tools** via `tools.core`
+  (`read_file`, `read_many_files`, `glob`, `search_file_content`, `list_directory`) — so any
+  write/exec/network tool, including one a future gemini-cli adds or renames, is disabled by default
+  rather than slipping past a denylist — with `tools.exclude` naming today's known write tools as extra
+  defence-in-depth. It also disables hooks (`hooksConfig.enabled:false`, so no `SessionStart` shell) and
+  declares no MCP. Because
   `GEMINI_CLI_HOME` redirects the USER settings scope and the CWD is that same dir, **neither the user's
   real `~/.gemini` nor a reviewed checkout's `.gemini/` contributes any `mcpServers`, hooks, or
   `tools.allowed`** — closing the shallow-merge hole where a `mcpServers:{}` override would still leave
@@ -40,10 +43,10 @@ All notable changes to **ship-feature** are documented here. This project follow
   isolation is stronger than a pure `--safe-mode`: it neutralizes both the reviewed *checkout's* config
   and the user's own global `~/.gemini` (via `GEMINI_CLI_HOME`), at the cost of the reviewer not seeing
   the checkout's files.
-- Maintenance caveat: the locked `tools.exclude` blocklist names five current gemini write tools
-  (`run_shell_command`, `replace`, `write_file`, `web_fetch`, `save_memory`). If a future gemini-cli
-  release adds a new write-capable tool under a different name, add it to `GEMINI_LOCKED_SETTINGS` in
-  `bin/ship-feature`.
+- Because `tools.core` is an allowlist, a future gemini-cli release that adds a new read-only tool will
+  have it disabled until it is added to `GEMINI_LOCKED_SETTINGS` in `bin/ship-feature` — the safe
+  direction (a new *write* tool is disabled automatically; only new *read* conveniences need a manual
+  opt-in).
 
 ## [0.2.0] — 2026-07-22
 
