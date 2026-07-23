@@ -52,6 +52,7 @@ load_config() {
       SHIP_FEATURE_DENYLIST) [ -n "${SHIP_FEATURE_DENYLIST+x}" ] || SHIP_FEATURE_DENYLIST="$val" ;;
       SHIP_FEATURE_REVIEWERS) [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || SHIP_FEATURE_REVIEWERS="$val" ;;
       SHIP_FEATURE_PLAN_REVIEWERS) [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || SHIP_FEATURE_PLAN_REVIEWERS="$val" ;;
+      SHIP_FEATURE_GEMINI_MODEL) [ -n "${SHIP_FEATURE_GEMINI_MODEL+x}" ] || SHIP_FEATURE_GEMINI_MODEL="$val" ;;
     esac
   done < "$cfg"
 }
@@ -173,14 +174,20 @@ cmd_relay() {
 # text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
 # load either), codex (--sandbox read-only), cursor (--mode=ask,
 # Q&A), qwen (--approval-mode plan, its read-only mode that denies edit/write/shell, plus
-# --safe-mode to also block checkout config). agy and opencode are RELAY-ONLY here — agy
-# has no read-only mode (its relay flag disables ALL permissions) and opencode needs the
-# file-attach path — so if listed they are skipped with a warning, never run. That keeps
-# the "read-only, nothing is written" guarantee true for the whole set that actually runs.
+# --safe-mode to also block checkout config), and antigravity/gemini via the `gemini` CLI
+# (default non-interactive mode already excludes shell/edit/write_file/web_fetch, and `-e none`
+# disables extensions). NOTE the deliberate overloading: in plan-review the reviewer name
+# `antigravity` (alias `agy`, `gemini`) maps to the `gemini` CLI — the only Gemini binary with a
+# read-only mode — whereas in `relay` `antigravity` maps to `agy`. The gemini read-only guarantee
+# is slightly WEAKER than claude/qwen `--safe-mode`: it cannot block a checkout's `.gemini/`
+# hooks/MCP, only its extensions, so run the plan gate from a trusted checkout.
+# opencode is RELAY-ONLY here (it needs the file-attach path) — if listed it is skipped with a
+# warning, never run. That keeps the "read-only, nothing is written" guarantee true for the whole
+# set that actually runs.
 plan_tool_for() { case "$1" in
-  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; qwen) echo qwen;; *) echo "";; esac; }
+  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; qwen) echo qwen;; antigravity) echo gemini;; *) echo "";; esac; }
 # Named but deliberately not run in plan-review (available in `relay`).
-plan_relay_only() { case "$1" in opencode|antigravity|agy) return 0;; *) return 1;; esac; }
+plan_relay_only() { case "$1" in opencode) return 0;; *) return 1;; esac; }
 
 cmd_plan_review() {
   load_config
@@ -282,6 +289,12 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # emits them in panel order after the barrier. qwen runs `--approval-mode plan` — its
   # genuine read-only mode that denies edit/write/shell — NOT `yolo` (which auto-approves
   # those). `--safe-mode` additionally blocks any checkout config from loading.
+  # antigravity runs the `gemini` CLI in its DEFAULT non-interactive mode, which already excludes
+  # shell/edit/write_file/web_fetch (verified in gemini-cli v0.26.0) — NOT `--approval-mode plan`,
+  # which throws unless `experimental.plan` is enabled. `-e none` disables extensions. `-m` pins a
+  # model because the CLI's built-in default is a retired model that 404s; override via
+  # SHIP_FEATURE_GEMINI_MODEL.
+  local GEMINI_MODEL="${SHIP_FEATURE_GEMINI_MODEL:-gemini-3.1-pro-preview}"
   plan_review_with() {
     local name="$1" out rc=0 errf key Name why
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
@@ -291,6 +304,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
       codex)  out=$(printf '%s' "$plan" | run_reviewer codex exec --sandbox read-only "$PROMPT" 2>"$errf"); rc=$?;;
       cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask 2>"$errf"); rc=$?;;
       qwen)   out=$(printf '%s' "$plan" | run_reviewer qwen --safe-mode --approval-mode plan -p "$PROMPT" 2>"$errf"); rc=$?;;
+      antigravity) out=$(printf '%s' "$plan" | run_reviewer gemini -e none -m "$GEMINI_MODEL" -p "$PROMPT" 2>"$errf"); rc=$?;;
     esac
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
       why="exited with code $rc"
@@ -313,7 +327,9 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   local IFS_SAVE="$IFS"; set -f; IFS=','; set -- $reviewers; IFS="$IFS_SAVE"; set +f
   for r in "$@"; do
     r="$(printf '%s' "$r" | tr -d '[:space:]')"; [ -z "$r" ] && continue
-    [ "$r" = "agy" ] && r=antigravity
+    # In plan-review, agy/gemini are aliases of the antigravity reviewer (all run the `gemini` CLI
+    # read-only); they collapse to one identity so the panel can't run Gemini twice.
+    { [ "$r" = "agy" ] || [ "$r" = "gemini" ]; } && r=antigravity
     rk="$(skey "$r")"
     case " $seen " in *" $rk "*) continue;; esac
     seen="$seen $rk"
@@ -355,7 +371,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
     if [ "$(cat "$f")" != ok ]; then failed=$((failed + 1)); names="$names ${f##*/k_}"; fi
   done
   if [ "$ran" = 0 ]; then
-    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, qwen (agy/opencode are relay-only). Pass --reviewers with a supported agent."
+    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, qwen, antigravity/gemini (opencode is relay-only). Pass --reviewers with a supported agent."
   fi
   if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Fix and re-run." >&2; return 3; fi
   echo "✔ Plan review done — $ran/$ran reviewer(s) responded. READ the findings and revise the plan before Gate 1." >&2

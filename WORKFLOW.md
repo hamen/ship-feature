@@ -34,13 +34,18 @@ which fans the plan out to your reviewer panel read-only and prints each review:
 ship-feature plan-review plan.md --reviewers codex,qwen     # or pipe it: cat plan.md | ship-feature plan-review
 ```
 
-With no `--reviewers` it uses `SHIP_FEATURE_REVIEWERS` (your quorum); with no file and no stdin it reads
-`./plan.md`. Reviewers run **read-only** and nothing is written or posted — supported: `claude`
-(`--permission-mode plan`), `codex` (`--sandbox read-only`), `cursor` (ask mode), `qwen`
-(`--approval-mode plan` + `--safe-mode`); `agy`/`opencode` are relay-only and skipped with a warning.
-Exit `0` = every reviewer responded, `3` = a
-reviewer failed/timed out/returned empty (re-run), `1` = usage error. The single-reviewer default still
-works too: `cat plan.md | codex exec --sandbox read-only`.
+With no `--reviewers` it uses `SHIP_FEATURE_PLAN_REVIEWERS` (falling back to `SHIP_FEATURE_REVIEWERS`,
+your quorum); with no file and no stdin it reads `./plan.md`. Reviewers run **read-only** and nothing is
+written or posted — supported: `claude` (`--permission-mode plan`), `codex` (`--sandbox read-only`),
+`cursor` (ask mode), `qwen` (`--approval-mode plan` + `--safe-mode`), and `antigravity`/`gemini` via the
+`gemini` CLI (default non-interactive mode excludes shell/edit/write, `-e none` disables extensions;
+model pinned to `gemini-3.1-pro-preview`, override with `SHIP_FEATURE_GEMINI_MODEL`). Note the
+`antigravity` name maps to the `gemini` CLI **here** but to `agy` in `relay` — only `gemini` has a
+read-only mode; its guarantee is slightly weaker than claude/qwen `--safe-mode` (it can't block a
+checkout's `.gemini/` hooks/MCP), so run the plan gate from a trusted checkout. `opencode` is relay-only
+and skipped with a warning. Exit `0` = every reviewer responded, `3` = a reviewer
+failed/timed out/returned empty (re-run), `1` = usage error. The single-reviewer default still works too:
+`cat plan.md | codex exec --sandbox read-only`.
 
 Read the feedback, revise, and iterate (≈2 rounds). The reviewers catch wrong assumptions and stale
 facts before they become code.

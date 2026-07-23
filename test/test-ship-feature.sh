@@ -144,6 +144,7 @@ make_reviewer claude 0 claude
 make_reviewer codex  0 codex
 make_reviewer qwen   0 qwen
 make_reviewer cursor 0 cursor-agent
+make_reviewer gemini 0 gemini   # antigravity/gemini read-only reviewer (the `gemini` CLI)
 
 # clean run with an explicit panel → exit 0, both reviews on stdout
 out=$(printf 'Step 1: X\nStep 2: Y\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,qwen 2>/dev/null); rc=$?
@@ -166,6 +167,31 @@ printf '%s' "$out" | grep -q -- "--mode=ask"                   && { echo "  ok  
 # (which auto-approves them). yolo + a plan review is the exact hole round 2 caught.
 printf '%s' "$out" | grep -q -- "--safe-mode --approval-mode plan" && { echo "  ok   [-] qwen runs read-only (--safe-mode --approval-mode plan)"; PASS=$((PASS+1)); } || { echo "  FAIL qwen not in read-only plan mode"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q -- "--approval-mode yolo"         && { echo "  FAIL qwen still uses the auto-approving yolo mode"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] qwen never uses the auto-approving yolo mode"; PASS=$((PASS+1)); }
+
+# antigravity/gemini runs the `gemini` CLI in DEFAULT non-interactive mode (already excludes
+# shell/edit/write_file/web_fetch) with `-e none` to disable extensions. It must NOT pass
+# `--approval-mode plan` (throws unless experimental.plan is on) nor `yolo` (auto-approves writes).
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+ag=$(printf '%s' "$out" | grep 'REVIEW-gemini')
+printf '%s' "$ag" | grep -q -- "-e none" && { echo "  ok   [-] antigravity runs gemini with extensions off (-e none)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not pass -e none"; FAIL=$((FAIL+1)); }
+printf '%s' "$ag" | grep -q -- "-m gemini-3.1-pro-preview" && { echo "  ok   [-] antigravity pins a working model by default"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not pin the default model"; FAIL=$((FAIL+1)); }
+printf '%s' "$ag" | grep -q -- "--approval-mode plan" && { echo "  FAIL gemini uses --approval-mode plan (throws without experimental.plan)"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] antigravity avoids the experimental --approval-mode plan"; PASS=$((PASS+1)); }
+printf '%s' "$ag" | grep -q -- "yolo" && { echo "  FAIL gemini uses the auto-approving yolo mode"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] antigravity never uses yolo"; PASS=$((PASS+1)); }
+
+# agy and gemini are ALIASES of antigravity: the panel collapses them to a SINGLE gemini invocation.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers antigravity,agy,gemini 2>/dev/null); rc=$?
+check "plan-review dedupes antigravity/agy/gemini aliases (exit 0)" "$rc" 0
+n=$(printf '%s\n' "$out" | grep -c 'REVIEW-gemini')
+[ "$n" = 1 ] && { echo "  ok   [-] antigravity/agy/gemini collapse to one Gemini run"; PASS=$((PASS+1)); } || { echo "  FAIL Gemini ran $n times for the three aliases (want 1)"; FAIL=$((FAIL+1)); }
+
+# SHIP_FEATURE_GEMINI_MODEL overrides the pinned default and reaches the argv.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_GEMINI_MODEL=my-model bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+printf '%s' "$out" | grep 'REVIEW-gemini' | grep -q -- "-m my-model" && { echo "  ok   [-] SHIP_FEATURE_GEMINI_MODEL overrides the model"; PASS=$((PASS+1)); } || { echo "  FAIL SHIP_FEATURE_GEMINI_MODEL did not reach gemini argv"; FAIL=$((FAIL+1)); }
+
+# antigravity in the panel but the gemini CLI missing → hard quorum failure (3), never a silent pass.
+# A stub dir WITHOUT gemini (but with the other reviewers) so `command -v gemini` fails for the panel.
+mkdir -p "$WORK/pbin-nogemini"; for b in claude codex qwen cursor-agent; do cp "$PBIN/$b" "$WORK/pbin-nogemini/$b" 2>/dev/null; done
+( printf 'plan\n' | env -u SHIP_FEATURE_GEMINI_MODEL PATH="$WORK/pbin-nogemini:/usr/bin:/bin" bash "$CLI" plan-review --reviewers codex,antigravity >/dev/null 2>&1 ); check "plan-review fails the quorum when the gemini CLI is missing (3)" $? 3
 
 # default panel comes from SHIP_FEATURE_REVIEWERS when --reviewers is omitted
 out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,cursor bash "$CLI" plan-review 2>/dev/null); rc=$?
@@ -196,13 +222,14 @@ make_reviewer codex 0 codex   # restore
 # quorum, so it never quietly passes on a thinned set.
 ( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,doesnotexist >/dev/null 2>&1 ); check "plan-review missing panel reviewer → fail (3)" $? 3
 
-# agy and opencode are RELAY-ONLY: skipped with a warning, the rest of the panel still runs (0)
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers agy,opencode,codex 2>&1); rc=$?
+# opencode is RELAY-ONLY: skipped with a warning, the rest of the panel still runs (0).
+# (agy is NO LONGER relay-only — it now aliases the read-only antigravity/gemini reviewer.)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers opencode,codex 2>&1); rc=$?
 check "plan-review skips relay-only agents, runs the rest" "$rc" 0
-printf '%s' "$out" | grep -qi "relay-only" && { echo "  ok   [-] plan-review warns that agy/opencode are relay-only"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not warn about relay-only agents"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep -qi "relay-only" && { echo "  ok   [-] plan-review warns that opencode is relay-only"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not warn about relay-only agents"; FAIL=$((FAIL+1)); }
 
 # a panel of ONLY relay-only agents → nobody supported ran → clear error (1)
-( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers agy,opencode >/dev/null 2>&1 ); check "plan-review with only relay-only agents → error (1)" $? 1
+( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers opencode >/dev/null 2>&1 ); check "plan-review with only relay-only agents → error (1)" $? 1
 
 # no panel at all (unset + none passed) → usage error (1)
 ( printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS= bash "$CLI" plan-review >/dev/null 2>&1 ); check "plan-review with no panel → usage error (1)" $? 1

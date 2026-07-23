@@ -6,6 +6,32 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
+### Added
+
+- **`antigravity`/`gemini` is now a read-only reviewer in `ship-feature plan-review`.** It runs the
+  `gemini` CLI in its default non-interactive mode — which already excludes the `shell`, `edit`,
+  `write_file`, and `web_fetch` tools — with `-e none` to disable extensions. `--approval-mode plan` is
+  **not** used: in gemini-cli v0.26.0 it throws unless `experimental.plan` is enabled, and default mode
+  gives the same tool exclusions. The reviewer names `antigravity`, `agy`, and `gemini` are aliases that
+  collapse to a single Gemini run.
+- **`SHIP_FEATURE_GEMINI_MODEL`** (env or config) pins the model for that reviewer. Default
+  `gemini-3.1-pro-preview`, because the CLI's own built-in default is a retired model that 404s.
+
+### Changed
+
+- **`agy` is no longer relay-only in `plan-review`.** It (and `gemini`) now alias the read-only
+  `antigravity` reviewer above. Only `opencode` remains relay-only. **Behavior change:** a panel that
+  lists `antigravity` now **requires** the `gemini` CLI at the plan gate — where it used to be skipped
+  with a warning, a missing `gemini` binary now **fails the quorum** (exit `3`), so a review can't
+  silently pass on a thinned panel.
+
+### Notes
+
+- The `antigravity` name maps to two different binaries by command: the `gemini` CLI in `plan-review`
+  (the only Gemini binary with a read-only mode) and `agy` in `relay` (unchanged). The gemini read-only
+  guarantee is slightly weaker than claude/qwen `--safe-mode`: it disables extensions but cannot block a
+  checkout's `.gemini/` hooks or MCP servers, so run the plan gate from a trusted checkout.
+
 ## [0.2.0] — 2026-07-22
 
 ### Added
