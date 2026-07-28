@@ -172,12 +172,13 @@ cmd_relay() {
 # Supported reviewers are ONLY those that can be run genuinely read-only over the plan
 # text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
 # load either), codex (--sandbox read-only), cursor (--mode=ask,
-# Q&A), kimi3 (opencode's read-only `plan` agent — Kimi K3 via `opencode run --agent plan`;
-# the plan agent denies edit/write/patch, so nothing is written). agy and the GENERIC
-# opencode `build` agent are RELAY-ONLY here — agy has no read-only mode (its relay flag
-# disables ALL permissions) and a bare `opencode run` uses the all-allow build agent — so
-# if listed they are skipped with a warning, never run. That keeps the "read-only, nothing
-# is written" guarantee true for the whole set that actually runs.
+# Q&A), kimi3 (Kimi K3 via opencode, pinned read-only by a temp OPENCODE_CONFIG that denies
+# the `edit` and `bash` permissions — removing both tools so nothing can be written, not even
+# via shell — plus `--pure` and `--agent plan`). agy and the GENERIC opencode `build` agent
+# are RELAY-ONLY here — agy has no read-only mode (its relay flag disables ALL permissions)
+# and a bare `opencode run` uses the all-allow build agent — so if listed they are skipped
+# with a warning, never run. That keeps the "read-only, nothing is written" guarantee true
+# for the whole set that actually runs.
 plan_tool_for() { case "$1" in
   claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; kimi3) echo opencode;; *) echo "";; esac; }
 # Named but deliberately not run in plan-review (available in `relay`). Note: `kimi3` IS a
@@ -281,19 +282,23 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
 
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
   # under --parallel neither the reviews nor the failure messages interleave; the caller
-  # emits them in panel order after the barrier. kimi3 runs via `opencode run --agent plan`
-  # — opencode's read-only plan agent, which denies edit/write/patch — NOT the default
-  # `build` agent (which is all-allow). The prompt+plan are fed on stdin (opencode `run`
-  # reads its message from stdin), so no plan text is written to disk.
+  # emits them in panel order after the barrier. kimi3 is made GENUINELY read-only two ways:
+  # a temp OPENCODE_CONFIG that denies the `edit` AND `bash` permissions — which removes those
+  # tools entirely, so the model has no way to write files even via shell (the `plan` agent
+  # alone denies edit but leaves bash allowed, which is NOT enough) — plus `--pure` so no
+  # checkout plugins/config load. `--agent plan` stays as defense in depth. Prompt+plan are
+  # fed on stdin, so no plan text is written to disk either.
   plan_review_with() {
-    local name="$1" out rc=0 errf key Name why
+    local name="$1" out rc=0 errf key Name why ro_cfg
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
     Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
     case "$name" in
       claude) out=$(printf '%s' "$plan" | run_reviewer claude -p --permission-mode plan --safe-mode "$PROMPT" 2>"$errf"); rc=$?;;
       codex)  out=$(printf '%s' "$plan" | run_reviewer codex exec --sandbox read-only "$PROMPT" 2>"$errf"); rc=$?;;
       cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask 2>"$errf"); rc=$?;;
-      kimi3)  out=$(printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" | run_reviewer opencode run --agent plan -m opencode-go/kimi-k3 2>"$errf"); rc=$?;;
+      kimi3)  ro_cfg="$STATUS_DIR/oc-ro_$key.json"
+              printf '{"$schema":"https://opencode.ai/config.json","permission":{"edit":"deny","bash":"deny","webfetch":"allow"}}' > "$ro_cfg"
+              out=$(export OPENCODE_CONFIG="$ro_cfg"; printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" | run_reviewer opencode run --pure --agent plan -m opencode-go/kimi-k3 2>"$errf"); rc=$?;;
     esac
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
       why="exited with code $rc"

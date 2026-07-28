@@ -139,7 +139,10 @@ if printf '%s' "$out" | grep -q -- "--reviewers codex,cursor" && ! printf '%s' "
 # plus its argv (so the argv/read-only contract can be asserted). cursor's binary is
 # `cursor-agent`; the rest match their reviewer name.
 PBIN="$WORK/pbin"; mkdir -p "$PBIN"
-make_reviewer() { printf '#!/usr/bin/env bash\necho "REVIEW-%s argv=[$*]"\nexit %s\n' "$1" "${2:-0}" > "$PBIN/$3"; chmod +x "$PBIN/$3"; }
+# The stub also surfaces OPENCODE_CONFIG (and its contents, flattened) so the read-only
+# argv/env contract for kimi3 — which pins read-only via OPENCODE_CONFIG, not a CLI flag —
+# is assertable. Harmless for reviewers that don't set it.
+make_reviewer() { printf '#!/usr/bin/env bash\ncfg=""\n[ -n "${OPENCODE_CONFIG:-}" ] && [ -f "$OPENCODE_CONFIG" ] && cfg=$(tr -d "\\n\\t " < "$OPENCODE_CONFIG")\necho "REVIEW-%s argv=[$*] OPENCODE_CONFIG=[$cfg]"\nexit %s\n' "$1" "${2:-0}" > "$PBIN/$3"; chmod +x "$PBIN/$3"; }
 make_reviewer claude 0 claude
 make_reviewer codex  0 codex
 # kimi3 is invoked through the `opencode` binary (opencode run --agent plan), so the stub
@@ -164,10 +167,14 @@ cl=$(printf '%s' "$out" | grep 'REVIEW-claude')
 printf '%s' "$cl" | grep -q -- "--permission-mode plan" && printf '%s' "$cl" | grep -q -- "--safe-mode" && { echo "  ok   [-] claude runs read-only (--permission-mode plan --safe-mode)"; PASS=$((PASS+1)); } || { echo "  FAIL claude not fully read-only (plan + safe-mode) in plan-review"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q -- "--sandbox read-only"          && { echo "  ok   [-] codex runs read-only (--sandbox read-only)"; PASS=$((PASS+1)); } || { echo "  FAIL codex not read-only in plan-review"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q -- "--mode=ask"                   && { echo "  ok   [-] cursor runs in ask (Q&A) mode"; PASS=$((PASS+1)); } || { echo "  FAIL cursor not in ask mode"; FAIL=$((FAIL+1)); }
-# kimi3 must run through opencode's read-only `plan` agent (denies edit/write/patch), NOT
-# the default all-allow `build` agent. Grep kimi3's line specifically.
+# kimi3's read-only guarantee is enforced by an OPENCODE_CONFIG that DENIES `edit` AND
+# `bash` (removing both tools so nothing can be written even via shell) plus `--pure` (no
+# checkout plugins). The `plan` agent alone denies edit but leaves bash allowed — not
+# enough — so the config is what makes it real. Assert all of it on kimi3's line.
 km=$(printf '%s' "$out" | grep 'REVIEW-kimi3')
-printf '%s' "$km" | grep -q -- "--agent plan" && printf '%s' "$km" | grep -q -- "kimi-k3" && { echo "  ok   [-] kimi3 runs read-only (opencode --agent plan, kimi-k3)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not in read-only plan agent"; FAIL=$((FAIL+1)); }
+printf '%s' "$km" | grep -q -- "--agent plan" && printf '%s' "$km" | grep -q -- "kimi-k3" && { echo "  ok   [-] kimi3 runs opencode plan agent (kimi-k3)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not on opencode plan agent"; FAIL=$((FAIL+1)); }
+printf '%s' "$km" | grep -q -- "--pure" && { echo "  ok   [-] kimi3 runs --pure (no checkout plugins)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 missing --pure"; FAIL=$((FAIL+1)); }
+printf '%s' "$km" | grep -q '"edit":"deny"' && printf '%s' "$km" | grep -q '"bash":"deny"' && { echo "  ok   [-] kimi3 read-only via OPENCODE_CONFIG (edit+bash denied)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not hard read-only (OPENCODE_CONFIG must deny edit AND bash)"; FAIL=$((FAIL+1)); }
 printf '%s' "$km" | grep -q -- "--agent build"         && { echo "  FAIL kimi3 uses the all-allow build agent"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] kimi3 never uses the all-allow build agent"; PASS=$((PASS+1)); }
 
 # default panel comes from SHIP_FEATURE_REVIEWERS when --reviewers is omitted

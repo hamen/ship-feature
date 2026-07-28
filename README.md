@@ -76,10 +76,12 @@ ship-feature skill for any feature/fix.
   the worktree marker git-excluded (run before you start implementing).
 - `ship-feature plan-review [<file>] [--reviewers a,b,c] [--parallel]` — step 2: fan an implementation
   plan (a file, stdin, or `./plan.md`) out to a panel of agents for a **read-only** review and print each
-  one. Defaults the panel to `SHIP_FEATURE_REVIEWERS`; nothing is written or posted. Supported reviewers
+  one. Defaults the panel to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; nothing is
+  written or posted. Supported reviewers
   are the ones that can actually be constrained: `claude` (`--permission-mode plan --safe-mode`), `codex`
-  (`--sandbox read-only`), `cursor` (ask/Q&A mode), `kimi3` (Kimi K3 via `opencode run --agent plan` —
-  opencode's read-only `plan` agent, which denies edit/write/patch). `--safe-mode` on claude also stops
+  (`--sandbox read-only`), `cursor` (ask/Q&A mode), `kimi3` (Kimi K3 via opencode, pinned read-only by an
+  `OPENCODE_CONFIG` that denies the `edit` and `bash` permissions — so it can't write files even via
+  shell — plus `--pure` and `--agent plan`). `--safe-mode` on claude also stops
   any hooks/plugins/MCP in the checkout from loading. `agy` and the bare `opencode` name are
   relay-only and skipped with a warning (agy has no read-only mode; a plain `opencode run` uses the
   all-allow `build` agent — only the `kimi3` reviewer pins the read-only `plan` agent). The

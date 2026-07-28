@@ -8,13 +8,16 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Changed
 
-- **plan-review: replaced `qwen` with `kimi3` (Kimi K3 via opencode).** `kimi3` runs through
-  `opencode run --agent plan -m opencode-go/kimi-k3` — opencode's read-only `plan` agent, which denies
-  `edit`/`write`/`patch`, so the "nothing is written" guarantee holds (verified: the plan agent's
-  permission set denies `edit` for `*`). The prompt+plan are fed on stdin. `qwen` is no longer a
-  supported plan reviewer. `agy` and the **bare** `opencode` name stay relay-only — only the `kimi3`
-  reviewer pins the read-only plan agent (a plain `opencode run` uses the all-allow `build` agent).
-  Read-only argv contract test updated: asserts `kimi3` carries `--agent plan` and never `--agent build`.
+- **plan-review: replaced `qwen` with `kimi3` (Kimi K3 via opencode).** `kimi3` runs Kimi K3 through
+  opencode, pinned **genuinely read-only** by a temp `OPENCODE_CONFIG` that denies the `edit` **and**
+  `bash` permissions — which removes both tools, so the model can't write files even via shell — plus
+  `--pure` (no checkout plugins/config) and `--agent plan`. (The `plan` agent alone denies `edit` but
+  leaves `bash` allowed, which is **not** enough — that gap is what the config closes; verified
+  empirically that denying `bash` removes the shell tool entirely.) The prompt+plan are fed on stdin.
+  `qwen` is no longer a supported plan reviewer. `agy` and the **bare** `opencode` name stay relay-only
+  (a plain `opencode run` uses the all-allow `build` agent). Read-only contract test updated: asserts
+  `kimi3` carries `--pure`, `--agent plan`, and an `OPENCODE_CONFIG` denying `edit`+`bash`, and never
+  `--agent build`.
 
 ## [0.2.0] — 2026-07-22
 
