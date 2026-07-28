@@ -10,14 +10,16 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 - **plan-review: replaced `qwen` with `kimi3` (Kimi K3 via opencode).** `kimi3` runs Kimi K3 through
   opencode, pinned **genuinely read-only** by a temp `OPENCODE_CONFIG` that denies the `edit` **and**
-  `bash` permissions — which removes both tools, so the model can't write files even via shell — plus
-  `--pure` (no checkout plugins/config) and `--agent plan`. (The `plan` agent alone denies `edit` but
-  leaves `bash` allowed, which is **not** enough — that gap is what the config closes; verified
-  empirically that denying `bash` removes the shell tool entirely.) The prompt+plan are fed on stdin.
-  `qwen` is no longer a supported plan reviewer. `agy` and the **bare** `opencode` name stay relay-only
-  (a plain `opencode run` uses the all-allow `build` agent). Read-only contract test updated: asserts
-  `kimi3` carries `--pure`, `--agent plan`, and an `OPENCODE_CONFIG` denying `edit`+`bash`, and never
-  `--agent build`.
+  `bash` permissions — which removes both tools, so the model can't write files even via shell — and
+  it runs in an **empty `/tmp` cwd** so the checkout's own `opencode.json` (which opencode would merge,
+  and could re-enable write tools or add write-capable MCP servers) is never discovered, plus `--pure`
+  (no external plugins) and `--agent plan`. (The `plan` agent alone denies `edit` but leaves `bash`
+  allowed — not enough; verified empirically that denying `bash` removes the shell tool entirely.) The
+  guarantee is "your checkout is untouched", not "nothing touches disk" — like every reviewer, opencode
+  still writes its own session data under its data dir. `qwen` is no longer a supported plan reviewer;
+  `agy` and the **bare** `opencode` name stay relay-only (a plain `opencode run` uses the all-allow
+  `build` agent). Read-only contract test asserts `kimi3` carries `--pure`, `--agent plan`, and an
+  `OPENCODE_CONFIG` denying `edit`+`bash`, and never `--agent build`.
 
 ## [0.2.0] — 2026-07-22
 
