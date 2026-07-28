@@ -12,7 +12,7 @@ trap 'rm -rf "$WORK"' EXIT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 # Isolate from the user's real config/env so the suite is deterministic outside CI.
 export SHIP_FEATURE_CONFIG=/dev/null
-unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS
+unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS
 
 PASS=0; FAIL=0
 check() { # check <desc> <actual_rc> <want_rc>
@@ -139,33 +139,50 @@ if printf '%s' "$out" | grep -q -- "--reviewers codex,cursor" && ! printf '%s' "
 # plus its argv (so the argv/read-only contract can be asserted). cursor's binary is
 # `cursor-agent`; the rest match their reviewer name.
 PBIN="$WORK/pbin"; mkdir -p "$PBIN"
-make_reviewer() { printf '#!/usr/bin/env bash\necho "REVIEW-%s argv=[$*]"\nexit %s\n' "$1" "${2:-0}" > "$PBIN/$3"; chmod +x "$PBIN/$3"; }
+# The stub also surfaces the OPENCODE_CONFIG_CONTENT env (how kimi3 pins read-only — the
+# highest-precedence config layer), the OPENCODE_CONFIG env (must be empty — kimi3 unsets it),
+# and CWD (must be isolated, outside the checkout). Harmless for reviewers that don't set them.
+make_reviewer() { printf '#!/usr/bin/env bash\necho "REVIEW-%s argv=[$*] OPENCODE_CONFIG_CONTENT=[${OPENCODE_CONFIG_CONTENT:-}] OPENCODE_CONFIG=[${OPENCODE_CONFIG:-}] CWD=[$PWD]"\nexit %s\n' "$1" "${2:-0}" > "$PBIN/$3"; chmod +x "$PBIN/$3"; }
 make_reviewer claude 0 claude
 make_reviewer codex  0 codex
-make_reviewer qwen   0 qwen
+# kimi3 is invoked through the `opencode` binary (opencode run --agent plan), so the stub
+# is named `opencode` but tags its output REVIEW-kimi3.
+make_reviewer kimi3  0 opencode
 make_reviewer cursor 0 cursor-agent
 
 # clean run with an explicit panel → exit 0, both reviews on stdout
-out=$(printf 'Step 1: X\nStep 2: Y\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,qwen 2>/dev/null); rc=$?
+out=$(printf 'Step 1: X\nStep 2: Y\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,kimi3 2>/dev/null); rc=$?
 check "plan-review clean run exits 0" "$rc" 0
-printf '%s' "$out" | grep -q "REVIEW-codex" && printf '%s' "$out" | grep -q "REVIEW-qwen" \
+printf '%s' "$out" | grep -q "REVIEW-codex" && printf '%s' "$out" | grep -q "REVIEW-kimi3" \
   && { echo "  ok   [-] plan-review prints each reviewer's output"; PASS=$((PASS+1)); } \
   || { echo "  FAIL plan-review dropped a reviewer's output"; FAIL=$((FAIL+1)); }
 
 # read-only argv contract: EVERY supported reviewer must carry its read-only flag, so the
 # "nothing is written" guarantee is real. A dropped flag here is a security regression.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,cursor,qwen 2>/dev/null)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,cursor,kimi3 2>/dev/null)
 # claude's own line must carry BOTH --permission-mode plan AND --safe-mode (safe-mode
 # stops checkout hooks/plugins/MCP from loading). Grep claude's line specifically so
-# qwen's --safe-mode can't satisfy this by accident.
+# another reviewer's flags can't satisfy this by accident.
 cl=$(printf '%s' "$out" | grep 'REVIEW-claude')
 printf '%s' "$cl" | grep -q -- "--permission-mode plan" && printf '%s' "$cl" | grep -q -- "--safe-mode" && { echo "  ok   [-] claude runs read-only (--permission-mode plan --safe-mode)"; PASS=$((PASS+1)); } || { echo "  FAIL claude not fully read-only (plan + safe-mode) in plan-review"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q -- "--sandbox read-only"          && { echo "  ok   [-] codex runs read-only (--sandbox read-only)"; PASS=$((PASS+1)); } || { echo "  FAIL codex not read-only in plan-review"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q -- "--mode=ask"                   && { echo "  ok   [-] cursor runs in ask (Q&A) mode"; PASS=$((PASS+1)); } || { echo "  FAIL cursor not in ask mode"; FAIL=$((FAIL+1)); }
-# qwen must use --approval-mode PLAN (read-only: denies edit/write/shell), never yolo
-# (which auto-approves them). yolo + a plan review is the exact hole round 2 caught.
-printf '%s' "$out" | grep -q -- "--safe-mode --approval-mode plan" && { echo "  ok   [-] qwen runs read-only (--safe-mode --approval-mode plan)"; PASS=$((PASS+1)); } || { echo "  FAIL qwen not in read-only plan mode"; FAIL=$((FAIL+1)); }
-printf '%s' "$out" | grep -q -- "--approval-mode yolo"         && { echo "  FAIL qwen still uses the auto-approving yolo mode"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] qwen never uses the auto-approving yolo mode"; PASS=$((PASS+1)); }
+# kimi3's read-only guarantee: OPENCODE_CONFIG_CONTENT (highest-precedence config layer)
+# DENIES `edit` AND `bash` (removing both tools — no write, no shell), OPENCODE_CONFIG is
+# unset (empty), it runs --pure and in an isolated cwd OUTSIDE the checkout, and never the
+# all-allow build agent. The `plan` agent alone denies edit but leaves bash allowed — not
+# enough — so the CONTENT denial is what makes it real. Assert all of it on kimi3's line.
+km=$(printf '%s' "$out" | grep 'REVIEW-kimi3')
+printf '%s' "$km" | grep -q -- "--agent plan" && printf '%s' "$km" | grep -q -- "kimi-k3" && { echo "  ok   [-] kimi3 runs opencode plan agent (kimi-k3)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not on opencode plan agent"; FAIL=$((FAIL+1)); }
+printf '%s' "$km" | grep -q -- "--pure" && { echo "  ok   [-] kimi3 runs --pure (no checkout plugins)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 missing --pure"; FAIL=$((FAIL+1)); }
+printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && { echo "  ok   [-] kimi3 read-only via OPENCODE_CONFIG_CONTENT (edit+bash denied)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not hard read-only (OPENCODE_CONFIG_CONTENT must deny edit AND bash)"; FAIL=$((FAIL+1)); }
+printf '%s' "$km" | grep -q 'OPENCODE_CONFIG=\[\]' && { echo "  ok   [-] kimi3 unsets inherited OPENCODE_CONFIG"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 left OPENCODE_CONFIG set (could weaken perms)"; FAIL=$((FAIL+1)); }
+kcwd=$(printf '%s' "$km" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p'); case "$kcwd" in "$WORK"*|"$PWD"*) echo "  FAIL kimi3 cwd is inside the checkout ($kcwd) — repo opencode.json could load"; FAIL=$((FAIL+1));; "") echo "  FAIL kimi3 cwd not captured"; FAIL=$((FAIL+1));; *) echo "  ok   [-] kimi3 runs in an isolated cwd outside the checkout"; PASS=$((PASS+1));; esac
+printf '%s' "$km" | grep -q -- "--agent build"         && { echo "  FAIL kimi3 uses the all-allow build agent"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] kimi3 never uses the all-allow build agent"; PASS=$((PASS+1)); }
+# REGRESSION (Codex round 3): a HOSTILE inherited OPENCODE_CONFIG_CONTENT that re-enables
+# edit/bash must be overridden by our deny (we own the highest-precedence layer).
+hostile=$(printf 'plan\n' | PATH="$PBIN:$PATH" OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"allow","bash":"allow"}}' bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
+printf '%s' "$hostile" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && ! printf '%s' "$hostile" | grep -q '"edit":"allow"' && { echo "  ok   [-] kimi3 overrides a hostile inherited OPENCODE_CONFIG_CONTENT"; PASS=$((PASS+1)); } || { echo "  FAIL a hostile OPENCODE_CONFIG_CONTENT survived (read-only bypass)"; FAIL=$((FAIL+1)); }
 
 # default panel comes from SHIP_FEATURE_REVIEWERS when --reviewers is omitted
 out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,cursor bash "$CLI" plan-review 2>/dev/null); rc=$?
@@ -176,7 +193,7 @@ printf '%s' "$out" | grep -q "REVIEW-claude" && printf '%s' "$out" | grep -q "RE
 
 # SHIP_FEATURE_PLAN_REVIEWERS overrides the shared quorum for plan-review (a smaller panel
 # than the PR cross-review). When both are set, the plan-specific one wins.
-out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,codex,cursor,qwen SHIP_FEATURE_PLAN_REVIEWERS=claude,codex bash "$CLI" plan-review 2>/dev/null); rc=$?
+out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,codex,cursor,kimi3 SHIP_FEATURE_PLAN_REVIEWERS=claude,codex bash "$CLI" plan-review 2>/dev/null); rc=$?
 check "plan-review prefers SHIP_FEATURE_PLAN_REVIEWERS" "$rc" 0
 if printf '%s' "$out" | grep -q "REVIEW-claude" && printf '%s' "$out" | grep -q "REVIEW-codex" && ! printf '%s' "$out" | grep -q "REVIEW-cursor"; then
   echo "  ok   [-] the plan-specific panel wins over the quorum"; PASS=$((PASS+1))
@@ -184,7 +201,7 @@ else echo "  FAIL plan-review did not prefer SHIP_FEATURE_PLAN_REVIEWERS"; FAIL=
 
 # a reviewer that returns an EMPTY review → not clean (exit 3)
 printf '#!/usr/bin/env bash\nexit 0\n' > "$PBIN/codex"; chmod +x "$PBIN/codex"
-( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,qwen >/dev/null 2>&1 ); check "plan-review empty review → not clean (3)" $? 3
+( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,kimi3 >/dev/null 2>&1 ); check "plan-review empty review → not clean (3)" $? 3
 make_reviewer codex 0 codex   # restore
 
 # a NON-ZERO reviewer exit → not clean (exit 3)
@@ -258,13 +275,13 @@ GDIR="$WORK/globdir"; mkdir -p "$GDIR"; : > "$GDIR/aaa"; : > "$GDIR/abb"
 ( cd "$GDIR" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers 'a*' >/dev/null 2>&1 ); check "plan-review does not glob-expand the reviewer list" $? 3
 
 # --parallel: clean run exits 0 and prints every reviewer (order-independent)
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,qwen --parallel 2>/dev/null); rc=$?
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 --parallel 2>/dev/null); rc=$?
 check "plan-review --parallel clean run exits 0" "$rc" 0
 n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review --parallel ran all three reviewers" "$n" 3
 
 # --parallel is still fail-closed: one empty reviewer fails the whole round (3)
 printf '#!/usr/bin/env bash\nexit 0\n' > "$PBIN/codex"; chmod +x "$PBIN/codex"
-( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,qwen --parallel >/dev/null 2>&1 ); check "plan-review --parallel stays fail-closed (3)" $? 3
+( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 --parallel >/dev/null 2>&1 ); check "plan-review --parallel stays fail-closed (3)" $? 3
 make_reviewer codex 0 codex   # restore
 
 # Interrupt teardown: ^C during --parallel must kill the reviewer's deep descendants
