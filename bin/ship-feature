@@ -173,10 +173,10 @@ cmd_relay() {
 # Supported reviewers are ONLY those that can be run genuinely read-only over the plan
 # text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
 # load either), codex (--sandbox read-only), cursor (--mode=ask,
-# Q&A), kimi3 (Kimi K3 via opencode, pinned read-only by a temp OPENCODE_CONFIG that denies
-# the `edit` and `bash` permissions — removing both tools so nothing can be written, not even
-# via shell — plus `--pure` and `--agent plan`). agy and the GENERIC opencode `build` agent
-# are RELAY-ONLY here — agy has no read-only mode (its relay flag disables ALL permissions)
+# Q&A), kimi3 (Kimi K3 via opencode, pinned read-only by OPENCODE_CONFIG_CONTENT — opencode's
+# highest-precedence config layer — denying `edit`+`bash` so nothing can be written even via
+# shell, run in an isolated cwd, plus `--pure` and `--agent plan`). agy and the bare `opencode`
+# name are RELAY-ONLY here — agy has no read-only mode (its relay flag disables ALL permissions)
 # and a bare `opencode run` uses the all-allow build agent — so if listed they are skipped
 # with a warning, never run. That keeps the "read-only, nothing is written" guarantee true
 # for the whole set that actually runs.
@@ -283,29 +283,36 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
 
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
   # under --parallel neither the reviews nor the failure messages interleave; the caller
-  # emits them in panel order after the barrier. kimi3 is made read-only against the CHECKOUT
-  # (it cannot modify your working tree) three ways: (1) a temp OPENCODE_CONFIG that denies the
-  # `edit` AND `bash` permissions — which removes those tools entirely, so the model can't write
-  # even via shell (the `plan` agent alone denies edit but leaves bash allowed, NOT enough);
-  # (2) it runs in an EMPTY /tmp cwd, so the checkout's own opencode.json (which opencode would
-  # merge, and could re-enable write tools or add write-capable MCP servers) is never discovered;
-  # (3) `--pure` skips external plugins; `--agent plan` is defense in depth. Note: like every
-  # reviewer here, opencode still writes its own session data under its data dir — the guarantee
-  # is "your repo is untouched", not "nothing touches disk anywhere".
+  # emits them in panel order after the barrier. kimi3 cannot modify your working tree: it pins
+  # read-only through OPENCODE_CONFIG_CONTENT (opencode's highest-precedence config layer, applied
+  # last so it wins over any merged global/project config) denying `edit`+`bash`, unsets any
+  # inherited OPENCODE_CONFIG* so a hostile env can't pre-seed "allow", runs in an empty dir made
+  # outside any checkout (so the repo's opencode.json is never discovered), and adds --pure +
+  # --agent plan. Note: like every reviewer here, opencode still writes its own session data under
+  # its data dir — the guarantee is "your checkout is untouched", not "nothing touches disk".
   plan_review_with() {
-    local name="$1" out rc=0 errf key Name why ro_cfg ro_cwd
+    local name="$1" out rc=0 errf key Name why ro_cwd
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
     Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
     case "$name" in
       claude) out=$(printf '%s' "$plan" | run_reviewer claude -p --permission-mode plan --safe-mode "$PROMPT" 2>"$errf"); rc=$?;;
       codex)  out=$(printf '%s' "$plan" | run_reviewer codex exec --sandbox read-only "$PROMPT" 2>"$errf"); rc=$?;;
       cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask 2>"$errf"); rc=$?;;
-      kimi3)  ro_cfg="$STATUS_DIR/oc-ro_$key.json"; ro_cwd="$STATUS_DIR/oc-cwd_$key"
-              printf '{"$schema":"https://opencode.ai/config.json","permission":{"edit":"deny","bash":"deny","webfetch":"allow"}}' > "$ro_cfg"
-              mkdir -p "$ro_cwd"   # run in an EMPTY dir under /tmp so the checkout's opencode.json
-                                   # (which opencode would merge, possibly re-enabling write tools/MCP)
-                                   # is never discovered — the plan arrives on stdin, so cwd is irrelevant
-              out=$(cd "$ro_cwd" && export OPENCODE_CONFIG="$ro_cfg" && printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" | run_reviewer opencode run --pure --agent plan -m opencode-go/kimi-k3 2>"$errf"); rc=$?;;
+      kimi3)  # Pin read-only via OPENCODE_CONFIG_CONTENT — the HIGHEST-precedence config layer
+              # (it is applied last, so it wins over any merged global/project/OPENCODE_CONFIG value;
+              # verified: it overrides even a project opencode.json that sets edit/bash "allow").
+              # Denying `edit`+`bash` removes those tools entirely, so nothing can be written — not
+              # via a file edit, not via shell. We also unset any INHERITED OPENCODE_CONFIG* so a
+              # hostile environment can't pre-seed an "allow", and run in an empty dir made OUTSIDE
+              # any checkout (TMPDIR forced to /tmp) so the repo's own opencode.json is never even
+              # discovered. `--pure` skips external plugins; `--agent plan` is defense in depth.
+              ro_cwd="$(TMPDIR=/tmp mktemp -d 2>/dev/null || mktemp -d)"
+              out=$(cd "$ro_cwd" \
+                    && unset OPENCODE_CONFIG \
+                    && export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"allow"}}' \
+                    && printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" \
+                       | run_reviewer opencode run --pure --agent plan -m opencode-go/kimi-k3 2>"$errf"); rc=$?
+              [ -n "$ro_cwd" ] && rm -rf "$ro_cwd";;
     esac
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
       why="exited with code $rc"

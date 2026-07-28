@@ -139,10 +139,10 @@ if printf '%s' "$out" | grep -q -- "--reviewers codex,cursor" && ! printf '%s' "
 # plus its argv (so the argv/read-only contract can be asserted). cursor's binary is
 # `cursor-agent`; the rest match their reviewer name.
 PBIN="$WORK/pbin"; mkdir -p "$PBIN"
-# The stub also surfaces OPENCODE_CONFIG (and its contents, flattened) so the read-only
-# argv/env contract for kimi3 — which pins read-only via OPENCODE_CONFIG, not a CLI flag —
-# is assertable. Harmless for reviewers that don't set it.
-make_reviewer() { printf '#!/usr/bin/env bash\ncfg=""\n[ -n "${OPENCODE_CONFIG:-}" ] && [ -f "$OPENCODE_CONFIG" ] && cfg=$(tr -d "\\n\\t " < "$OPENCODE_CONFIG")\necho "REVIEW-%s argv=[$*] OPENCODE_CONFIG=[$cfg]"\nexit %s\n' "$1" "${2:-0}" > "$PBIN/$3"; chmod +x "$PBIN/$3"; }
+# The stub also surfaces the OPENCODE_CONFIG_CONTENT env (how kimi3 pins read-only — the
+# highest-precedence config layer), the OPENCODE_CONFIG env (must be empty — kimi3 unsets it),
+# and CWD (must be isolated, outside the checkout). Harmless for reviewers that don't set them.
+make_reviewer() { printf '#!/usr/bin/env bash\necho "REVIEW-%s argv=[$*] OPENCODE_CONFIG_CONTENT=[${OPENCODE_CONFIG_CONTENT:-}] OPENCODE_CONFIG=[${OPENCODE_CONFIG:-}] CWD=[$PWD]"\nexit %s\n' "$1" "${2:-0}" > "$PBIN/$3"; chmod +x "$PBIN/$3"; }
 make_reviewer claude 0 claude
 make_reviewer codex  0 codex
 # kimi3 is invoked through the `opencode` binary (opencode run --agent plan), so the stub
@@ -167,15 +167,22 @@ cl=$(printf '%s' "$out" | grep 'REVIEW-claude')
 printf '%s' "$cl" | grep -q -- "--permission-mode plan" && printf '%s' "$cl" | grep -q -- "--safe-mode" && { echo "  ok   [-] claude runs read-only (--permission-mode plan --safe-mode)"; PASS=$((PASS+1)); } || { echo "  FAIL claude not fully read-only (plan + safe-mode) in plan-review"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q -- "--sandbox read-only"          && { echo "  ok   [-] codex runs read-only (--sandbox read-only)"; PASS=$((PASS+1)); } || { echo "  FAIL codex not read-only in plan-review"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q -- "--mode=ask"                   && { echo "  ok   [-] cursor runs in ask (Q&A) mode"; PASS=$((PASS+1)); } || { echo "  FAIL cursor not in ask mode"; FAIL=$((FAIL+1)); }
-# kimi3's read-only guarantee is enforced by an OPENCODE_CONFIG that DENIES `edit` AND
-# `bash` (removing both tools so nothing can be written even via shell) plus `--pure` (no
-# checkout plugins). The `plan` agent alone denies edit but leaves bash allowed — not
-# enough — so the config is what makes it real. Assert all of it on kimi3's line.
+# kimi3's read-only guarantee: OPENCODE_CONFIG_CONTENT (highest-precedence config layer)
+# DENIES `edit` AND `bash` (removing both tools — no write, no shell), OPENCODE_CONFIG is
+# unset (empty), it runs --pure and in an isolated cwd OUTSIDE the checkout, and never the
+# all-allow build agent. The `plan` agent alone denies edit but leaves bash allowed — not
+# enough — so the CONTENT denial is what makes it real. Assert all of it on kimi3's line.
 km=$(printf '%s' "$out" | grep 'REVIEW-kimi3')
 printf '%s' "$km" | grep -q -- "--agent plan" && printf '%s' "$km" | grep -q -- "kimi-k3" && { echo "  ok   [-] kimi3 runs opencode plan agent (kimi-k3)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not on opencode plan agent"; FAIL=$((FAIL+1)); }
 printf '%s' "$km" | grep -q -- "--pure" && { echo "  ok   [-] kimi3 runs --pure (no checkout plugins)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 missing --pure"; FAIL=$((FAIL+1)); }
-printf '%s' "$km" | grep -q '"edit":"deny"' && printf '%s' "$km" | grep -q '"bash":"deny"' && { echo "  ok   [-] kimi3 read-only via OPENCODE_CONFIG (edit+bash denied)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not hard read-only (OPENCODE_CONFIG must deny edit AND bash)"; FAIL=$((FAIL+1)); }
+printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && { echo "  ok   [-] kimi3 read-only via OPENCODE_CONFIG_CONTENT (edit+bash denied)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not hard read-only (OPENCODE_CONFIG_CONTENT must deny edit AND bash)"; FAIL=$((FAIL+1)); }
+printf '%s' "$km" | grep -q 'OPENCODE_CONFIG=\[\]' && { echo "  ok   [-] kimi3 unsets inherited OPENCODE_CONFIG"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 left OPENCODE_CONFIG set (could weaken perms)"; FAIL=$((FAIL+1)); }
+kcwd=$(printf '%s' "$km" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p'); case "$kcwd" in "$WORK"*|"$PWD"*) echo "  FAIL kimi3 cwd is inside the checkout ($kcwd) — repo opencode.json could load"; FAIL=$((FAIL+1));; "") echo "  FAIL kimi3 cwd not captured"; FAIL=$((FAIL+1));; *) echo "  ok   [-] kimi3 runs in an isolated cwd outside the checkout"; PASS=$((PASS+1));; esac
 printf '%s' "$km" | grep -q -- "--agent build"         && { echo "  FAIL kimi3 uses the all-allow build agent"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] kimi3 never uses the all-allow build agent"; PASS=$((PASS+1)); }
+# REGRESSION (Codex round 3): a HOSTILE inherited OPENCODE_CONFIG_CONTENT that re-enables
+# edit/bash must be overridden by our deny (we own the highest-precedence layer).
+hostile=$(printf 'plan\n' | PATH="$PBIN:$PATH" OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"allow","bash":"allow"}}' bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
+printf '%s' "$hostile" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && ! printf '%s' "$hostile" | grep -q '"edit":"allow"' && { echo "  ok   [-] kimi3 overrides a hostile inherited OPENCODE_CONFIG_CONTENT"; PASS=$((PASS+1)); } || { echo "  FAIL a hostile OPENCODE_CONFIG_CONTENT survived (read-only bypass)"; FAIL=$((FAIL+1)); }
 
 # default panel comes from SHIP_FEATURE_REVIEWERS when --reviewers is omitted
 out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,cursor bash "$CLI" plan-review 2>/dev/null); rc=$?

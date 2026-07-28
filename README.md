@@ -79,9 +79,10 @@ ship-feature skill for any feature/fix.
   one. Defaults the panel to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; nothing is
   written or posted. Supported reviewers
   are the ones that can actually be constrained: `claude` (`--permission-mode plan --safe-mode`), `codex`
-  (`--sandbox read-only`), `cursor` (ask/Q&A mode), `kimi3` (Kimi K3 via opencode: an `OPENCODE_CONFIG`
-  denies the `edit`+`bash` permissions so it can't write even via shell, it runs in an empty `/tmp` cwd so
-  the checkout's own `opencode.json` can't re-enable write tools, plus `--pure` and `--agent plan`).
+  (`--sandbox read-only`), `cursor` (ask/Q&A mode), `kimi3` (Kimi K3 via opencode: `OPENCODE_CONFIG_CONTENT`
+  — opencode's highest-precedence config layer — denies the `edit`+`bash` permissions so it can't write
+  even via shell and can't be overridden by a merged global/checkout config; inherited `OPENCODE_CONFIG*`
+  are unset, it runs in an isolated cwd outside the checkout, plus `--pure` and `--agent plan`).
   `--safe-mode` on claude also stops
   any hooks/plugins/MCP in the checkout from loading. `agy` and the bare `opencode` name are
   relay-only and skipped with a warning (agy has no read-only mode; a plain `opencode run` uses the
