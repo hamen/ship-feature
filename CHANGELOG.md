@@ -6,6 +6,16 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
+### Changed
+
+- **plan-review: replaced `qwen` with `kimi3` (Kimi K3 via opencode).** `kimi3` runs through
+  `opencode run --agent plan -m opencode-go/kimi-k3` — opencode's read-only `plan` agent, which denies
+  `edit`/`write`/`patch`, so the "nothing is written" guarantee holds (verified: the plan agent's
+  permission set denies `edit` for `*`). The prompt+plan are fed on stdin. `qwen` is no longer a
+  supported plan reviewer. `agy` and the **bare** `opencode` name stay relay-only — only the `kimi3`
+  reviewer pins the read-only plan agent (a plain `opencode run` uses the all-allow `build` agent).
+  Read-only argv contract test updated: asserts `kimi3` carries `--agent plan` and never `--agent build`.
+
 ## [0.2.0] — 2026-07-22
 
 ### Added

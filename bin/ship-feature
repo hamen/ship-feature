@@ -172,14 +172,16 @@ cmd_relay() {
 # Supported reviewers are ONLY those that can be run genuinely read-only over the plan
 # text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
 # load either), codex (--sandbox read-only), cursor (--mode=ask,
-# Q&A), qwen (--approval-mode plan, its read-only mode that denies edit/write/shell, plus
-# --safe-mode to also block checkout config). agy and opencode are RELAY-ONLY here — agy
-# has no read-only mode (its relay flag disables ALL permissions) and opencode needs the
-# file-attach path — so if listed they are skipped with a warning, never run. That keeps
-# the "read-only, nothing is written" guarantee true for the whole set that actually runs.
+# Q&A), kimi3 (opencode's read-only `plan` agent — Kimi K3 via `opencode run --agent plan`;
+# the plan agent denies edit/write/patch, so nothing is written). agy and the GENERIC
+# opencode `build` agent are RELAY-ONLY here — agy has no read-only mode (its relay flag
+# disables ALL permissions) and a bare `opencode run` uses the all-allow build agent — so
+# if listed they are skipped with a warning, never run. That keeps the "read-only, nothing
+# is written" guarantee true for the whole set that actually runs.
 plan_tool_for() { case "$1" in
-  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; qwen) echo qwen;; *) echo "";; esac; }
-# Named but deliberately not run in plan-review (available in `relay`).
+  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; kimi3) echo opencode;; *) echo "";; esac; }
+# Named but deliberately not run in plan-review (available in `relay`). Note: `kimi3` IS a
+# supported plan reviewer (read-only plan agent); only the bare `opencode` name is relay-only.
 plan_relay_only() { case "$1" in opencode|antigravity|agy) return 0;; *) return 1;; esac; }
 
 cmd_plan_review() {
@@ -189,7 +191,7 @@ cmd_plan_review() {
     case "$1" in
       # Guard $2 so a trailing `--reviewers` (or one followed by a flag) is a clean usage
       # error, not a `set -u` unbound-variable crash.
-      --reviewers)   [ $# -ge 2 ] || die "--reviewers needs a list (e.g. --reviewers codex,qwen)."
+      --reviewers)   [ $# -ge 2 ] || die "--reviewers needs a list (e.g. --reviewers codex,kimi3)."
                      case "$2" in -*) die "--reviewers needs a list, got the flag '$2'.";; esac
                      reviewers="$2"; have_reviewers=1; shift 2;;
       --reviewers=*) die "pass reviewers as two tokens: --reviewers <list> (the --reviewers=... form isn't supported)." ;;
@@ -227,7 +229,7 @@ cmd_plan_review() {
   # An explicit but empty `--reviewers ""` is a usage error, not a silent fall-through to
   # the env panel (which would surprise a user who meant to name a list).
   if [ "$have_reviewers" = 1 ]; then
-    [ -n "$reviewers" ] || die "--reviewers was empty — name at least one (e.g. --reviewers codex,qwen)."
+    [ -n "$reviewers" ] || die "--reviewers was empty — name at least one (e.g. --reviewers codex,kimi3)."
   else
     # Plan review can want a different (usually smaller) panel than the PR cross-review:
     # SHIP_FEATURE_PLAN_REVIEWERS is preferred, falling back to the shared quorum.
@@ -279,9 +281,10 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
 
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
   # under --parallel neither the reviews nor the failure messages interleave; the caller
-  # emits them in panel order after the barrier. qwen runs `--approval-mode plan` — its
-  # genuine read-only mode that denies edit/write/shell — NOT `yolo` (which auto-approves
-  # those). `--safe-mode` additionally blocks any checkout config from loading.
+  # emits them in panel order after the barrier. kimi3 runs via `opencode run --agent plan`
+  # — opencode's read-only plan agent, which denies edit/write/patch — NOT the default
+  # `build` agent (which is all-allow). The prompt+plan are fed on stdin (opencode `run`
+  # reads its message from stdin), so no plan text is written to disk.
   plan_review_with() {
     local name="$1" out rc=0 errf key Name why
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
@@ -290,7 +293,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
       claude) out=$(printf '%s' "$plan" | run_reviewer claude -p --permission-mode plan --safe-mode "$PROMPT" 2>"$errf"); rc=$?;;
       codex)  out=$(printf '%s' "$plan" | run_reviewer codex exec --sandbox read-only "$PROMPT" 2>"$errf"); rc=$?;;
       cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask 2>"$errf"); rc=$?;;
-      qwen)   out=$(printf '%s' "$plan" | run_reviewer qwen --safe-mode --approval-mode plan -p "$PROMPT" 2>"$errf"); rc=$?;;
+      kimi3)  out=$(printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" | run_reviewer opencode run --agent plan -m opencode-go/kimi-k3 2>"$errf"); rc=$?;;
     esac
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
       why="exited with code $rc"
@@ -355,7 +358,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
     if [ "$(cat "$f")" != ok ]; then failed=$((failed + 1)); names="$names ${f##*/k_}"; fi
   done
   if [ "$ran" = 0 ]; then
-    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, qwen (agy/opencode are relay-only). Pass --reviewers with a supported agent."
+    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, kimi3 (agy and bare opencode are relay-only). Pass --reviewers with a supported agent."
   fi
   if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Fix and re-run." >&2; return 3; fi
   echo "✔ Plan review done — $ran/$ran reviewer(s) responded. READ the findings and revise the plan before Gate 1." >&2

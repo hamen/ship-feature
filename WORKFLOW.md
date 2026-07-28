@@ -31,13 +31,14 @@ Have a second agent — or a panel — review the plan before writing code. Use 
 which fans the plan out to your reviewer panel read-only and prints each review:
 
 ```
-ship-feature plan-review plan.md --reviewers codex,qwen     # or pipe it: cat plan.md | ship-feature plan-review
+ship-feature plan-review plan.md --reviewers codex,kimi3    # or pipe it: cat plan.md | ship-feature plan-review
 ```
 
 With no `--reviewers` it uses `SHIP_FEATURE_REVIEWERS` (your quorum); with no file and no stdin it reads
 `./plan.md`. Reviewers run **read-only** and nothing is written or posted — supported: `claude`
-(`--permission-mode plan`), `codex` (`--sandbox read-only`), `cursor` (ask mode), `qwen`
-(`--approval-mode plan` + `--safe-mode`); `agy`/`opencode` are relay-only and skipped with a warning.
+(`--permission-mode plan`), `codex` (`--sandbox read-only`), `cursor` (ask mode), `kimi3`
+(Kimi K3 via `opencode run --agent plan`, opencode's read-only plan agent); `agy` and bare `opencode`
+are relay-only and skipped with a warning.
 Exit `0` = every reviewer responded, `3` = a
 reviewer failed/timed out/returned empty (re-run), `1` = usage error. The single-reviewer default still
 works too: `cat plan.md | codex exec --sandbox read-only`.
