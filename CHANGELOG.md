@@ -36,8 +36,11 @@ All notable changes to **ship-feature** are documented here. This project follow
   `0` — was reported as a passing round. stderr is now inspected regardless of the exit code, the review
   is **discarded** rather than printed, and the round fails with `3`.
   Detection alone is only a signal, though: by the time the warning arrives the checkout's hooks have
-  already run. So `grok45high` also **refuses to start** when the barrier cannot be applied — on Linux,
-  no bubblewrap or unprivileged user namespaces disabled. The stderr match keys off failure phrasing
+  already run. So the barrier is checked **before** Grok starts — on Linux, bubblewrap present and
+  unprivileged user namespaces enabled. When it cannot be enforced the reviewer **degrades** to its
+  previous posture (isolated empty cwd, every tool denied) and labels the review as text-only, rather
+  than refusing outright — refusing would make `grok45high` unusable on any Linux without bubblewrap,
+  CI runners included. The stderr match keys off failure phrasing
   ("continuing without enforcement", "failed to set up sandbox"), not the bare words "sandbox" or
   "namespace", which appear in healthy logs. Both paths have regression tests, including one asserting a
   benign sandbox log does **not** discard a good review.

@@ -209,7 +209,7 @@ printf '%s' "$hostile" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"ba
 
 # grok45high: Grok 4.5 high effort, prompt-file (not stdin), read-only ALLOWLIST, runs in the
 # checkout so it can verify the plan against the code (parity with claude/codex/cursor).
-out=$(printf 'UNIQUE_PLAN_TOKEN_42\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok45high 2>/dev/null); rc=$?
+out=$(printf 'UNIQUE_PLAN_TOKEN_42\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok45high 2>/dev/null); rc=$?
 check "plan-review grok45high clean exit" "$rc" 0
 printf '%s' "$out" | grep -q -- '-m grok-4.5' && printf '%s' "$out" | grep -q -- '--reasoning-effort high' \
   && printf '%s' "$out" | grep -q -- '--permission-mode plan' && printf '%s' "$out" | grep -q -- '--sandbox read-only' \
@@ -261,7 +261,7 @@ echo "None."
 exit 0
 STUB
 chmod +x "$PBIN/grok"
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
 check "plan-review fails when the sandbox warns and continues (fail-closed)" "$rc" 3
 printf '%s' "$out" | grep -qi 'sandbox was not enforced' \
   && { echo "  ok   [-] grok45high sandbox fail-open is reported, not swallowed"; PASS=$((PASS+1)); } \
@@ -278,12 +278,31 @@ echo "REVIEW-grok45high argv=[$*] CWD=[${PWD}]"
 exit 0
 STUB
 chmod +x "$PBIN/grok"
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
 check "plan-review keeps the review when stderr mentions the sandbox benignly" "$rc" 0
 printf '%s' "$out" | grep -q 'REVIEW-grok45high' \
   && { echo "  ok   [-] benign sandbox log does not discard the review"; PASS=$((PASS+1)); } \
   || { echo "  FAIL benign sandbox log false-failed the round"; FAIL=$((FAIL+1)); }
 make_reviewer grok45high 0 grok   # restore
+
+# When the OS sandbox cannot be enforced, grok45high DEGRADES to the old isolated posture —
+# text-only review, no checkout — instead of refusing, and says so above the review. Refusing would
+# make the reviewer unusable on any Linux without bubblewrap (CI runners included); running it in the
+# checkout unsandboxed is the one thing we must never do.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=fail bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
+check "plan-review still returns a review when the sandbox is unavailable" "$rc" 0
+printf '%s' "$out" | grep -qi 'saw the plan text ONLY' \
+  && { echo "  ok   [-] degraded grok45high review is labelled text-only"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL degraded review not labelled"; FAIL=$((FAIL+1)); }
+dg=$(printf '%s' "$out" | grep 'REVIEW-grok45high' | head -1)
+printf '%s' "$dg" | grep -qF -- "--deny *" && ! printf '%s' "$dg" | grep -qF -- '--tools read_file' \
+  && { echo "  ok   [-] degraded grok45high denies every tool"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL degraded grok45high did not fall back to deny-all"; FAIL=$((FAIL+1)); }
+dcwd=$(printf '%s' "$dg" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$dcwd" in
+  *iso-grok45high*) echo "  ok   [-] degraded grok45high runs outside the checkout"; PASS=$((PASS+1));;
+  *) echo "  FAIL degraded grok45high ran in $dcwd"; FAIL=$((FAIL+1));;
+esac
 
 # bare grok is relay-only (PR panel name), not a plan-reviewer
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok,codex 2>&1); rc=$?

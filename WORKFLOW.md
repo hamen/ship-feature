@@ -47,7 +47,8 @@ are relay-only and skipped with a warning (use `grok45high` for plan review).
 
 Reviewers that run in the checkout — `claude`, `codex`, `cursor`, `grok45high` — can read the tree, so
 they check the plan against the code (a stale line number, a test the change would turn red). `kimi3`
-stays isolated.
+stays isolated. `grok45high` needs a working OS sandbox to read the tree: where one cannot be applied
+(Linux without bubblewrap) it degrades to an isolated, text-only review and says so above its output.
 
 What "read-only" means here, precisely: each reviewer is pinned to its CLI's read-only mode and none of
 them is given a way to write your checkout or post anywhere. It is not a sandbox escape proof. Except for
