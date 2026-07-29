@@ -171,7 +171,6 @@ make_reviewer kimi3  0 opencode
 make_reviewer cursor 0 cursor-agent
 # grok45high is invoked through the `grok` binary
 make_reviewer grok45high 0 grok
-make_reviewer grok45high 0 grok
 
 # clean run with an explicit panel → exit 0, both reviews on stdout
 out=$(printf 'Step 1: X\nStep 2: Y\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,kimi3 2>/dev/null); rc=$?
@@ -213,7 +212,7 @@ out=$(printf 'UNIQUE_PLAN_TOKEN_42\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-revi
 check "plan-review grok45high clean exit" "$rc" 0
 printf '%s' "$out" | grep -q -- '-m grok-4.5' && printf '%s' "$out" | grep -q -- '--reasoning-effort high' \
   && printf '%s' "$out" | grep -q -- '--permission-mode plan' && printf '%s' "$out" | grep -q -- '--sandbox read-only' \
-  && printf '%s' "$out" | grep -q -- "--deny *" && printf '%s' "$out" | grep -q -- '--verbatim' \
+  && printf '%s' "$out" | grep -qF -- "--deny *" && printf '%s' "$out" | grep -q -- '--verbatim' \
   && printf '%s' "$out" | grep -q -- '--prompt-file' \
   && { echo "  ok   [-] grok45high argv pins model/high/plan/sandbox/deny/verbatim/prompt-file"; PASS=$((PASS+1)); } \
   || { echo "  FAIL grok45high argv incomplete"; FAIL=$((FAIL+1)); }

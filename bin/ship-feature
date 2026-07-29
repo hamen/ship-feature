@@ -295,7 +295,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # --agent plan. Note: like every reviewer here, opencode still writes its own session data under
   # its data dir — the guarantee is "your checkout is untouched", not "nothing touches disk".
   plan_review_with() {
-    local name="$1" out rc=0 errf key Name why ro_cwd prompt_file expected_bytes actual_bytes body
+    local name="$1" out rc=0 errf key Name why ro_cwd prompt_file expected_bytes actual_bytes body sandbox_hint=""
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
     Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
     case "$name" in
@@ -325,7 +325,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
               # High effort is the plan-review posture; PR relay uses bare `grok` (medium).
               ro_cwd="$(mktemp -d "$STATUS_DIR/iso-grok45high.XXXXXX")" || { echo fail > "$STATUS_DIR/$key"; return 0; }
               prompt_file="$STATUS_DIR/prompt_grok45high_$$"
-              body="$(printf '%s\n\n--- PLAN ---\n```\n%s\n```\n--- END PLAN ---\n' "$PROMPT" "$plan")"
+              body="$(printf '%s\n\n--- PLAN ---\n~~~~plan\n%s\n~~~~\n--- END PLAN ---\n' "$PROMPT" "$plan")"
               if ! printf '%s' "$body" > "$prompt_file"; then
                 printf '  ! %s: failed to write prompt-file\n' "$name" > "$STATUS_DIR/diag_$key"
                 echo fail > "$STATUS_DIR/$key"; rm -rf "$ro_cwd"; return 0
@@ -353,7 +353,8 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
                          --max-turns 40 \
                          </dev/null 2>"$errf"); rc=$?
               if [ "$rc" -ne 0 ] && [ -s "$errf" ] && grep -qiE 'sandbox|bubblewrap|bwrap|namespace' "$errf" 2>/dev/null; then
-                printf '  ! %s: sandbox unavailable (check bubblewrap / user namespaces)\n' "$name" >> "$STATUS_DIR/diag_$key"
+                # Stash for the shared empty/non-zero handlers below — they rewrite diag_$key.
+                sandbox_hint="  ! $name: sandbox unavailable (check bubblewrap / user namespaces)"
               fi
               # STATUS_DIR EXIT trap removes ro_cwd; keep an explicit rm for sequential runs too.
               [ -n "$ro_cwd" ] && rm -rf "$ro_cwd";;
@@ -361,7 +362,10 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
       why="exited with code $rc"
       case "$rc" in 0) why="ran but returned an empty review";; 124) why="timed out after ${timeout_s}s (raise SHIP_FEATURE_PLAN_TIMEOUT)";; 127) why="command not found";; esac
-      { printf '  ! %s: no review — %s\n' "$name" "$why"; [ "$rc" != 124 ] && [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /'; } > "$STATUS_DIR/diag_$key"
+      { printf '  ! %s: no review — %s\n' "$name" "$why"
+        [ -n "$sandbox_hint" ] && printf '%s\n' "$sandbox_hint"
+        [ "$rc" != 124 ] && [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /'
+      } > "$STATUS_DIR/diag_$key"
       echo fail > "$STATUS_DIR/$key"; return 0
     fi
     printf '\n========== %s (plan review) ==========\n%s\n=======================================\n' "$Name" "$out" > "$STATUS_DIR/out_$key"
@@ -369,6 +373,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
       # Name the timeout explicitly: a bare "exited with code 124" is opaque.
       if [ "$rc" = 124 ]; then printf '  ! %s: timed out after %ss — review may be truncated (not clean)\n' "$name" "$timeout_s" > "$STATUS_DIR/diag_$key"
       else printf '  ! %s: exited with code %s — review may be truncated (not clean)\n' "$name" "$rc" > "$STATUS_DIR/diag_$key"; fi
+      [ -n "$sandbox_hint" ] && printf '%s\n' "$sandbox_hint" >> "$STATUS_DIR/diag_$key"
       echo fail > "$STATUS_DIR/$key"
     else echo ok > "$STATUS_DIR/$key"; fi
   }
@@ -383,7 +388,11 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
     rk="$(skey "$r")"
     case " $seen " in *" $rk "*) continue;; esac
     seen="$seen $rk"
-    if plan_relay_only "$r"; then warn "$r is relay-only (no read-only mode / needs file-attach) — not run in plan-review; skipping."; continue; fi
+    if plan_relay_only "$r"; then
+      if [ "$r" = grok ]; then warn "grok is relay-only here — use grok45high for plan-review (high effort); skipping.";
+      else warn "$r is relay-only (no read-only mode / needs file-attach) — not run in plan-review; skipping."; fi
+      continue
+    fi
     tool="$(plan_tool_for "$r")"
     # A named reviewer that is unknown, or supported-but-not-installed, is a hard failure:
     # the panel is the quorum, so a review must not quietly pass with it missing.

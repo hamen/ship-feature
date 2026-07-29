@@ -37,10 +37,12 @@ ship-feature plan-review plan.md --reviewers codex,kimi3    # or pipe it: cat pl
 With no `--reviewers` it uses `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS` (your quorum);
 with no file and no stdin it reads
 `./plan.md`. Reviewers run **read-only** and nothing is written or posted — supported: `claude`
-(`--permission-mode plan --safe-mode`), `codex` (`--sandbox read-only`), `cursor` (ask mode), `kimi3`, `grok45high`
+(`--permission-mode plan --safe-mode`), `codex` (`--sandbox read-only`), `cursor` (ask mode), `kimi3`
 (Kimi K3 via opencode, pinned read-only by `OPENCODE_CONFIG_CONTENT` — the highest-precedence config
 layer — denying `edit`+`bash`, with inherited `OPENCODE_CONFIG*` unset, an isolated cwd, plus `--pure`
-and `--agent plan`); `agy` and bare `opencode` are relay-only and skipped with a warning.
+and `--agent plan`), `grok45high` (Grok 4.5 high effort via `grok --prompt-file`, isolated cwd,
+`--permission-mode plan`, `--sandbox read-only`, `--deny '*'`); `agy`, bare `opencode`, and bare `grok`
+are relay-only and skipped with a warning (use `grok45high` for plan review).
 Exit `0` = every reviewer responded, `3` = a
 reviewer failed/timed out/returned empty (re-run), `1` = usage error. The single-reviewer default still
 works too: `cat plan.md | codex exec --sandbox read-only`.
