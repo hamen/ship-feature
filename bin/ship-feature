@@ -295,7 +295,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # --agent plan. Note: like every reviewer here, opencode still writes its own session data under
   # its data dir — the guarantee is "your checkout is untouched", not "nothing touches disk".
   plan_review_with() {
-    local name="$1" out rc=0 errf key Name why ro_cwd prompt_file expected_bytes actual_bytes body sandbox_hint=""
+    local name="$1" out rc=0 errf key Name why ro_cwd prompt_file expected_bytes actual_bytes body sandbox_hint="" sandbox_unenforced=""
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
     Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
     case "$name" in
@@ -377,11 +377,24 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
                          --disable-web-search \
                          --max-turns 40 \
                          </dev/null 2>"$errf"); rc=$?
-              if [ "$rc" -ne 0 ] && [ -s "$errf" ] && grep -qiE 'sandbox|bubblewrap|bwrap|namespace' "$errf" 2>/dev/null; then
-                # Stash for the shared empty/non-zero handlers below — they rewrite diag_$key.
+              # Checked regardless of the exit code, and it FAILS THE ROUND on its own.
+              # `--sandbox read-only` can warn and continue unenforced when its setup fails, so a
+              # sandbox complaint on stderr plus a perfectly good review on stdout is exactly the
+              # shape of a silent fail-open: the reviewer read the tree with no OS write barrier
+              # and the panel reported it clean. Gating this on `rc != 0` (as it was) meant the
+              # one case worth catching was the one case never inspected.
+              if [ -s "$errf" ] && grep -qiE 'sandbox|bubblewrap|bwrap|namespace' "$errf" 2>/dev/null; then
                 sandbox_hint="  ! $name: sandbox unavailable (check bubblewrap / user namespaces)"
+                sandbox_unenforced=1
               fi;;
     esac
+    if [ -n "$sandbox_unenforced" ]; then
+      { printf '  ! %s: read-only sandbox was not enforced — review discarded\n' "$name"
+        printf '%s\n' "$sandbox_hint"
+        [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /'
+      } > "$STATUS_DIR/diag_$key"
+      echo fail > "$STATUS_DIR/$key"; return 0
+    fi
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
       why="exited with code $rc"
       case "$rc" in 0) why="ran but returned an empty review";; 124) why="timed out after ${timeout_s}s (raise SHIP_FEATURE_PLAN_TIMEOUT)";; 127) why="command not found";; esac

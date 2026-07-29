@@ -46,8 +46,15 @@ checkout with a read-only tool allowlist `--tools read_file,list_dir,grep`, the 
 are relay-only and skipped with a warning (use `grok45high` for plan review).
 
 Reviewers that run in the checkout — `claude`, `codex`, `cursor`, `grok45high` — can read the tree, so
-they check the plan against the code (a stale line number, a test the change would turn red). They also
-load that checkout's own agent config, which is the trade-off for that ability. `kimi3` stays isolated.
+they check the plan against the code (a stale line number, a test the change would turn red). `kimi3`
+stays isolated.
+
+What "read-only" means here, precisely: each reviewer is pinned to its CLI's read-only mode and none of
+them is given a way to write your checkout or post anywhere. It is not a sandbox escape proof. Except for
+`claude --safe-mode`, an in-checkout reviewer loads that checkout's own agent config (`CLAUDE.md`,
+`AGENTS.md`, `.cursor`, `.grok`) and whatever hooks or plugins it declares — the same trust you already
+extend by opening the repo in that agent. Review a plan for a repository you do not trust with `kimi3`,
+or not at all.
 Exit `0` = every reviewer responded, `3` = a
 reviewer failed/timed out/returned empty (re-run), `1` = usage error. The single-reviewer default still
 works too: `cat plan.md | codex exec --sandbox read-only`.

@@ -242,13 +242,35 @@ printf '%s' "$out" | grep -q -- '--cwd ' \
   || { echo "  ok   [-] grok45high does not override cwd"; PASS=$((PASS+1)); }
 case "$gcwd" in
   *iso-grok45high*) echo "  FAIL grok45high still runs in an isolated cwd ($gcwd)"; FAIL=$((FAIL+1));;
-  "$PWD") echo "  ok   [-] grok45high runs in the checkout"; PASS=$((PASS+1));;
-  *) echo "  FAIL grok45high cwd is neither the checkout nor recognised ($gcwd)"; FAIL=$((FAIL+1));;
+  "$PWD") echo "  ok   [-] grok45high inherits the caller's cwd (the checkout, in real use)"; PASS=$((PASS+1));;
+  *) echo "  FAIL grok45high cwd is neither the caller's nor recognised ($gcwd)"; FAIL=$((FAIL+1));;
 esac
 # The prompt-file must never land inside the checkout, or it shows up in `git status`.
 printf '%s' "$out" | grep -qF -- "--prompt-file $PWD/" \
   && { echo "  FAIL grok45high prompt-file written inside the checkout"; FAIL=$((FAIL+1)); } \
   || { echo "  ok   [-] grok45high prompt-file lives outside the checkout"; PASS=$((PASS+1)); }
+# A sandbox that warns and continues must FAIL the round, not pass it. This is the fail-open
+# shape: grok exits 0 with a perfectly good review on stdout, while stderr says the OS write
+# barrier could not be set up. Before this guard the round was reported clean.
+cat > "$PBIN/grok" <<'STUB'
+#!/usr/bin/env bash
+echo "warning: failed to set up sandbox (bubblewrap not available), continuing unsandboxed" >&2
+echo "REVIEW-grok45high argv=[$*] CWD=[${PWD}]"
+echo "## Blocker"
+echo "None."
+exit 0
+STUB
+chmod +x "$PBIN/grok"
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
+check "plan-review fails when the sandbox warns and continues (fail-closed)" "$rc" 3
+printf '%s' "$out" | grep -qi 'sandbox was not enforced' \
+  && { echo "  ok   [-] grok45high sandbox fail-open is reported, not swallowed"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL sandbox fail-open not surfaced"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep -q '## Blocker' \
+  && { echo "  FAIL unsandboxed review was printed as a valid review"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] the unsandboxed review is discarded, not printed"; PASS=$((PASS+1)); }
+make_reviewer grok45high 0 grok   # restore
+
 # bare grok is relay-only (PR panel name), not a plan-reviewer
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok,codex 2>&1); rc=$?
 check "plan-review bare grok is relay-only (panel still runs codex)" "$rc" 0

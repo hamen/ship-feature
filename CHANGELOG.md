@@ -30,6 +30,11 @@ All notable changes to **ship-feature** are documented here. This project follow
   stays reachable, including ones that write. With both removed it reports exactly
   `read_file`/`list_dir`/`grep`.
   `--permission-mode plan` and `--sandbox read-only` are unchanged.
+- **`grok45high` now fails the round when the read-only sandbox is not enforced.** `--sandbox read-only`
+  can warn and continue unenforced when its setup fails; the warning was only inspected on a **nonzero**
+  exit, so the one shape worth catching — a clean review on stdout, a sandbox complaint on stderr, exit
+  `0` — was reported as a passing round. stderr is now inspected regardless of the exit code, the review
+  is **discarded** rather than printed, and the round fails with `3`. Covered by a regression test.
   **Trade-offs, stated:** a checkout-scoped `.grok` is now loaded, exactly as `CLAUDE.md`, `AGENTS.md`
   and the cursor config already are for the other three in-checkout reviewers; Grok has no
   `--safe-mode` equivalent, so checkout hooks/plugins can still load, and `--sandbox read-only` can
