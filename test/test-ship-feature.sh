@@ -269,6 +269,20 @@ printf '%s' "$out" | grep -qi 'sandbox was not enforced' \
 printf '%s' "$out" | grep -q '## Blocker' \
   && { echo "  FAIL unsandboxed review was printed as a valid review"; FAIL=$((FAIL+1)); } \
   || { echo "  ok   [-] the unsandboxed review is discarded, not printed"; PASS=$((PASS+1)); }
+# ...but a benign stderr mentioning "namespace" or "sandbox" must NOT discard a good review.
+# The match keys off failure phrasing; a bare token would train people to ignore this signal.
+cat > "$PBIN/grok" <<'STUB'
+#!/usr/bin/env bash
+echo "info: sandbox profile read-only applied; namespace ready" >&2
+echo "REVIEW-grok45high argv=[$*] CWD=[${PWD}]"
+exit 0
+STUB
+chmod +x "$PBIN/grok"
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
+check "plan-review keeps the review when stderr mentions the sandbox benignly" "$rc" 0
+printf '%s' "$out" | grep -q 'REVIEW-grok45high' \
+  && { echo "  ok   [-] benign sandbox log does not discard the review"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL benign sandbox log false-failed the round"; FAIL=$((FAIL+1)); }
 make_reviewer grok45high 0 grok   # restore
 
 # bare grok is relay-only (PR panel name), not a plan-reviewer

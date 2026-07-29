@@ -34,7 +34,13 @@ All notable changes to **ship-feature** are documented here. This project follow
   can warn and continue unenforced when its setup fails; the warning was only inspected on a **nonzero**
   exit, so the one shape worth catching — a clean review on stdout, a sandbox complaint on stderr, exit
   `0` — was reported as a passing round. stderr is now inspected regardless of the exit code, the review
-  is **discarded** rather than printed, and the round fails with `3`. Covered by a regression test.
+  is **discarded** rather than printed, and the round fails with `3`.
+  Detection alone is only a signal, though: by the time the warning arrives the checkout's hooks have
+  already run. So `grok45high` also **refuses to start** when the barrier cannot be applied — on Linux,
+  no bubblewrap or unprivileged user namespaces disabled. The stderr match keys off failure phrasing
+  ("continuing without enforcement", "failed to set up sandbox"), not the bare words "sandbox" or
+  "namespace", which appear in healthy logs. Both paths have regression tests, including one asserting a
+  benign sandbox log does **not** discard a good review.
   **Trade-offs, stated:** a checkout-scoped `.grok` is now loaded, exactly as `CLAUDE.md`, `AGENTS.md`
   and the cursor config already are for the other three in-checkout reviewers; Grok has no
   `--safe-mode` equivalent, so checkout hooks/plugins can still load, and `--sandbox read-only` can

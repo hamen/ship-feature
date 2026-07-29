@@ -350,6 +350,28 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
               # is the OS write barrier (needs a working sandbox / bwrap on Linux). Note it can
               # warn and continue unenforced if setup fails, so it is a layer, not the guarantee.
               # High effort is the plan-review posture; PR relay uses bare `grok` (medium).
+              # PREVENTION, not just detection. Grok's own docs: a BUILT-IN profile that fails to
+              # apply "logs a warning and continues without enforcement" — and by the time that
+              # warning reaches us the checkout's hooks and plugins have already run. Discarding
+              # the review afterwards is a signal, not a barrier. So refuse to START when the OS
+              # barrier cannot be applied: on Linux that is bubblewrap plus unprivileged user
+              # namespaces; macOS Seatbelt is available on all versions.
+              # (Grok's fail-closed CUSTOM profiles live in ~/.grok/sandbox.toml or the
+              # checkout's .grok/sandbox.toml — one is the user's own config, the other is a file
+              # in someone else's repo. Neither is ours to write, hence this check instead.)
+              if [ "$(uname -s)" = Linux ]; then
+                why=""
+                command -v bwrap >/dev/null 2>&1 || why="bubblewrap (bwrap) not found"
+                if [ -z "$why" ] && [ -r /proc/sys/kernel/unprivileged_userns_clone ] \
+                   && [ "$(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null)" = 0 ]; then
+                  why="unprivileged user namespaces are disabled"
+                fi
+                if [ -n "$why" ]; then
+                  printf '  ! %s: not started — read-only sandbox cannot be enforced (%s)\n' \
+                    "$name" "$why" > "$STATUS_DIR/diag_$key"
+                  echo fail > "$STATUS_DIR/$key"; return 0
+                fi
+              fi
               prompt_file="$STATUS_DIR/prompt_grok45high_$$"
               body="$(printf '%s\n\n--- PLAN ---\n~~~~plan\n%s\n~~~~\n--- END PLAN ---\n' "$PROMPT" "$plan")"
               if ! printf '%s' "$body" > "$prompt_file"; then
@@ -377,13 +399,15 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
                          --disable-web-search \
                          --max-turns 40 \
                          </dev/null 2>"$errf"); rc=$?
-              # Checked regardless of the exit code, and it FAILS THE ROUND on its own.
-              # `--sandbox read-only` can warn and continue unenforced when its setup fails, so a
-              # sandbox complaint on stderr plus a perfectly good review on stdout is exactly the
-              # shape of a silent fail-open: the reviewer read the tree with no OS write barrier
-              # and the panel reported it clean. Gating this on `rc != 0` (as it was) meant the
-              # one case worth catching was the one case never inspected.
-              if [ -s "$errf" ] && grep -qiE 'sandbox|bubblewrap|bwrap|namespace' "$errf" 2>/dev/null; then
+              # Backstop to the pre-flight check above, for a sandbox that fails to apply for a
+              # reason we cannot probe. Checked regardless of the exit code — a sandbox complaint
+              # on stderr with a perfectly good review on stdout and exit 0 is exactly the silent
+              # fail-open shape, and gating this on `rc != 0` (as it once did) meant the one case
+              # worth catching was the one never inspected.
+              # Matched on FAILURE PHRASING, not on the bare words "sandbox"/"namespace": those
+              # appear in healthy logs too, and discarding a good review over the word "namespace"
+              # would train people to ignore this.
+              if [ -s "$errf" ] && grep -qiE 'continu(e|ing|es) (without enforcement|unsandboxed)|(sandbox|profile)[^.]{0,40}(could not|cannot|can'"'"'t|failed to) (be )?appl|failed to (set up|start|initiali[sz]e) (the )?sandbox|sandbox (is )?unavailable|running unsandboxed' "$errf" 2>/dev/null; then
                 sandbox_hint="  ! $name: sandbox unavailable (check bubblewrap / user namespaces)"
                 sandbox_unenforced=1
               fi;;
