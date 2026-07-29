@@ -213,8 +213,9 @@ out=$(printf 'UNIQUE_PLAN_TOKEN_42\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-revi
 check "plan-review grok45high clean exit" "$rc" 0
 printf '%s' "$out" | grep -q -- '-m grok-4.5' && printf '%s' "$out" | grep -q -- '--reasoning-effort high' \
   && printf '%s' "$out" | grep -q -- '--permission-mode plan' && printf '%s' "$out" | grep -q -- '--sandbox read-only' \
+  && printf '%s' "$out" | grep -q -- "--deny *" && printf '%s' "$out" | grep -q -- '--verbatim' \
   && printf '%s' "$out" | grep -q -- '--prompt-file' \
-  && { echo "  ok   [-] grok45high argv pins model/high/plan/sandbox/prompt-file"; PASS=$((PASS+1)); } \
+  && { echo "  ok   [-] grok45high argv pins model/high/plan/sandbox/deny/verbatim/prompt-file"; PASS=$((PASS+1)); } \
   || { echo "  FAIL grok45high argv incomplete"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q 'UNIQUE_PLAN_TOKEN_42' && printf '%s' "$out" | grep -qF -- '--- PLAN ---' \
   && { echo "  ok   [-] grok45high prompt-file contains the plan text"; PASS=$((PASS+1)); } \

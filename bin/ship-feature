@@ -345,6 +345,8 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
                          --reasoning-effort high \
                          --permission-mode plan \
                          --sandbox read-only \
+                         --deny '*' \
+                         --verbatim \
                          --no-memory \
                          --no-subagents \
                          --disable-web-search \
