@@ -207,24 +207,103 @@ hostile=$(printf 'plan\n' | PATH="$PBIN:$PATH" OPENCODE_CONFIG_CONTENT='{"permis
 printf '%s' "$hostile" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && ! printf '%s' "$hostile" | grep -q '"edit":"allow"' && { echo "  ok   [-] kimi3 overrides a hostile inherited OPENCODE_CONFIG_CONTENT"; PASS=$((PASS+1)); } || { echo "  FAIL a hostile OPENCODE_CONFIG_CONTENT survived (read-only bypass)"; FAIL=$((FAIL+1)); }
 
 
-# grok45high: Grok 4.5 high effort, prompt-file (not stdin), isolated cwd, sandbox+plan
-out=$(printf 'UNIQUE_PLAN_TOKEN_42\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok45high 2>/dev/null); rc=$?
+# grok45high: Grok 4.5 high effort, prompt-file (not stdin), read-only ALLOWLIST, runs in the
+# checkout so it can verify the plan against the code (parity with claude/codex/cursor).
+out=$(printf 'UNIQUE_PLAN_TOKEN_42\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok45high 2>/dev/null); rc=$?
 check "plan-review grok45high clean exit" "$rc" 0
 printf '%s' "$out" | grep -q -- '-m grok-4.5' && printf '%s' "$out" | grep -q -- '--reasoning-effort high' \
   && printf '%s' "$out" | grep -q -- '--permission-mode plan' && printf '%s' "$out" | grep -q -- '--sandbox read-only' \
-  && printf '%s' "$out" | grep -qF -- "--deny *" && printf '%s' "$out" | grep -q -- '--verbatim' \
+  && printf '%s' "$out" | grep -qF -- '--tools read_file,list_dir,grep' && printf '%s' "$out" | grep -q -- '--verbatim' \
+  && printf '%s' "$out" | grep -qF -- '--disallowed-tools search_tool,use_tool' \
   && printf '%s' "$out" | grep -q -- '--prompt-file' \
-  && { echo "  ok   [-] grok45high argv pins model/high/plan/sandbox/deny/verbatim/prompt-file"; PASS=$((PASS+1)); } \
+  && { echo "  ok   [-] grok45high argv pins model/high/plan/sandbox/tools-allowlist/mcp-off/verbatim/prompt-file"; PASS=$((PASS+1)); } \
   || { echo "  FAIL grok45high argv incomplete"; FAIL=$((FAIL+1)); }
+# Read-only means: no shell, no editor, no subagents in the built-in allowlist. Asserted on the
+# ARGV LINE ONLY — grepping the whole output would false-fail on a plan that merely mentions one
+# of these names, since the stub echoes the plan back.
+gargv=$(printf '%s' "$out" | grep 'REVIEW-grok45high' | head -1 | sed -n 's/.*argv=\[\([^]]*\)\].*/\1/p')
+printf '%s' "$gargv" | grep -qE -- '(run_terminal_command|search_replace|spawn_subagent|scheduler_)' \
+  && { echo "  FAIL grok45high allowlist leaks a write/exec tool"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] grok45high allowlist excludes shell/editor/subagent tools"; PASS=$((PASS+1)); }
+# The MCP bridge survives --tools, so it must be removed explicitly. Verified against the real
+# CLI: with `--tools read_file` alone the session still exposes search_tool and use_tool.
+printf '%s' "$gargv" | grep -qF -- '--disallowed-tools search_tool,use_tool' \
+  && { echo "  ok   [-] grok45high removes the MCP bridge explicitly"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL grok45high leaves the MCP bridge reachable"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q 'UNIQUE_PLAN_TOKEN_42' && printf '%s' "$out" | grep -qF -- '--- PLAN ---' \
   && { echo "  ok   [-] grok45high prompt-file contains the plan text"; PASS=$((PASS+1)); } \
   || { echo "  FAIL grok45high prompt-file missing plan content"; FAIL=$((FAIL+1)); }
+# Runs in the caller's checkout (no --cwd override, no iso- temp dir): that is what lets it read
+# the tree the plan is about.
 gk=$(printf '%s' "$out" | grep 'REVIEW-grok45high' | head -1)
 gcwd=$(printf '%s' "$gk" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+printf '%s' "$out" | grep -q -- '--cwd ' \
+  && { echo "  FAIL grok45high still pins --cwd (should inherit the checkout)"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] grok45high does not override cwd"; PASS=$((PASS+1)); }
 case "$gcwd" in
-  *iso-grok45high*) echo "  ok   [-] grok45high runs in isolated cwd"; PASS=$((PASS+1));;
-  *) echo "  FAIL grok45high cwd not isolated ($gcwd)"; FAIL=$((FAIL+1));;
+  *iso-grok45high*) echo "  FAIL grok45high still runs in an isolated cwd ($gcwd)"; FAIL=$((FAIL+1));;
+  "$PWD") echo "  ok   [-] grok45high inherits the caller's cwd (the checkout, in real use)"; PASS=$((PASS+1));;
+  *) echo "  FAIL grok45high cwd is neither the caller's nor recognised ($gcwd)"; FAIL=$((FAIL+1));;
 esac
+# The prompt-file must never land inside the checkout, or it shows up in `git status`.
+printf '%s' "$out" | grep -qF -- "--prompt-file $PWD/" \
+  && { echo "  FAIL grok45high prompt-file written inside the checkout"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] grok45high prompt-file lives outside the checkout"; PASS=$((PASS+1)); }
+# A sandbox that warns and continues must FAIL the round, not pass it. This is the fail-open
+# shape: grok exits 0 with a perfectly good review on stdout, while stderr says the OS write
+# barrier could not be set up. Before this guard the round was reported clean.
+cat > "$PBIN/grok" <<'STUB'
+#!/usr/bin/env bash
+echo "warning: failed to set up sandbox (bubblewrap not available), continuing unsandboxed" >&2
+echo "REVIEW-grok45high argv=[$*] CWD=[${PWD}]"
+echo "## Blocker"
+echo "None."
+exit 0
+STUB
+chmod +x "$PBIN/grok"
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
+check "plan-review fails when the sandbox warns and continues (fail-closed)" "$rc" 3
+printf '%s' "$out" | grep -qi 'sandbox was not enforced' \
+  && { echo "  ok   [-] grok45high sandbox fail-open is reported, not swallowed"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL sandbox fail-open not surfaced"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep -q '## Blocker' \
+  && { echo "  FAIL unsandboxed review was printed as a valid review"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] the unsandboxed review is discarded, not printed"; PASS=$((PASS+1)); }
+# ...but a benign stderr mentioning "namespace" or "sandbox" must NOT discard a good review.
+# The match keys off failure phrasing; a bare token would train people to ignore this signal.
+cat > "$PBIN/grok" <<'STUB'
+#!/usr/bin/env bash
+echo "info: sandbox profile read-only applied; namespace ready" >&2
+echo "REVIEW-grok45high argv=[$*] CWD=[${PWD}]"
+exit 0
+STUB
+chmod +x "$PBIN/grok"
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
+check "plan-review keeps the review when stderr mentions the sandbox benignly" "$rc" 0
+printf '%s' "$out" | grep -q 'REVIEW-grok45high' \
+  && { echo "  ok   [-] benign sandbox log does not discard the review"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL benign sandbox log false-failed the round"; FAIL=$((FAIL+1)); }
+make_reviewer grok45high 0 grok   # restore
+
+# When the OS sandbox cannot be enforced, grok45high DEGRADES to the old isolated posture —
+# text-only review, no checkout — instead of refusing, and says so above the review. Refusing would
+# make the reviewer unusable on any Linux without bubblewrap (CI runners included); running it in the
+# checkout unsandboxed is the one thing we must never do.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=fail bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
+check "plan-review still returns a review when the sandbox is unavailable" "$rc" 0
+printf '%s' "$out" | grep -qi 'saw the plan text ONLY' \
+  && { echo "  ok   [-] degraded grok45high review is labelled text-only"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL degraded review not labelled"; FAIL=$((FAIL+1)); }
+dg=$(printf '%s' "$out" | grep 'REVIEW-grok45high' | head -1)
+printf '%s' "$dg" | grep -qF -- "--deny *" && ! printf '%s' "$dg" | grep -qF -- '--tools read_file' \
+  && { echo "  ok   [-] degraded grok45high denies every tool"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL degraded grok45high did not fall back to deny-all"; FAIL=$((FAIL+1)); }
+dcwd=$(printf '%s' "$dg" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$dcwd" in
+  *iso-grok45high*) echo "  ok   [-] degraded grok45high runs outside the checkout"; PASS=$((PASS+1));;
+  *) echo "  FAIL degraded grok45high ran in $dcwd"; FAIL=$((FAIL+1));;
+esac
+
 # bare grok is relay-only (PR panel name), not a plan-reviewer
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok,codex 2>&1); rc=$?
 check "plan-review bare grok is relay-only (panel still runs codex)" "$rc" 0

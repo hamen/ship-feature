@@ -295,7 +295,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # --agent plan. Note: like every reviewer here, opencode still writes its own session data under
   # its data dir — the guarantee is "your checkout is untouched", not "nothing touches disk".
   plan_review_with() {
-    local name="$1" out rc=0 errf key Name why ro_cwd prompt_file expected_bytes actual_bytes body sandbox_hint=""
+    local name="$1" out rc=0 errf key Name why ro_cwd="" prompt_file expected_bytes actual_bytes body sandbox_hint="" sandbox_unenforced="" degraded_note=""
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
     Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
     case "$name" in
@@ -318,50 +318,137 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
                        | run_reviewer opencode run --pure --agent plan -m opencode-go/kimi-k3 2>"$errf"); rc=$?
               [ -n "$ro_cwd" ] && rm -rf "$ro_cwd";;
       grok45high)
-              # Grok headless ignores stdin: plan goes in --prompt-file. Isolated cwd under
-              # STATUS_DIR so the EXIT trap cleans it (checkout-scoped .grok not loaded).
+              # Grok headless ignores stdin: plan goes in --prompt-file (kept in STATUS_DIR, never
+              # in the checkout, so it can't show up in anyone's `git status`).
+              #
+              # Runs in the CURRENT cwd — the checkout — exactly like claude, codex and cursor, so
+              # it can verify the plan's claims against the code instead of reviewing prose. That
+              # is the whole point of the panel: the reviewers that read the tree are the ones that
+              # catch a stale line number or a test the change would turn red. The trade-off is the
+              # same one those three already make: a checkout-scoped config (here `.grok`) is
+              # loaded, just as CLAUDE.md / AGENTS.md / .cursor are for the others.
+              #
+              # Read-only is enforced by an ALLOWLIST: `--tools` names the only BUILT-INS the
+              # session gets, which is what keeps out `run_terminal_command` (shell),
+              # `search_replace` (editor), `spawn_subagent` and `scheduler_*`. A denylist would
+              # have to enumerate every write path correctly, and an unknown name in
+              # `--tools`/`--deny` is accepted silently, so a typo there fails OPEN.
+              #
+              # `--disallowed-tools search_tool,use_tool` is NOT redundant: the MCP bridge
+              # survives the built-in allowlist. Verified — with `--tools read_file` alone the
+              # session still reports `search_tool` and `use_tool`, i.e. every MCP server
+              # configured on the machine stays reachable, including ones that write. With the
+              # two removed, the session reports exactly read_file/list_dir/grep.
+              #
+              # Residual risk, stated because there is no flag for it: a checkout can still
+              # contribute `.grok` config, hooks and plugins (`grok inspect` shows what a
+              # directory yields). Grok has no `--safe-mode` equivalent to suppress them. What
+              # remains is bounded by everything above — no shell tool, no MCP bridge, plan mode,
+              # OS sandbox — but "runs code from the tree it reviews" is the same bet the other
+              # in-checkout reviewers already make, not a guarantee we can make stronger here.
               # --permission-mode plan overrides machine always-approve; --sandbox read-only
-              # is the OS write barrier (needs a working sandbox / bwrap on Linux).
+              # is the OS write barrier (needs a working sandbox / bwrap on Linux). Note it can
+              # warn and continue unenforced if setup fails, so it is a layer, not the guarantee.
               # High effort is the plan-review posture; PR relay uses bare `grok` (medium).
-              ro_cwd="$(mktemp -d "$STATUS_DIR/iso-grok45high.XXXXXX")" || {
-                printf '  ! %s: cannot create isolated cwd (mktemp failed)\n' "$name" > "$STATUS_DIR/diag_$key"
-                echo fail > "$STATUS_DIR/$key"; return 0
-              }
+              # PREVENTION, not just detection. Grok's own docs: a BUILT-IN profile that fails to
+              # apply "logs a warning and continues without enforcement" — and by the time that
+              # warning reaches us the checkout's hooks and plugins have already run. Discarding
+              # the review afterwards is a signal, not a barrier. So refuse to START when the OS
+              # barrier cannot be applied: on Linux that is bubblewrap plus unprivileged user
+              # namespaces; macOS Seatbelt is available on all versions.
+              # (Grok's fail-closed CUSTOM profiles live in ~/.grok/sandbox.toml or the
+              # checkout's .grok/sandbox.toml — one is the user's own config, the other is a file
+              # in someone else's repo. Neither is ours to write, hence this check instead.)
+              # When it cannot be enforced we DEGRADE rather than refuse: back to the isolated
+              # empty cwd with every tool denied — the posture this reviewer had before, which
+              # needs no sandbox because there is nothing to write and nothing to read. You get a
+              # text-only review (worse) instead of no review (worse still) or an unsandboxed one
+              # in your checkout (worst).
+              why=""
+              case "${SHIP_FEATURE_FORCE_SANDBOX_PROBE:-}" in   # test-only override
+                ok) ;;
+                fail) why="forced by SHIP_FEATURE_FORCE_SANDBOX_PROBE";;
+                *)
+                  if [ "$(uname -s)" = Linux ]; then
+                    command -v bwrap >/dev/null 2>&1 || why="bubblewrap (bwrap) not found"
+                    if [ -z "$why" ] && [ -r /proc/sys/kernel/unprivileged_userns_clone ] \
+                       && [ "$(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null)" = 0 ]; then
+                      why="unprivileged user namespaces are disabled"
+                    fi
+                  fi;;
+              esac
+              if [ -n "$why" ]; then
+                ro_cwd="$(mktemp -d "$STATUS_DIR/iso-grok45high.XXXXXX")" || {
+                  printf '  ! %s: cannot create isolated cwd (mktemp failed)\n' "$name" > "$STATUS_DIR/diag_$key"
+                  echo fail > "$STATUS_DIR/$key"; return 0
+                }
+                degraded_note="! read-only sandbox cannot be enforced ($why) — this review saw the plan text ONLY, not the checkout"
+              fi
               prompt_file="$STATUS_DIR/prompt_grok45high_$$"
               body="$(printf '%s\n\n--- PLAN ---\n~~~~plan\n%s\n~~~~\n--- END PLAN ---\n' "$PROMPT" "$plan")"
               if ! printf '%s' "$body" > "$prompt_file"; then
                 printf '  ! %s: failed to write prompt-file\n' "$name" > "$STATUS_DIR/diag_$key"
-                echo fail > "$STATUS_DIR/$key"; rm -rf "$ro_cwd"; return 0
+                echo fail > "$STATUS_DIR/$key"; return 0
               fi
               expected_bytes=$(printf '%s' "$body" | wc -c | tr -d ' ')
               actual_bytes=$(wc -c < "$prompt_file" | tr -d ' ')
               if [ -z "$actual_bytes" ] || [ "$actual_bytes" = 0 ] || [ "$actual_bytes" != "$expected_bytes" ]; then
                 printf '  ! %s: prompt-file write incomplete (expected %sB, got %sB)\n' \
                   "$name" "$expected_bytes" "${actual_bytes:-0}" > "$STATUS_DIR/diag_$key"
-                echo fail > "$STATUS_DIR/$key"; rm -rf "$ro_cwd"; return 0
+                echo fail > "$STATUS_DIR/$key"; [ -n "$ro_cwd" ] && rm -rf "$ro_cwd"; return 0
               fi
-              out=$(cd "$ro_cwd" \
-                    && run_reviewer grok \
+              if [ -n "$ro_cwd" ]; then      # degraded: isolated, no tools, no checkout
+                out=$(cd "$ro_cwd" \
+                      && run_reviewer grok \
+                           --prompt-file "$prompt_file" \
+                           --cwd "$ro_cwd" \
+                           -m grok-4.5 \
+                           --reasoning-effort high \
+                           --permission-mode plan \
+                           --deny '*' \
+                           --verbatim \
+                           --no-memory \
+                           --no-subagents \
+                           --disable-web-search \
+                           --max-turns 40 \
+                           </dev/null 2>"$errf"); rc=$?
+                rm -rf "$ro_cwd"
+              else
+                out=$(run_reviewer grok \
                          --prompt-file "$prompt_file" \
-                         --cwd "$ro_cwd" \
                          -m grok-4.5 \
                          --reasoning-effort high \
                          --permission-mode plan \
                          --sandbox read-only \
-                         --deny '*' \
+                         --tools read_file,list_dir,grep \
+                         --disallowed-tools search_tool,use_tool \
                          --verbatim \
                          --no-memory \
                          --no-subagents \
                          --disable-web-search \
                          --max-turns 40 \
                          </dev/null 2>"$errf"); rc=$?
-              if [ "$rc" -ne 0 ] && [ -s "$errf" ] && grep -qiE 'sandbox|bubblewrap|bwrap|namespace' "$errf" 2>/dev/null; then
-                # Stash for the shared empty/non-zero handlers below — they rewrite diag_$key.
-                sandbox_hint="  ! $name: sandbox unavailable (check bubblewrap / user namespaces)"
               fi
-              # STATUS_DIR EXIT trap removes ro_cwd; keep an explicit rm for sequential runs too.
-              [ -n "$ro_cwd" ] && rm -rf "$ro_cwd";;
+              # Backstop to the pre-flight check above, for a sandbox that fails to apply for a
+              # reason we cannot probe. Checked regardless of the exit code — a sandbox complaint
+              # on stderr with a perfectly good review on stdout and exit 0 is exactly the silent
+              # fail-open shape, and gating this on `rc != 0` (as it once did) meant the one case
+              # worth catching was the one never inspected.
+              # Matched on FAILURE PHRASING, not on the bare words "sandbox"/"namespace": those
+              # appear in healthy logs too, and discarding a good review over the word "namespace"
+              # would train people to ignore this.
+              if [ -z "$ro_cwd" ] && [ -s "$errf" ] && grep -qiE 'continu(e|ing|es) (without enforcement|unsandboxed)|(sandbox|profile)[^.]{0,40}(could not|cannot|can'"'"'t|failed to) (be )?appl|failed to (set up|start|initiali[sz]e) (the )?sandbox|sandbox (is )?unavailable|running unsandboxed' "$errf" 2>/dev/null; then
+                sandbox_hint="  ! $name: sandbox unavailable (check bubblewrap / user namespaces)"
+                sandbox_unenforced=1
+              fi;;
     esac
+    if [ -n "$sandbox_unenforced" ]; then
+      { printf '  ! %s: read-only sandbox was not enforced — review discarded\n' "$name"
+        printf '%s\n' "$sandbox_hint"
+        [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /'
+      } > "$STATUS_DIR/diag_$key"
+      echo fail > "$STATUS_DIR/$key"; return 0
+    fi
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
       why="exited with code $rc"
       case "$rc" in 0) why="ran but returned an empty review";; 124) why="timed out after ${timeout_s}s (raise SHIP_FEATURE_PLAN_TIMEOUT)";; 127) why="command not found";; esac
@@ -371,7 +458,10 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
       } > "$STATUS_DIR/diag_$key"
       echo fail > "$STATUS_DIR/$key"; return 0
     fi
-    printf '\n========== %s (plan review) ==========\n%s\n=======================================\n' "$Name" "$out" > "$STATUS_DIR/out_$key"
+    { printf '\n========== %s (plan review) ==========\n' "$Name"
+      [ -n "$degraded_note" ] && printf '%s\n\n' "$degraded_note"
+      printf '%s\n=======================================\n' "$out"
+    } > "$STATUS_DIR/out_$key"
     if [ "$rc" -ne 0 ]; then
       # Name the timeout explicitly: a bare "exited with code 124" is opaque.
       if [ "$rc" = 124 ]; then printf '  ! %s: timed out after %ss — review may be truncated (not clean)\n' "$name" "$timeout_s" > "$STATUS_DIR/diag_$key"

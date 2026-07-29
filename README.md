@@ -76,15 +76,20 @@ ship-feature skill for any feature/fix.
   the worktree marker git-excluded (run before you start implementing).
 - `ship-feature plan-review [<file>] [--reviewers a,b,c] [--parallel]` — step 2: fan an implementation
   plan (a file, stdin, or `./plan.md`) out to a panel of agents for a **read-only** review and print each
-  one. Defaults the panel to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; nothing is
+  one. Read-only means each reviewer is pinned to its CLI's read-only mode and none is given a way to
+  write your checkout or post anywhere — see [`WORKFLOW.md`](WORKFLOW.md) for what that does and does not
+  guarantee for reviewers that run inside the checkout. Defaults the panel to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; nothing is
   written or posted. Supported reviewers
   are the ones that can actually be constrained: `claude` (`--permission-mode plan --safe-mode`), `codex`
   (`--sandbox read-only`), `cursor` (ask/Q&A mode), `kimi3` (Kimi K3 via opencode: `OPENCODE_CONFIG_CONTENT`
   — opencode's highest-precedence config layer — denies the `edit`+`bash` permissions so it can't write
   even via shell and can't be overridden by a merged global/checkout config; inherited `OPENCODE_CONFIG*`
   are unset, it runs in an isolated cwd outside the checkout, plus `--pure` and `--agent plan`),
-  `grok45high` (Grok 4.5 high effort: `grok --prompt-file` + isolated cwd + `--permission-mode plan` +
-  `--sandbox read-only` + `--deny '*'` — headless Grok ignores stdin).
+  `grok45high` (Grok 4.5 high effort: `grok --prompt-file` — headless Grok ignores stdin — running in
+  your checkout like `claude`/`codex`/`cursor`, held read-only by a tool **allowlist**
+  `--tools read_file,list_dir,grep`, with the MCP bridge removed explicitly
+  (`--disallowed-tools search_tool,use_tool` — it survives the built-in allowlist), plus
+  `--permission-mode plan` and `--sandbox read-only`).
   `--safe-mode` on claude also stops
   any hooks/plugins/MCP in the checkout from loading. `agy`, bare `opencode`, and bare `grok` are
   relay-only and skipped with a warning (agy has no read-only mode; a plain `opencode run` uses the

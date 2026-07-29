@@ -9,12 +9,46 @@ All notable changes to **ship-feature** are documented here. This project follow
 ### Added
 
 - **`grok45high` plan-reviewer** — Grok 4.5 with **high** reasoning effort via `grok --prompt-file`
-  (headless ignores stdin). Isolated cwd under the temp status dir, `--permission-mode plan`,
-  `--sandbox read-only`. Bare `grok` is relay-only at the plan gate (PR cross-review name in
-  pr-review-relay). Checkout-scoped `.grok` is not loaded; global `~/.grok` may still load.
+  (headless ignores stdin), `--permission-mode plan`, `--sandbox read-only`. Bare `grok` is
+  relay-only at the plan gate (PR cross-review name in pr-review-relay).
 
 
 ### Changed
+
+- **`grok45high` now reviews with the code in front of it.** It used to run in an isolated empty cwd
+  with `--deny '*'`, so it could only review the plan's prose — it would open its review saying it
+  could not read the tree, while `codex` and `cursor` were finding blockers that only reading the code
+  reveals (a stale line reference, a client call that would crash, a CI step the change would turn
+  red). It now runs in **your checkout**, like `claude`, `codex` and `cursor`.
+  Read-only is enforced by an **allowlist** — `--tools read_file,list_dir,grep` — rather than a
+  denylist: an unknown tool name is accepted silently by the CLI, so a denylist typo would fail open.
+  That covers the built-ins (`run_terminal_command`, `search_replace`, `spawn_subagent`,
+  `scheduler_*`).
+  **The MCP bridge survives the built-in allowlist**, so it is removed explicitly with
+  `--disallowed-tools search_tool,use_tool`. Verified against the CLI: with `--tools read_file` alone
+  the session still exposes `search_tool` and `use_tool` — every MCP server configured on the machine
+  stays reachable, including ones that write. With both removed it reports exactly
+  `read_file`/`list_dir`/`grep`.
+  `--permission-mode plan` and `--sandbox read-only` are unchanged.
+- **`grok45high` now fails the round when the read-only sandbox is not enforced.** `--sandbox read-only`
+  can warn and continue unenforced when its setup fails; the warning was only inspected on a **nonzero**
+  exit, so the one shape worth catching — a clean review on stdout, a sandbox complaint on stderr, exit
+  `0` — was reported as a passing round. stderr is now inspected regardless of the exit code, the review
+  is **discarded** rather than printed, and the round fails with `3`.
+  Detection alone is only a signal, though: by the time the warning arrives the checkout's hooks have
+  already run. So the barrier is checked **before** Grok starts — on Linux, bubblewrap present and
+  unprivileged user namespaces enabled. When it cannot be enforced the reviewer **degrades** to its
+  previous posture (isolated empty cwd, every tool denied) and labels the review as text-only, rather
+  than refusing outright — refusing would make `grok45high` unusable on any Linux without bubblewrap,
+  CI runners included. The stderr match keys off failure phrasing
+  ("continuing without enforcement", "failed to set up sandbox"), not the bare words "sandbox" or
+  "namespace", which appear in healthy logs. Both paths have regression tests, including one asserting a
+  benign sandbox log does **not** discard a good review.
+  **Trade-offs, stated:** a checkout-scoped `.grok` is now loaded, exactly as `CLAUDE.md`, `AGENTS.md`
+  and the cursor config already are for the other three in-checkout reviewers; Grok has no
+  `--safe-mode` equivalent, so checkout hooks/plugins can still load, and `--sandbox read-only` can
+  warn and continue unenforced if its setup fails — it is a layer, not the guarantee. `kimi3` stays
+  isolated.
 
 - **plan-review: replaced `qwen` with `kimi3` (Kimi K3 via opencode).** `kimi3` runs Kimi K3 through
   opencode, pinned **genuinely read-only** by a temp `OPENCODE_CONFIG` that denies the `edit` **and**

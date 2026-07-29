@@ -40,9 +40,22 @@ with no file and no stdin it reads
 (`--permission-mode plan --safe-mode`), `codex` (`--sandbox read-only`), `cursor` (ask mode), `kimi3`
 (Kimi K3 via opencode, pinned read-only by `OPENCODE_CONFIG_CONTENT` — the highest-precedence config
 layer — denying `edit`+`bash`, with inherited `OPENCODE_CONFIG*` unset, an isolated cwd, plus `--pure`
-and `--agent plan`), `grok45high` (Grok 4.5 high effort via `grok --prompt-file`, isolated cwd,
-`--permission-mode plan`, `--sandbox read-only`, `--deny '*'`); `agy`, bare `opencode`, and bare `grok`
+and `--agent plan`), `grok45high` (Grok 4.5 high effort via `grok --prompt-file`, running in your
+checkout with a read-only tool allowlist `--tools read_file,list_dir,grep`, the MCP bridge removed
+(`--disallowed-tools search_tool,use_tool`), `--permission-mode plan`, `--sandbox read-only`); `agy`, bare `opencode`, and bare `grok`
 are relay-only and skipped with a warning (use `grok45high` for plan review).
+
+Reviewers that run in the checkout — `claude`, `codex`, `cursor`, `grok45high` — can read the tree, so
+they check the plan against the code (a stale line number, a test the change would turn red). `kimi3`
+stays isolated. `grok45high` needs a working OS sandbox to read the tree: where one cannot be applied
+(Linux without bubblewrap) it degrades to an isolated, text-only review and says so above its output.
+
+What "read-only" means here, precisely: each reviewer is pinned to its CLI's read-only mode and none of
+them is given a way to write your checkout or post anywhere. It is not a sandbox escape proof. Except for
+`claude --safe-mode`, an in-checkout reviewer loads that checkout's own agent config (`CLAUDE.md`,
+`AGENTS.md`, `.cursor`, `.grok`) and whatever hooks or plugins it declares — the same trust you already
+extend by opening the repo in that agent. Review a plan for a repository you do not trust with `kimi3`,
+or not at all.
 Exit `0` = every reviewer responded, `3` = a
 reviewer failed/timed out/returned empty (re-run), `1` = usage error. The single-reviewer default still
 works too: `cat plan.md | codex exec --sandbox read-only`.
