@@ -83,8 +83,9 @@ ship-feature skill for any feature/fix.
   — opencode's highest-precedence config layer — denies the `edit`+`bash` permissions so it can't write
   even via shell and can't be overridden by a merged global/checkout config; inherited `OPENCODE_CONFIG*`
   are unset, it runs in an isolated cwd outside the checkout, plus `--pure` and `--agent plan`),
-  `grok45high` (Grok 4.5 high effort: `grok --prompt-file` + isolated cwd + `--permission-mode plan` +
-  `--sandbox read-only` + `--deny '*'` — headless Grok ignores stdin).
+  `grok45high` (Grok 4.5 high effort: `grok --prompt-file` — headless Grok ignores stdin — running in
+  your checkout like `claude`/`codex`/`cursor`, held read-only by a tool **allowlist**
+  `--tools read_file,list_dir,grep` plus `--permission-mode plan` and `--sandbox read-only`).
   `--safe-mode` on claude also stops
   any hooks/plugins/MCP in the checkout from loading. `agy`, bare `opencode`, and bare `grok` are
   relay-only and skipped with a warning (agy has no read-only mode; a plain `opencode run` uses the

@@ -318,37 +318,45 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
                        | run_reviewer opencode run --pure --agent plan -m opencode-go/kimi-k3 2>"$errf"); rc=$?
               [ -n "$ro_cwd" ] && rm -rf "$ro_cwd";;
       grok45high)
-              # Grok headless ignores stdin: plan goes in --prompt-file. Isolated cwd under
-              # STATUS_DIR so the EXIT trap cleans it (checkout-scoped .grok not loaded).
+              # Grok headless ignores stdin: plan goes in --prompt-file (kept in STATUS_DIR, never
+              # in the checkout, so it can't show up in anyone's `git status`).
+              #
+              # Runs in the CURRENT cwd — the checkout — exactly like claude, codex and cursor, so
+              # it can verify the plan's claims against the code instead of reviewing prose. That
+              # is the whole point of the panel: the reviewers that read the tree are the ones that
+              # catch a stale line number or a test the change would turn red. The trade-off is the
+              # same one those three already make: a checkout-scoped config (here `.grok`) is
+              # loaded, just as CLAUDE.md / AGENTS.md / .cursor are for the others.
+              #
+              # Read-only is enforced by an ALLOWLIST, not a denylist: `--tools` names the only
+              # built-ins the session gets. A denylist would have to enumerate every write path
+              # correctly — and a wrong tool name in `--tools`/`--deny` is accepted silently, so a
+              # typo would fail open. The allowlist also keeps out `run_terminal_command`,
+              # `search_replace`, `spawn_subagent`, `scheduler_*` and the MCP bridge
+              # (`use_tool` / `search_tool`) without having to know they exist.
               # --permission-mode plan overrides machine always-approve; --sandbox read-only
               # is the OS write barrier (needs a working sandbox / bwrap on Linux).
               # High effort is the plan-review posture; PR relay uses bare `grok` (medium).
-              ro_cwd="$(mktemp -d "$STATUS_DIR/iso-grok45high.XXXXXX")" || {
-                printf '  ! %s: cannot create isolated cwd (mktemp failed)\n' "$name" > "$STATUS_DIR/diag_$key"
-                echo fail > "$STATUS_DIR/$key"; return 0
-              }
               prompt_file="$STATUS_DIR/prompt_grok45high_$$"
               body="$(printf '%s\n\n--- PLAN ---\n~~~~plan\n%s\n~~~~\n--- END PLAN ---\n' "$PROMPT" "$plan")"
               if ! printf '%s' "$body" > "$prompt_file"; then
                 printf '  ! %s: failed to write prompt-file\n' "$name" > "$STATUS_DIR/diag_$key"
-                echo fail > "$STATUS_DIR/$key"; rm -rf "$ro_cwd"; return 0
+                echo fail > "$STATUS_DIR/$key"; return 0
               fi
               expected_bytes=$(printf '%s' "$body" | wc -c | tr -d ' ')
               actual_bytes=$(wc -c < "$prompt_file" | tr -d ' ')
               if [ -z "$actual_bytes" ] || [ "$actual_bytes" = 0 ] || [ "$actual_bytes" != "$expected_bytes" ]; then
                 printf '  ! %s: prompt-file write incomplete (expected %sB, got %sB)\n' \
                   "$name" "$expected_bytes" "${actual_bytes:-0}" > "$STATUS_DIR/diag_$key"
-                echo fail > "$STATUS_DIR/$key"; rm -rf "$ro_cwd"; return 0
+                echo fail > "$STATUS_DIR/$key"; return 0
               fi
-              out=$(cd "$ro_cwd" \
-                    && run_reviewer grok \
+              out=$(run_reviewer grok \
                          --prompt-file "$prompt_file" \
-                         --cwd "$ro_cwd" \
                          -m grok-4.5 \
                          --reasoning-effort high \
                          --permission-mode plan \
                          --sandbox read-only \
-                         --deny '*' \
+                         --tools read_file,list_dir,grep \
                          --verbatim \
                          --no-memory \
                          --no-subagents \
@@ -358,9 +366,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
               if [ "$rc" -ne 0 ] && [ -s "$errf" ] && grep -qiE 'sandbox|bubblewrap|bwrap|namespace' "$errf" 2>/dev/null; then
                 # Stash for the shared empty/non-zero handlers below — they rewrite diag_$key.
                 sandbox_hint="  ! $name: sandbox unavailable (check bubblewrap / user namespaces)"
-              fi
-              # STATUS_DIR EXIT trap removes ro_cwd; keep an explicit rm for sequential runs too.
-              [ -n "$ro_cwd" ] && rm -rf "$ro_cwd";;
+              fi;;
     esac
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
       why="exited with code $rc"

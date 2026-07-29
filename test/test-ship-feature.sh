@@ -207,24 +207,40 @@ hostile=$(printf 'plan\n' | PATH="$PBIN:$PATH" OPENCODE_CONFIG_CONTENT='{"permis
 printf '%s' "$hostile" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && ! printf '%s' "$hostile" | grep -q '"edit":"allow"' && { echo "  ok   [-] kimi3 overrides a hostile inherited OPENCODE_CONFIG_CONTENT"; PASS=$((PASS+1)); } || { echo "  FAIL a hostile OPENCODE_CONFIG_CONTENT survived (read-only bypass)"; FAIL=$((FAIL+1)); }
 
 
-# grok45high: Grok 4.5 high effort, prompt-file (not stdin), isolated cwd, sandbox+plan
+# grok45high: Grok 4.5 high effort, prompt-file (not stdin), read-only ALLOWLIST, runs in the
+# checkout so it can verify the plan against the code (parity with claude/codex/cursor).
 out=$(printf 'UNIQUE_PLAN_TOKEN_42\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok45high 2>/dev/null); rc=$?
 check "plan-review grok45high clean exit" "$rc" 0
 printf '%s' "$out" | grep -q -- '-m grok-4.5' && printf '%s' "$out" | grep -q -- '--reasoning-effort high' \
   && printf '%s' "$out" | grep -q -- '--permission-mode plan' && printf '%s' "$out" | grep -q -- '--sandbox read-only' \
-  && printf '%s' "$out" | grep -qF -- "--deny *" && printf '%s' "$out" | grep -q -- '--verbatim' \
+  && printf '%s' "$out" | grep -qF -- '--tools read_file,list_dir,grep' && printf '%s' "$out" | grep -q -- '--verbatim' \
   && printf '%s' "$out" | grep -q -- '--prompt-file' \
-  && { echo "  ok   [-] grok45high argv pins model/high/plan/sandbox/deny/verbatim/prompt-file"; PASS=$((PASS+1)); } \
+  && { echo "  ok   [-] grok45high argv pins model/high/plan/sandbox/tools-allowlist/verbatim/prompt-file"; PASS=$((PASS+1)); } \
   || { echo "  FAIL grok45high argv incomplete"; FAIL=$((FAIL+1)); }
+# The allowlist is the read-only guarantee: no shell, no editor, no subagents, no MCP bridge.
+# Asserted by absence so a future edit that re-adds one of them turns this test red.
+printf '%s' "$out" | grep -qE -- '(run_terminal_command|search_replace|spawn_subagent|use_tool|search_tool)' \
+  && { echo "  FAIL grok45high allowlist leaks a write/exec/MCP tool"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] grok45high allowlist excludes shell/editor/subagent/MCP tools"; PASS=$((PASS+1)); }
 printf '%s' "$out" | grep -q 'UNIQUE_PLAN_TOKEN_42' && printf '%s' "$out" | grep -qF -- '--- PLAN ---' \
   && { echo "  ok   [-] grok45high prompt-file contains the plan text"; PASS=$((PASS+1)); } \
   || { echo "  FAIL grok45high prompt-file missing plan content"; FAIL=$((FAIL+1)); }
+# Runs in the caller's checkout (no --cwd override, no iso- temp dir): that is what lets it read
+# the tree the plan is about.
 gk=$(printf '%s' "$out" | grep 'REVIEW-grok45high' | head -1)
 gcwd=$(printf '%s' "$gk" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+printf '%s' "$out" | grep -q -- '--cwd ' \
+  && { echo "  FAIL grok45high still pins --cwd (should inherit the checkout)"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] grok45high does not override cwd"; PASS=$((PASS+1)); }
 case "$gcwd" in
-  *iso-grok45high*) echo "  ok   [-] grok45high runs in isolated cwd"; PASS=$((PASS+1));;
-  *) echo "  FAIL grok45high cwd not isolated ($gcwd)"; FAIL=$((FAIL+1));;
+  *iso-grok45high*) echo "  FAIL grok45high still runs in an isolated cwd ($gcwd)"; FAIL=$((FAIL+1));;
+  "$PWD") echo "  ok   [-] grok45high runs in the checkout"; PASS=$((PASS+1));;
+  *) echo "  FAIL grok45high cwd is neither the checkout nor recognised ($gcwd)"; FAIL=$((FAIL+1));;
 esac
+# The prompt-file must never land inside the checkout, or it shows up in `git status`.
+printf '%s' "$out" | grep -qF -- "--prompt-file $PWD/" \
+  && { echo "  FAIL grok45high prompt-file written inside the checkout"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] grok45high prompt-file lives outside the checkout"; PASS=$((PASS+1)); }
 # bare grok is relay-only (PR panel name), not a plan-reviewer
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok,codex 2>&1); rc=$?
 check "plan-review bare grok is relay-only (panel still runs codex)" "$rc" 0

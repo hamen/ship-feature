@@ -9,12 +9,24 @@ All notable changes to **ship-feature** are documented here. This project follow
 ### Added
 
 - **`grok45high` plan-reviewer** — Grok 4.5 with **high** reasoning effort via `grok --prompt-file`
-  (headless ignores stdin). Isolated cwd under the temp status dir, `--permission-mode plan`,
-  `--sandbox read-only`. Bare `grok` is relay-only at the plan gate (PR cross-review name in
-  pr-review-relay). Checkout-scoped `.grok` is not loaded; global `~/.grok` may still load.
+  (headless ignores stdin), `--permission-mode plan`, `--sandbox read-only`. Bare `grok` is
+  relay-only at the plan gate (PR cross-review name in pr-review-relay).
 
 
 ### Changed
+
+- **`grok45high` now reviews with the code in front of it.** It used to run in an isolated empty cwd
+  with `--deny '*'`, so it could only review the plan's prose — it would open its review saying it
+  could not read the tree, while `codex` and `cursor` were finding blockers that only reading the code
+  reveals (a stale line reference, a client call that would crash, a CI step the change would turn
+  red). It now runs in **your checkout**, like `claude`, `codex` and `cursor`.
+  Read-only is enforced by an **allowlist** — `--tools read_file,list_dir,grep` — rather than a
+  denylist: an unknown tool name is accepted silently by the CLI, so a denylist typo would fail open,
+  and the allowlist also excludes `run_terminal_command`, `search_replace`, `spawn_subagent`,
+  `scheduler_*` and the MCP bridge (`use_tool`/`search_tool`) without having to enumerate them.
+  `--permission-mode plan` and `--sandbox read-only` are unchanged.
+  **Trade-off, stated:** a checkout-scoped `.grok` is now loaded, exactly as `CLAUDE.md`, `AGENTS.md`
+  and the cursor config already are for the other three in-checkout reviewers. `kimi3` stays isolated.
 
 - **plan-review: replaced `qwen` with `kimi3` (Kimi K3 via opencode).** `kimi3` runs Kimi K3 through
   opencode, pinned **genuinely read-only** by a temp `OPENCODE_CONFIG` that denies the `edit` **and**
