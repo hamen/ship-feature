@@ -82,11 +82,14 @@ ship-feature skill for any feature/fix.
   (`--sandbox read-only`), `cursor` (ask/Q&A mode), `kimi3` (Kimi K3 via opencode: `OPENCODE_CONFIG_CONTENT`
   — opencode's highest-precedence config layer — denies the `edit`+`bash` permissions so it can't write
   even via shell and can't be overridden by a merged global/checkout config; inherited `OPENCODE_CONFIG*`
-  are unset, it runs in an isolated cwd outside the checkout, plus `--pure` and `--agent plan`).
+  are unset, it runs in an isolated cwd outside the checkout, plus `--pure` and `--agent plan`),
+  `grok45high` (Grok 4.5 high effort: `grok --prompt-file` + isolated cwd + `--permission-mode plan` +
+  `--sandbox read-only` + `--deny '*'` — headless Grok ignores stdin).
   `--safe-mode` on claude also stops
-  any hooks/plugins/MCP in the checkout from loading. `agy` and the bare `opencode` name are
+  any hooks/plugins/MCP in the checkout from loading. `agy`, bare `opencode`, and bare `grok` are
   relay-only and skipped with a warning (agy has no read-only mode; a plain `opencode run` uses the
-  all-allow `build` agent — only the `kimi3` reviewer pins the read-only `plan` agent). The
+  all-allow `build` agent — only the `kimi3` reviewer pins the read-only opencode `plan` agent; bare
+  `grok` is the PR-relay name — use `grok45high` here). The
   panel is your quorum — a supported reviewer whose CLI is missing **fails** the round rather than
   thinning it. Exit `0` = every reviewer responded, `3` = one failed/timed out/returned empty (re-run),
   `1` = usage error. Per-reviewer timeout is `SHIP_FEATURE_PLAN_TIMEOUT` (env-only), which falls back to

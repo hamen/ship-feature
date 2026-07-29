@@ -175,16 +175,20 @@ cmd_relay() {
 # load either), codex (--sandbox read-only), cursor (--mode=ask,
 # Q&A), kimi3 (Kimi K3 via opencode, pinned read-only by OPENCODE_CONFIG_CONTENT — opencode's
 # highest-precedence config layer — denying `edit`+`bash` so nothing can be written even via
-# shell, run in an isolated cwd, plus `--pure` and `--agent plan`). agy and the bare `opencode`
+# shell, run in an isolated cwd, plus `--pure` and `--agent plan`). agy, bare `opencode`, and bare `grok`
 # name are RELAY-ONLY here — agy has no read-only mode (its relay flag disables ALL permissions)
 # and a bare `opencode run` uses the all-allow build agent — so if listed they are skipped
 # with a warning, never run. That keeps the "read-only, nothing is written" guarantee true
 # for the whole set that actually runs.
 plan_tool_for() { case "$1" in
-  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; kimi3) echo opencode;; *) echo "";; esac; }
+  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; kimi3) echo opencode;;
+  grok45high) echo grok;; *) echo "";; esac; }
 # Named but deliberately not run in plan-review (available in `relay`). Note: `kimi3` IS a
 # supported plan reviewer (read-only plan agent); only the bare `opencode` name is relay-only.
-plan_relay_only() { case "$1" in opencode|antigravity|agy) return 0;; *) return 1;; esac; }
+# Bare `grok` is the PR-relay reviewer (medium effort in pr-review-relay); plan-review uses
+# `grok45high` (high effort). Listing bare `grok` here is skipped so a
+# SHIP_FEATURE_REVIEWERS fallback that includes `grok` does not fail the plan panel.
+plan_relay_only() { case "$1" in opencode|antigravity|agy|grok) return 0;; *) return 1;; esac; }
 
 cmd_plan_review() {
   load_config
@@ -291,7 +295,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # --agent plan. Note: like every reviewer here, opencode still writes its own session data under
   # its data dir — the guarantee is "your checkout is untouched", not "nothing touches disk".
   plan_review_with() {
-    local name="$1" out rc=0 errf key Name why ro_cwd
+    local name="$1" out rc=0 errf key Name why ro_cwd prompt_file expected_bytes actual_bytes body sandbox_hint=""
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
     Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
     case "$name" in
@@ -313,11 +317,58 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
                     && printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" \
                        | run_reviewer opencode run --pure --agent plan -m opencode-go/kimi-k3 2>"$errf"); rc=$?
               [ -n "$ro_cwd" ] && rm -rf "$ro_cwd";;
+      grok45high)
+              # Grok headless ignores stdin: plan goes in --prompt-file. Isolated cwd under
+              # STATUS_DIR so the EXIT trap cleans it (checkout-scoped .grok not loaded).
+              # --permission-mode plan overrides machine always-approve; --sandbox read-only
+              # is the OS write barrier (needs a working sandbox / bwrap on Linux).
+              # High effort is the plan-review posture; PR relay uses bare `grok` (medium).
+              ro_cwd="$(mktemp -d "$STATUS_DIR/iso-grok45high.XXXXXX")" || {
+                printf '  ! %s: cannot create isolated cwd (mktemp failed)\n' "$name" > "$STATUS_DIR/diag_$key"
+                echo fail > "$STATUS_DIR/$key"; return 0
+              }
+              prompt_file="$STATUS_DIR/prompt_grok45high_$$"
+              body="$(printf '%s\n\n--- PLAN ---\n~~~~plan\n%s\n~~~~\n--- END PLAN ---\n' "$PROMPT" "$plan")"
+              if ! printf '%s' "$body" > "$prompt_file"; then
+                printf '  ! %s: failed to write prompt-file\n' "$name" > "$STATUS_DIR/diag_$key"
+                echo fail > "$STATUS_DIR/$key"; rm -rf "$ro_cwd"; return 0
+              fi
+              expected_bytes=$(printf '%s' "$body" | wc -c | tr -d ' ')
+              actual_bytes=$(wc -c < "$prompt_file" | tr -d ' ')
+              if [ -z "$actual_bytes" ] || [ "$actual_bytes" = 0 ] || [ "$actual_bytes" != "$expected_bytes" ]; then
+                printf '  ! %s: prompt-file write incomplete (expected %sB, got %sB)\n' \
+                  "$name" "$expected_bytes" "${actual_bytes:-0}" > "$STATUS_DIR/diag_$key"
+                echo fail > "$STATUS_DIR/$key"; rm -rf "$ro_cwd"; return 0
+              fi
+              out=$(cd "$ro_cwd" \
+                    && run_reviewer grok \
+                         --prompt-file "$prompt_file" \
+                         --cwd "$ro_cwd" \
+                         -m grok-4.5 \
+                         --reasoning-effort high \
+                         --permission-mode plan \
+                         --sandbox read-only \
+                         --deny '*' \
+                         --verbatim \
+                         --no-memory \
+                         --no-subagents \
+                         --disable-web-search \
+                         --max-turns 40 \
+                         </dev/null 2>"$errf"); rc=$?
+              if [ "$rc" -ne 0 ] && [ -s "$errf" ] && grep -qiE 'sandbox|bubblewrap|bwrap|namespace' "$errf" 2>/dev/null; then
+                # Stash for the shared empty/non-zero handlers below — they rewrite diag_$key.
+                sandbox_hint="  ! $name: sandbox unavailable (check bubblewrap / user namespaces)"
+              fi
+              # STATUS_DIR EXIT trap removes ro_cwd; keep an explicit rm for sequential runs too.
+              [ -n "$ro_cwd" ] && rm -rf "$ro_cwd";;
     esac
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
       why="exited with code $rc"
       case "$rc" in 0) why="ran but returned an empty review";; 124) why="timed out after ${timeout_s}s (raise SHIP_FEATURE_PLAN_TIMEOUT)";; 127) why="command not found";; esac
-      { printf '  ! %s: no review — %s\n' "$name" "$why"; [ "$rc" != 124 ] && [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /'; } > "$STATUS_DIR/diag_$key"
+      { printf '  ! %s: no review — %s\n' "$name" "$why"
+        [ -n "$sandbox_hint" ] && printf '%s\n' "$sandbox_hint"
+        [ "$rc" != 124 ] && [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /'
+      } > "$STATUS_DIR/diag_$key"
       echo fail > "$STATUS_DIR/$key"; return 0
     fi
     printf '\n========== %s (plan review) ==========\n%s\n=======================================\n' "$Name" "$out" > "$STATUS_DIR/out_$key"
@@ -325,6 +376,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
       # Name the timeout explicitly: a bare "exited with code 124" is opaque.
       if [ "$rc" = 124 ]; then printf '  ! %s: timed out after %ss — review may be truncated (not clean)\n' "$name" "$timeout_s" > "$STATUS_DIR/diag_$key"
       else printf '  ! %s: exited with code %s — review may be truncated (not clean)\n' "$name" "$rc" > "$STATUS_DIR/diag_$key"; fi
+      [ -n "$sandbox_hint" ] && printf '%s\n' "$sandbox_hint" >> "$STATUS_DIR/diag_$key"
       echo fail > "$STATUS_DIR/$key"
     else echo ok > "$STATUS_DIR/$key"; fi
   }
@@ -339,7 +391,11 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
     rk="$(skey "$r")"
     case " $seen " in *" $rk "*) continue;; esac
     seen="$seen $rk"
-    if plan_relay_only "$r"; then warn "$r is relay-only (no read-only mode / needs file-attach) — not run in plan-review; skipping."; continue; fi
+    if plan_relay_only "$r"; then
+      if [ "$r" = grok ]; then warn "grok is relay-only here — use grok45high for plan-review (high effort); skipping.";
+      else warn "$r is relay-only (no read-only mode / needs file-attach) — not run in plan-review; skipping."; fi
+      continue
+    fi
     tool="$(plan_tool_for "$r")"
     # A named reviewer that is unknown, or supported-but-not-installed, is a hard failure:
     # the panel is the quorum, so a review must not quietly pass with it missing.
@@ -377,7 +433,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
     if [ "$(cat "$f")" != ok ]; then failed=$((failed + 1)); names="$names ${f##*/k_}"; fi
   done
   if [ "$ran" = 0 ]; then
-    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, kimi3 (agy and bare opencode are relay-only). Pass --reviewers with a supported agent."
+    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, kimi3, grok45high (agy, bare opencode, and bare grok are relay-only). Pass --reviewers with a supported agent."
   fi
   if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Fix and re-run." >&2; return 3; fi
   echo "✔ Plan review done — $ran/$ran reviewer(s) responded. READ the findings and revise the plan before Gate 1." >&2

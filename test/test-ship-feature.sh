@@ -142,13 +142,35 @@ PBIN="$WORK/pbin"; mkdir -p "$PBIN"
 # The stub also surfaces the OPENCODE_CONFIG_CONTENT env (how kimi3 pins read-only — the
 # highest-precedence config layer), the OPENCODE_CONFIG env (must be empty — kimi3 unsets it),
 # and CWD (must be isolated, outside the checkout). Harmless for reviewers that don't set them.
-make_reviewer() { printf '#!/usr/bin/env bash\necho "REVIEW-%s argv=[$*] OPENCODE_CONFIG_CONTENT=[${OPENCODE_CONFIG_CONTENT:-}] OPENCODE_CONFIG=[${OPENCODE_CONFIG:-}] CWD=[$PWD]"\nexit %s\n' "$1" "${2:-0}" > "$PBIN/$3"; chmod +x "$PBIN/$3"; }
+make_reviewer() {
+  # $1 = review tag, $2 = exit code, $3 = binary name on PATH
+  cat > "$PBIN/$3" <<STUB
+#!/usr/bin/env bash
+echo "REVIEW-$1 argv=[\$*] OPENCODE_CONFIG_CONTENT=[\${OPENCODE_CONFIG_CONTENT:-}] OPENCODE_CONFIG=[\${OPENCODE_CONFIG:-}] CWD=[\${PWD}]"
+_args=("\$@")
+for ((_i=0; _i<\${#_args[@]}; _i++)); do
+  if [ "\${_args[\$_i]}" = "--prompt-file" ]; then
+    _pf="\${_args[\$((_i+1))]}"
+    if [ -n "\$_pf" ] && [ -f "\$_pf" ]; then
+      echo "PROMPT_BEGIN"
+      cat -- "\$_pf"
+      echo "PROMPT_END"
+    fi
+    break
+  fi
+done
+exit ${2:-0}
+STUB
+  chmod +x "$PBIN/$3"
+}
 make_reviewer claude 0 claude
 make_reviewer codex  0 codex
 # kimi3 is invoked through the `opencode` binary (opencode run --agent plan), so the stub
 # is named `opencode` but tags its output REVIEW-kimi3.
 make_reviewer kimi3  0 opencode
 make_reviewer cursor 0 cursor-agent
+# grok45high is invoked through the `grok` binary
+make_reviewer grok45high 0 grok
 
 # clean run with an explicit panel → exit 0, both reviews on stdout
 out=$(printf 'Step 1: X\nStep 2: Y\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,kimi3 2>/dev/null); rc=$?
@@ -184,6 +206,42 @@ printf '%s' "$km" | grep -q -- "--agent build"         && { echo "  FAIL kimi3 u
 hostile=$(printf 'plan\n' | PATH="$PBIN:$PATH" OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"allow","bash":"allow"}}' bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
 printf '%s' "$hostile" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && ! printf '%s' "$hostile" | grep -q '"edit":"allow"' && { echo "  ok   [-] kimi3 overrides a hostile inherited OPENCODE_CONFIG_CONTENT"; PASS=$((PASS+1)); } || { echo "  FAIL a hostile OPENCODE_CONFIG_CONTENT survived (read-only bypass)"; FAIL=$((FAIL+1)); }
 
+
+# grok45high: Grok 4.5 high effort, prompt-file (not stdin), isolated cwd, sandbox+plan
+out=$(printf 'UNIQUE_PLAN_TOKEN_42\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok45high 2>/dev/null); rc=$?
+check "plan-review grok45high clean exit" "$rc" 0
+printf '%s' "$out" | grep -q -- '-m grok-4.5' && printf '%s' "$out" | grep -q -- '--reasoning-effort high' \
+  && printf '%s' "$out" | grep -q -- '--permission-mode plan' && printf '%s' "$out" | grep -q -- '--sandbox read-only' \
+  && printf '%s' "$out" | grep -qF -- "--deny *" && printf '%s' "$out" | grep -q -- '--verbatim' \
+  && printf '%s' "$out" | grep -q -- '--prompt-file' \
+  && { echo "  ok   [-] grok45high argv pins model/high/plan/sandbox/deny/verbatim/prompt-file"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL grok45high argv incomplete"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep -q 'UNIQUE_PLAN_TOKEN_42' && printf '%s' "$out" | grep -qF -- '--- PLAN ---' \
+  && { echo "  ok   [-] grok45high prompt-file contains the plan text"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL grok45high prompt-file missing plan content"; FAIL=$((FAIL+1)); }
+gk=$(printf '%s' "$out" | grep 'REVIEW-grok45high' | head -1)
+gcwd=$(printf '%s' "$gk" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$gcwd" in
+  *iso-grok45high*) echo "  ok   [-] grok45high runs in isolated cwd"; PASS=$((PASS+1));;
+  *) echo "  FAIL grok45high cwd not isolated ($gcwd)"; FAIL=$((FAIL+1));;
+esac
+# bare grok is relay-only (PR panel name), not a plan-reviewer
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok,codex 2>&1); rc=$?
+check "plan-review bare grok is relay-only (panel still runs codex)" "$rc" 0
+printf '%s' "$out" | grep -qi "relay-only" && { echo "  ok   [-] plan-review warns bare grok is relay-only"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL bare grok not treated as relay-only"; FAIL=$((FAIL+1)); }
+# missing grok binary fails closed when grok45high named — curated PATH so a system
+# `grok` cannot mask the miss (same pattern as the missing-gemini test).
+rm -f "$PBIN/grok"
+MPATH="$PBIN"
+for b in bash cat printf timeout gtimeout mktemp tr sed head tail wc rm mkdir chmod; do
+  src=$(command -v "$b" 2>/dev/null) || continue
+  [ -x "$src" ] || continue
+  ln -sf "$src" "$PBIN/$b" 2>/dev/null || true
+done
+( printf 'plan\n' | PATH="$MPATH" bash "$CLI" plan-review --reviewers grok45high >/dev/null 2>&1 ); check "plan-review missing grok binary → fail (3)" $? 3
+make_reviewer grok45high 0 grok   # restore
+
 # default panel comes from SHIP_FEATURE_REVIEWERS when --reviewers is omitted
 out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,cursor bash "$CLI" plan-review 2>/dev/null); rc=$?
 check "plan-review uses SHIP_FEATURE_REVIEWERS by default" "$rc" 0
@@ -214,12 +272,12 @@ make_reviewer codex 0 codex   # restore
 ( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,doesnotexist >/dev/null 2>&1 ); check "plan-review missing panel reviewer → fail (3)" $? 3
 
 # agy and opencode are RELAY-ONLY: skipped with a warning, the rest of the panel still runs (0)
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers agy,opencode,codex 2>&1); rc=$?
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers agy,opencode,grok,codex 2>&1); rc=$?
 check "plan-review skips relay-only agents, runs the rest" "$rc" 0
-printf '%s' "$out" | grep -qi "relay-only" && { echo "  ok   [-] plan-review warns that agy/opencode are relay-only"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not warn about relay-only agents"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep -qi "relay-only" && { echo "  ok   [-] plan-review warns that agy/opencode/grok are relay-only"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not warn about relay-only agents"; FAIL=$((FAIL+1)); }
 
 # a panel of ONLY relay-only agents → nobody supported ran → clear error (1)
-( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers agy,opencode >/dev/null 2>&1 ); check "plan-review with only relay-only agents → error (1)" $? 1
+( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers agy,opencode,grok >/dev/null 2>&1 ); check "plan-review with only relay-only agents → error (1)" $? 1
 
 # no panel at all (unset + none passed) → usage error (1)
 ( printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS= bash "$CLI" plan-review >/dev/null 2>&1 ); check "plan-review with no panel → usage error (1)" $? 1
