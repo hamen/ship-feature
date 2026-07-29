@@ -323,7 +323,10 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
               # --permission-mode plan overrides machine always-approve; --sandbox read-only
               # is the OS write barrier (needs a working sandbox / bwrap on Linux).
               # High effort is the plan-review posture; PR relay uses bare `grok` (medium).
-              ro_cwd="$(mktemp -d "$STATUS_DIR/iso-grok45high.XXXXXX")" || { echo fail > "$STATUS_DIR/$key"; return 0; }
+              ro_cwd="$(mktemp -d "$STATUS_DIR/iso-grok45high.XXXXXX")" || {
+                printf '  ! %s: cannot create isolated cwd (mktemp failed)\n' "$name" > "$STATUS_DIR/diag_$key"
+                echo fail > "$STATUS_DIR/$key"; return 0
+              }
               prompt_file="$STATUS_DIR/prompt_grok45high_$$"
               body="$(printf '%s\n\n--- PLAN ---\n~~~~plan\n%s\n~~~~\n--- END PLAN ---\n' "$PROMPT" "$plan")"
               if ! printf '%s' "$body" > "$prompt_file"; then
