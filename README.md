@@ -79,14 +79,14 @@ ship-feature skill for any feature/fix.
   one. Defaults the panel to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; nothing is
   written or posted. Supported reviewers
   are the ones that can actually be constrained: `claude` (`--permission-mode plan --safe-mode`), `codex`
-  (`--sandbox read-only`), `cursor` (ask/Q&A mode), `kimi3` (Kimi K3 via opencode: `OPENCODE_CONFIG_CONTENT`
+  (`--sandbox read-only`), `cursor` (ask/Q&A mode), `kimi3`, `grok45high` (Kimi K3 via opencode: `OPENCODE_CONFIG_CONTENT`
   — opencode's highest-precedence config layer — denies the `edit`+`bash` permissions so it can't write
   even via shell and can't be overridden by a merged global/checkout config; inherited `OPENCODE_CONFIG*`
   are unset, it runs in an isolated cwd outside the checkout, plus `--pure` and `--agent plan`).
   `--safe-mode` on claude also stops
   any hooks/plugins/MCP in the checkout from loading. `agy` and the bare `opencode` name are
   relay-only and skipped with a warning (agy has no read-only mode; a plain `opencode run` uses the
-  all-allow `build` agent — only the `kimi3` reviewer pins the read-only `plan` agent). The
+  all-allow `build` agent — only the `kimi3`, `grok45high` reviewer pins the read-only `plan` agent). The
   panel is your quorum — a supported reviewer whose CLI is missing **fails** the round rather than
   thinning it. Exit `0` = every reviewer responded, `3` = one failed/timed out/returned empty (re-run),
   `1` = usage error. Per-reviewer timeout is `SHIP_FEATURE_PLAN_TIMEOUT` (env-only), which falls back to

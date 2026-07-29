@@ -6,6 +6,14 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
+### Added
+
+- **`grok45high` plan-reviewer** — Grok 4.5 with **high** reasoning effort via `grok --prompt-file`
+  (headless ignores stdin). Isolated cwd under the temp status dir, `--permission-mode plan`,
+  `--sandbox read-only`. Bare `grok` is relay-only at the plan gate (PR cross-review name in
+  pr-review-relay). Checkout-scoped `.grok` is not loaded; global `~/.grok` may still load.
+
+
 ### Changed
 
 - **plan-review: replaced `qwen` with `kimi3` (Kimi K3 via opencode).** `kimi3` runs Kimi K3 through

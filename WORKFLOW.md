@@ -37,7 +37,7 @@ ship-feature plan-review plan.md --reviewers codex,kimi3    # or pipe it: cat pl
 With no `--reviewers` it uses `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS` (your quorum);
 with no file and no stdin it reads
 `./plan.md`. Reviewers run **read-only** and nothing is written or posted — supported: `claude`
-(`--permission-mode plan --safe-mode`), `codex` (`--sandbox read-only`), `cursor` (ask mode), `kimi3`
+(`--permission-mode plan --safe-mode`), `codex` (`--sandbox read-only`), `cursor` (ask mode), `kimi3`, `grok45high`
 (Kimi K3 via opencode, pinned read-only by `OPENCODE_CONFIG_CONTENT` — the highest-precedence config
 layer — denying `edit`+`bash`, with inherited `OPENCODE_CONFIG*` unset, an isolated cwd, plus `--pure`
 and `--agent plan`); `agy` and bare `opencode` are relay-only and skipped with a warning.
