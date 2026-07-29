@@ -214,14 +214,22 @@ check "plan-review grok45high clean exit" "$rc" 0
 printf '%s' "$out" | grep -q -- '-m grok-4.5' && printf '%s' "$out" | grep -q -- '--reasoning-effort high' \
   && printf '%s' "$out" | grep -q -- '--permission-mode plan' && printf '%s' "$out" | grep -q -- '--sandbox read-only' \
   && printf '%s' "$out" | grep -qF -- '--tools read_file,list_dir,grep' && printf '%s' "$out" | grep -q -- '--verbatim' \
+  && printf '%s' "$out" | grep -qF -- '--disallowed-tools search_tool,use_tool' \
   && printf '%s' "$out" | grep -q -- '--prompt-file' \
-  && { echo "  ok   [-] grok45high argv pins model/high/plan/sandbox/tools-allowlist/verbatim/prompt-file"; PASS=$((PASS+1)); } \
+  && { echo "  ok   [-] grok45high argv pins model/high/plan/sandbox/tools-allowlist/mcp-off/verbatim/prompt-file"; PASS=$((PASS+1)); } \
   || { echo "  FAIL grok45high argv incomplete"; FAIL=$((FAIL+1)); }
-# The allowlist is the read-only guarantee: no shell, no editor, no subagents, no MCP bridge.
-# Asserted by absence so a future edit that re-adds one of them turns this test red.
-printf '%s' "$out" | grep -qE -- '(run_terminal_command|search_replace|spawn_subagent|use_tool|search_tool)' \
-  && { echo "  FAIL grok45high allowlist leaks a write/exec/MCP tool"; FAIL=$((FAIL+1)); } \
-  || { echo "  ok   [-] grok45high allowlist excludes shell/editor/subagent/MCP tools"; PASS=$((PASS+1)); }
+# Read-only means: no shell, no editor, no subagents in the built-in allowlist. Asserted on the
+# ARGV LINE ONLY — grepping the whole output would false-fail on a plan that merely mentions one
+# of these names, since the stub echoes the plan back.
+gargv=$(printf '%s' "$out" | grep 'REVIEW-grok45high' | head -1 | sed -n 's/.*argv=\[\([^]]*\)\].*/\1/p')
+printf '%s' "$gargv" | grep -qE -- '(run_terminal_command|search_replace|spawn_subagent|scheduler_)' \
+  && { echo "  FAIL grok45high allowlist leaks a write/exec tool"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] grok45high allowlist excludes shell/editor/subagent tools"; PASS=$((PASS+1)); }
+# The MCP bridge survives --tools, so it must be removed explicitly. Verified against the real
+# CLI: with `--tools read_file` alone the session still exposes search_tool and use_tool.
+printf '%s' "$gargv" | grep -qF -- '--disallowed-tools search_tool,use_tool' \
+  && { echo "  ok   [-] grok45high removes the MCP bridge explicitly"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL grok45high leaves the MCP bridge reachable"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q 'UNIQUE_PLAN_TOKEN_42' && printf '%s' "$out" | grep -qF -- '--- PLAN ---' \
   && { echo "  ok   [-] grok45high prompt-file contains the plan text"; PASS=$((PASS+1)); } \
   || { echo "  FAIL grok45high prompt-file missing plan content"; FAIL=$((FAIL+1)); }

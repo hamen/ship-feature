@@ -328,14 +328,27 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
               # same one those three already make: a checkout-scoped config (here `.grok`) is
               # loaded, just as CLAUDE.md / AGENTS.md / .cursor are for the others.
               #
-              # Read-only is enforced by an ALLOWLIST, not a denylist: `--tools` names the only
-              # built-ins the session gets. A denylist would have to enumerate every write path
-              # correctly — and a wrong tool name in `--tools`/`--deny` is accepted silently, so a
-              # typo would fail open. The allowlist also keeps out `run_terminal_command`,
-              # `search_replace`, `spawn_subagent`, `scheduler_*` and the MCP bridge
-              # (`use_tool` / `search_tool`) without having to know they exist.
+              # Read-only is enforced by an ALLOWLIST: `--tools` names the only BUILT-INS the
+              # session gets, which is what keeps out `run_terminal_command` (shell),
+              # `search_replace` (editor), `spawn_subagent` and `scheduler_*`. A denylist would
+              # have to enumerate every write path correctly, and an unknown name in
+              # `--tools`/`--deny` is accepted silently, so a typo there fails OPEN.
+              #
+              # `--disallowed-tools search_tool,use_tool` is NOT redundant: the MCP bridge
+              # survives the built-in allowlist. Verified — with `--tools read_file` alone the
+              # session still reports `search_tool` and `use_tool`, i.e. every MCP server
+              # configured on the machine stays reachable, including ones that write. With the
+              # two removed, the session reports exactly read_file/list_dir/grep.
+              #
+              # Residual risk, stated because there is no flag for it: a checkout can still
+              # contribute `.grok` config, hooks and plugins (`grok inspect` shows what a
+              # directory yields). Grok has no `--safe-mode` equivalent to suppress them. What
+              # remains is bounded by everything above — no shell tool, no MCP bridge, plan mode,
+              # OS sandbox — but "runs code from the tree it reviews" is the same bet the other
+              # in-checkout reviewers already make, not a guarantee we can make stronger here.
               # --permission-mode plan overrides machine always-approve; --sandbox read-only
-              # is the OS write barrier (needs a working sandbox / bwrap on Linux).
+              # is the OS write barrier (needs a working sandbox / bwrap on Linux). Note it can
+              # warn and continue unenforced if setup fails, so it is a layer, not the guarantee.
               # High effort is the plan-review posture; PR relay uses bare `grok` (medium).
               prompt_file="$STATUS_DIR/prompt_grok45high_$$"
               body="$(printf '%s\n\n--- PLAN ---\n~~~~plan\n%s\n~~~~\n--- END PLAN ---\n' "$PROMPT" "$plan")"
@@ -357,6 +370,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
                          --permission-mode plan \
                          --sandbox read-only \
                          --tools read_file,list_dir,grep \
+                         --disallowed-tools search_tool,use_tool \
                          --verbatim \
                          --no-memory \
                          --no-subagents \

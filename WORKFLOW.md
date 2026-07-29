@@ -41,8 +41,8 @@ with no file and no stdin it reads
 (Kimi K3 via opencode, pinned read-only by `OPENCODE_CONFIG_CONTENT` — the highest-precedence config
 layer — denying `edit`+`bash`, with inherited `OPENCODE_CONFIG*` unset, an isolated cwd, plus `--pure`
 and `--agent plan`), `grok45high` (Grok 4.5 high effort via `grok --prompt-file`, running in your
-checkout with a read-only tool allowlist `--tools read_file,list_dir,grep`, `--permission-mode plan`,
-`--sandbox read-only`); `agy`, bare `opencode`, and bare `grok`
+checkout with a read-only tool allowlist `--tools read_file,list_dir,grep`, the MCP bridge removed
+(`--disallowed-tools search_tool,use_tool`), `--permission-mode plan`, `--sandbox read-only`); `agy`, bare `opencode`, and bare `grok`
 are relay-only and skipped with a warning (use `grok45high` for plan review).
 
 Reviewers that run in the checkout — `claude`, `codex`, `cursor`, `grok45high` — can read the tree, so

@@ -21,12 +21,20 @@ All notable changes to **ship-feature** are documented here. This project follow
   reveals (a stale line reference, a client call that would crash, a CI step the change would turn
   red). It now runs in **your checkout**, like `claude`, `codex` and `cursor`.
   Read-only is enforced by an **allowlist** — `--tools read_file,list_dir,grep` — rather than a
-  denylist: an unknown tool name is accepted silently by the CLI, so a denylist typo would fail open,
-  and the allowlist also excludes `run_terminal_command`, `search_replace`, `spawn_subagent`,
-  `scheduler_*` and the MCP bridge (`use_tool`/`search_tool`) without having to enumerate them.
+  denylist: an unknown tool name is accepted silently by the CLI, so a denylist typo would fail open.
+  That covers the built-ins (`run_terminal_command`, `search_replace`, `spawn_subagent`,
+  `scheduler_*`).
+  **The MCP bridge survives the built-in allowlist**, so it is removed explicitly with
+  `--disallowed-tools search_tool,use_tool`. Verified against the CLI: with `--tools read_file` alone
+  the session still exposes `search_tool` and `use_tool` — every MCP server configured on the machine
+  stays reachable, including ones that write. With both removed it reports exactly
+  `read_file`/`list_dir`/`grep`.
   `--permission-mode plan` and `--sandbox read-only` are unchanged.
-  **Trade-off, stated:** a checkout-scoped `.grok` is now loaded, exactly as `CLAUDE.md`, `AGENTS.md`
-  and the cursor config already are for the other three in-checkout reviewers. `kimi3` stays isolated.
+  **Trade-offs, stated:** a checkout-scoped `.grok` is now loaded, exactly as `CLAUDE.md`, `AGENTS.md`
+  and the cursor config already are for the other three in-checkout reviewers; Grok has no
+  `--safe-mode` equivalent, so checkout hooks/plugins can still load, and `--sandbox read-only` can
+  warn and continue unenforced if its setup fails — it is a layer, not the guarantee. `kimi3` stays
+  isolated.
 
 - **plan-review: replaced `qwen` with `kimi3` (Kimi K3 via opencode).** `kimi3` runs Kimi K3 through
   opencode, pinned **genuinely read-only** by a temp `OPENCODE_CONFIG` that denies the `edit` **and**
