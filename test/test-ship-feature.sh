@@ -191,7 +191,7 @@ out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers c
 # another reviewer's flags can't satisfy this by accident.
 cl=$(printf '%s' "$out" | grep 'REVIEW-claude')
 printf '%s' "$cl" | grep -q -- "--permission-mode plan" && printf '%s' "$cl" | grep -q -- "--safe-mode" && { echo "  ok   [-] claude runs read-only (--permission-mode plan --safe-mode)"; PASS=$((PASS+1)); } || { echo "  FAIL claude not fully read-only (plan + safe-mode) in plan-review"; FAIL=$((FAIL+1)); }
-printf '%s' "$out" | grep -q -- "--sandbox read-only"          && { echo "  ok   [-] codex runs read-only (--sandbox read-only)"; PASS=$((PASS+1)); } || { echo "  FAIL codex not read-only in plan-review"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep 'REVIEW-codex' | grep -q -- "--sandbox read-only" && { echo "  ok   [-] codex runs read-only (--sandbox read-only)"; PASS=$((PASS+1)); } || { echo "  FAIL codex not read-only in plan-review"; FAIL=$((FAIL+1)); }
 # Grep cursor's own line, like claude's check above: the plan text is echoed back by every
 # reviewer stub, so matching whole stdout could be satisfied by another reviewer quoting the flag.
 cu=$(printf '%s' "$out" | grep 'REVIEW-cursor')

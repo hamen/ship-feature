@@ -173,7 +173,8 @@ cmd_relay() {
 # Supported reviewers are ONLY those that can be run genuinely read-only over the plan
 # text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
 # load either), codex (--sandbox read-only), cursor (--mode=ask,
-# Q&A), kimi3 (Kimi K3 via opencode, pinned read-only by OPENCODE_CONFIG_CONTENT — opencode's
+# Q&A, on a model pinned away from Cursor's Auto — see CURSOR_REVIEW_MODEL below),
+# kimi3 (Kimi K3 via opencode, pinned read-only by OPENCODE_CONFIG_CONTENT — opencode's
 # highest-precedence config layer — denying `edit`+`bash` so nothing can be written even via
 # shell, run in an isolated cwd, plus `--pure` and `--agent plan`). agy, bare `opencode`, and bare `grok`
 # name are RELAY-ONLY here — agy has no read-only mode (its relay flag disables ALL permissions)
@@ -295,7 +296,11 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # Deliberately NOT named SHIP_FEATURE_*: it describes the user's Cursor account rather than this
   # tool, pr-review-relay reads the same variable, and one export should configure both. Being
   # outside the SHIP_FEATURE_* namespace it is env-only — load_config never reads it.
-  CURSOR_REVIEW_MODEL="${CURSOR_REVIEW_MODEL:-cursor-grok-4.5-high}"
+  # `local` still reads the inherited/exported value on the RHS before the shadow takes effect, so
+  # the override survives and nothing leaks to global scope. It is safe here only because this
+  # variable is read inside the function and nowhere else; anything a trap expands must NOT be
+  # local, since traps fire once the function has already returned.
+  local CURSOR_REVIEW_MODEL="${CURSOR_REVIEW_MODEL:-cursor-grok-4.5-high}"
 
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
   # under --parallel neither the reviews nor the failure messages interleave; the caller
