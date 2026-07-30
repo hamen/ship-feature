@@ -272,10 +272,20 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # defence in depth on a shared machine, on top of the 0700 dir mktemp gives us. Not
   # restored: this is the CLI's terminal command, the process exits right after.
   umask 077
-  local STATUS_DIR; STATUS_DIR="$(mktemp -d)" || die "cannot create temp dir"
+  # NOT `local`. The trap body below is single-quoted, so "$STATUS_DIR" is expanded when the trap
+  # fires at EXIT — which happens after this function has already returned. A function-local would
+  # be gone by then, `set -u` (line 19) would abort the trap body on the unbound name, and `rm`
+  # would never run: the directory, holding every reviewer's buffered output, would survive every
+  # single run. It did, ~310 a day, until this was found.
+  STATUS_DIR="$(mktemp -d)" || die "cannot create temp dir"
+  # (`trap "rm -rf -- $(printf '%q' "$STATUS_DIR")" EXIT` would be quote-safe AND allow `local`
+  # again, removing the landmine above. Not taken: it trades a one-word fix for a subtler line, and
+  # the regression test in test-ship-feature.sh already turns a relapse into two loud failures.)
   # Single-quoted trap body, double-quoted var: evaluated safely at exit even if a path
-  # ever held a quote.
-  trap 'rm -rf "$STATUS_DIR"' EXIT
+  # ever held a quote. Baking the path in with a double-quoted body would work only while the path
+  # holds no single quote, which is exactly what this form was written to survive.
+  # `--` so a TMPDIR that legitimately starts with '-' cannot have its path parsed as options.
+  trap 'rm -rf -- "$STATUS_DIR"' EXIT
   # On interrupt, tear down the parallel reviewers so they don't keep burning credits.
   # kill_tree walks each backgrounded job's whole descendant tree (subshell → $() →
   # timeout → agent), which a group-kill can't reach because `timeout` re-groups its child.

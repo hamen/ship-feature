@@ -67,6 +67,16 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Fixed
 
+- **`plan-review` no longer leaks its temp directory on every run.** `STATUS_DIR` was a function
+  local, but the `EXIT` trap expands `"$STATUS_DIR"` when it fires — after `cmd_plan_review` has
+  returned. By then the local is gone, `set -u` aborts the trap body on the unbound name, and the
+  `rm` never runs. Every invocation left behind a directory holding that run's buffered artifacts:
+  each reviewer's full review (`out_k_*`), plus `err_k_*`, `diag_k_*` and status files. On the
+  machine where this was found: **931 orphaned directories, 32 MB, roughly 310 a day.** The only
+  outward sign was a `STATUS_DIR: unbound variable` line on stderr after an otherwise successful
+  run — which read as noise, not as the cleanup failing out loud. `STATUS_DIR` is now a plain
+  global. Covered by a regression test that asserts the directory is actually gone, not merely that
+  the message stopped: it fails on the old code (2 failures) and passes on the new.
 - **The `cursor` plan reviewer no longer runs on Cursor's `Auto` model.** It is now invoked with
   `--model`, from a `CURSOR_REVIEW_MODEL="${CURSOR_REVIEW_MODEL:-cursor-grok-4.5-high}"` default set
   once in `cmd_plan_review`. Without it, `cursor-agent` fell back to
