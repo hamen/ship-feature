@@ -192,8 +192,10 @@ out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers c
 cl=$(printf '%s' "$out" | grep 'REVIEW-claude')
 printf '%s' "$cl" | grep -q -- "--permission-mode plan" && printf '%s' "$cl" | grep -q -- "--safe-mode" && { echo "  ok   [-] claude runs read-only (--permission-mode plan --safe-mode)"; PASS=$((PASS+1)); } || { echo "  FAIL claude not fully read-only (plan + safe-mode) in plan-review"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep 'REVIEW-codex' | grep -q -- "--sandbox read-only" && { echo "  ok   [-] codex runs read-only (--sandbox read-only)"; PASS=$((PASS+1)); } || { echo "  FAIL codex not read-only in plan-review"; FAIL=$((FAIL+1)); }
-# Grep cursor's own line, like claude's check above: the plan text is echoed back by every
-# reviewer stub, so matching whole stdout could be satisfied by another reviewer quoting the flag.
+# Grep cursor's own line, like claude's check above. Whole-stdout matching is satisfied by ANY
+# reviewer's line carrying the flag, so it would keep passing if cursor silently lost it while a
+# future reviewer happened to use the same one. Today's stubs echo argv, not stdin, so the plan
+# text itself cannot trigger it — the point is not to depend on that staying true.
 cu=$(printf '%s' "$out" | grep 'REVIEW-cursor')
 printf '%s' "$cu" | grep -q -- "--mode=ask"                    && { echo "  ok   [-] cursor runs in ask (Q&A) mode"; PASS=$((PASS+1)); } || { echo "  FAIL cursor not in ask mode"; FAIL=$((FAIL+1)); }
 # cursor-agent's own default model is "Auto", which routes to the frontier models and may pick a
