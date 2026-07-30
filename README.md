@@ -125,6 +125,9 @@ It also stops the reviews from billing Cursor's small *Other Models* quota (Clau
 the much larger Cursor-branded pool — a real problem for a command you run before every change.
 
 Override with `CURSOR_REVIEW_MODEL`; `cursor-agent --list-models` shows what your account offers.
+**Pick something outside the author's family.** Setting it back to `auto`, or to any
+`claude-*` id when Claude is writing your plans, reopens exactly the hole the default closes — the
+override exists for retired model ids, not for going back to Auto.
 The variable has no `SHIP_FEATURE_` prefix on purpose: it describes your Cursor account rather than
 this tool, [`pr-review-relay`](https://github.com/hamen/pr-review-relay) reads the same one, and a
 single export should configure both. Being outside that namespace it is **env-only** — it is never

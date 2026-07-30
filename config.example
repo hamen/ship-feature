@@ -43,4 +43,7 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # models and may pick a Claude one — plan-review would then have Claude grading a plan Claude wrote,
 # while the panel reports an independent "Cursor" reviewer. (Auto also bills Cursor's small "Other
 # Models" quota instead of the larger Cursor-branded pool.)
-# `cursor-agent --list-models` shows what your account offers. e.g. export CURSOR_REVIEW_MODEL=composer-2.5
+# `cursor-agent --list-models` shows what your account offers. Pick something OUTSIDE the family of
+# whichever agent writes your plans: setting this back to `auto`, or to a claude-* id while Claude
+# writes them, reopens the very hole the default closes. The override is for a retired model id.
+# e.g. export CURSOR_REVIEW_MODEL=composer-2.5
