@@ -278,6 +278,9 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # would never run: the directory, holding every reviewer's buffered output, would survive every
   # single run. It did, ~310 a day, until this was found.
   STATUS_DIR="$(mktemp -d)" || die "cannot create temp dir"
+  # (`trap "rm -rf -- $(printf '%q' "$STATUS_DIR")" EXIT` would be quote-safe AND allow `local`
+  # again, removing the landmine above. Not taken: it trades a one-word fix for a subtler line, and
+  # the regression test in test-ship-feature.sh already turns a relapse into two loud failures.)
   # Single-quoted trap body, double-quoted var: evaluated safely at exit even if a path
   # ever held a quote. Baking the path in with a double-quoted body would work only while the path
   # holds no single quote, which is exactly what this form was written to survive.
