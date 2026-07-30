@@ -49,4 +49,4 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # already on your panel: setting this back to `auto`, to a claude-* id while Claude writes your
 # plans, or to a cursor-grok-* id while grok45high reviews alongside it, all collapse two nominally
 # independent seats onto one model family. The override is for a retired model id.
-# e.g. export CURSOR_REVIEW_MODEL=cursor-grok-4.5-high
+# e.g. export CURSOR_REVIEW_MODEL=composer-2.5-fast
