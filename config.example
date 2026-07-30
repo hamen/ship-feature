@@ -35,7 +35,9 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # Per-reviewer timeout for `ship-feature plan-review`, in seconds. ENV-ONLY (not read from this file);
 # falls back to PR_RELAY_AGENT_TIMEOUT, then 300. e.g. export SHIP_FEATURE_PLAN_TIMEOUT=480
 
-# Model for the `cursor` plan reviewer. Default: cursor-grok-4.5-high. ENV-ONLY (not read from this
+# Model for the `cursor` plan reviewer. Default: composer-2.5, Cursor's own model -- Cursor-branded
+# quota pool, and not Claude, GPT, Codex or Grok, so every reviewer on the panel stays on the model
+# its own vendor built. ENV-ONLY (not read from this
 # file — it is outside the SHIP_FEATURE_* namespace, so load_config never sees it). The name has no
 # SHIP_FEATURE_ prefix on purpose: pr-review-relay reads the SAME variable, because it describes your
 # Cursor account rather than either tool, and one export should configure both.
@@ -43,7 +45,8 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # models and may pick a Claude one — plan-review would then have Claude grading a plan Claude wrote,
 # while the panel reports an independent "Cursor" reviewer. (Auto also bills Cursor's small "Other
 # Models" quota instead of the larger Cursor-branded pool.)
-# `cursor-agent --list-models` shows what your account offers. Pick something OUTSIDE the family of
-# whichever agent writes your plans: setting this back to `auto`, or to a claude-* id while Claude
-# writes them, reopens the very hole the default closes. The override is for a retired model id.
-# e.g. export CURSOR_REVIEW_MODEL=composer-2.5
+# `cursor-agent --list-models` shows what your account offers. Pick something OUTSIDE the families
+# already on your panel: setting this back to `auto`, to a claude-* id while Claude writes your
+# plans, or to a cursor-grok-* id while grok45high reviews alongside it, all collapse two nominally
+# independent seats onto one model family. The override is for a retired model id.
+# e.g. export CURSOR_REVIEW_MODEL=cursor-grok-4.5-high

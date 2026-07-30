@@ -201,7 +201,7 @@ printf '%s' "$cu" | grep -q -- "--mode=ask"                    && { echo "  ok  
 # cursor-agent's own default model is "Auto", which routes to the frontier models and may pick a
 # CLAUDE one — so the agent that usually wrote the plan would be grading it while the panel reports
 # an independent "Cursor" reviewer. The pin is what keeps the panel honest, so it is asserted.
-printf '%s' "$cu" | grep -q -- "--model cursor-grok-4.5-high"  && { echo "  ok   [-] cursor model is pinned (not Auto)"; PASS=$((PASS+1)); } || { echo "  FAIL cursor model not pinned: $cu"; FAIL=$((FAIL+1)); }
+printf '%s' "$cu" | grep -q -- "--model composer-2.5"  && { echo "  ok   [-] cursor model is pinned (not Auto)"; PASS=$((PASS+1)); } || { echo "  FAIL cursor model not pinned: $cu"; FAIL=$((FAIL+1)); }
 # kimi3's read-only guarantee: OPENCODE_CONFIG_CONTENT (highest-precedence config layer)
 # DENIES `edit` AND `bash` (removing both tools — no write, no shell), OPENCODE_CONFIG is
 # unset (empty), it runs --pure and in an isolated cwd OUTSIDE the checkout, and never the
@@ -221,8 +221,8 @@ printf '%s' "$hostile" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"ba
 
 # CURSOR_REVIEW_MODEL is the documented way out if Cursor retires the pinned id, so it is part of
 # the contract rather than a convenience: a pin that could not be overridden would be a dead end.
-cuo=$(printf 'plan\n' | PATH="$PBIN:$PATH" CURSOR_REVIEW_MODEL=composer-2.5 bash "$CLI" plan-review --reviewers cursor 2>/dev/null | grep 'REVIEW-cursor')
-printf '%s' "$cuo" | grep -q -- "--model composer-2.5" && { echo "  ok   [-] CURSOR_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL CURSOR_REVIEW_MODEL ignored: $cuo"; FAIL=$((FAIL+1)); }
+cuo=$(printf 'plan\n' | PATH="$PBIN:$PATH" CURSOR_REVIEW_MODEL=cursor-grok-4.5-high bash "$CLI" plan-review --reviewers cursor 2>/dev/null | grep 'REVIEW-cursor')
+printf '%s' "$cuo" | grep -q -- "--model cursor-grok-4.5-high" && { echo "  ok   [-] CURSOR_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL CURSOR_REVIEW_MODEL ignored: $cuo"; FAIL=$((FAIL+1)); }
 
 
 # grok45high: Grok 4.5 high effort, prompt-file (not stdin), read-only ALLOWLIST, runs in the
