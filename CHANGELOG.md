@@ -65,6 +65,24 @@ All notable changes to **ship-feature** are documented here. This project follow
   `edit`+`bash` deny via `OPENCODE_CONFIG_CONTENT`, unsets `OPENCODE_CONFIG`, runs in an isolated cwd, and
   **overrides a hostile inherited `OPENCODE_CONFIG_CONTENT`** — never the `build` agent.
 
+### Fixed
+
+- **The `cursor` plan reviewer no longer runs on Cursor's `Auto` model.** It is now invoked with
+  `--model`, from a `CURSOR_REVIEW_MODEL="${CURSOR_REVIEW_MODEL:-cursor-grok-4.5-high}"` default set
+  once in `cmd_plan_review`. Without it, `cursor-agent` fell back to
+  `~/.cursor/cli-config.json`, whose default is `Auto` — which routes to the frontier models and may
+  pick a **Claude** one. `plan-review` checks a plan an agent (usually Claude) just wrote, right
+  before a human approves it, so Auto could have Claude grading its own plan while the panel reported
+  an independent "Cursor" reviewer: two reviewers on the page, one model in reality. Auto also billed
+  Cursor's small *Other Models* quota instead of the larger Cursor-branded pool. `CURSOR_REVIEW_MODEL`
+  is env-only and intentionally **not** `SHIP_FEATURE_*`-prefixed —
+  [`pr-review-relay`](https://github.com/hamen/pr-review-relay) reads the same variable, so one export
+  configures both tools. Asserted in the read-only argv contract tests (default **and** override).
+- **`test-ship-feature.sh` is hermetic against `CURSOR_REVIEW_MODEL`** — cleared with the other knobs
+  at the top of the suite, so an exported value cannot satisfy the default-pin assertion.
+- **The `--mode=ask` assertion now greps cursor's own line**, like the `claude` check above it,
+  instead of the whole panel output where another reviewer echoing the plan could satisfy it.
+
 ## [0.2.0] — 2026-07-22
 
 ### Added

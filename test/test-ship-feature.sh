@@ -12,7 +12,11 @@ trap 'rm -rf "$WORK"' EXIT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 # Isolate from the user's real config/env so the suite is deterministic outside CI.
 export SHIP_FEATURE_CONFIG=/dev/null
-unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS
+# CURSOR_REVIEW_MODEL is not a SHIP_FEATURE_* key (it is shared with pr-review-relay, env-only), so
+# it would not be caught by the namespace above — but it is a knob people really do export once
+# pr-review-relay is in use, and an exported value would quietly satisfy the default-pin assertions
+# below. Clear it here so the suite stays hermetic no matter who runs it.
+unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL
 
 PASS=0; FAIL=0
 check() { # check <desc> <actual_rc> <want_rc>
@@ -187,8 +191,17 @@ out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers c
 # another reviewer's flags can't satisfy this by accident.
 cl=$(printf '%s' "$out" | grep 'REVIEW-claude')
 printf '%s' "$cl" | grep -q -- "--permission-mode plan" && printf '%s' "$cl" | grep -q -- "--safe-mode" && { echo "  ok   [-] claude runs read-only (--permission-mode plan --safe-mode)"; PASS=$((PASS+1)); } || { echo "  FAIL claude not fully read-only (plan + safe-mode) in plan-review"; FAIL=$((FAIL+1)); }
-printf '%s' "$out" | grep -q -- "--sandbox read-only"          && { echo "  ok   [-] codex runs read-only (--sandbox read-only)"; PASS=$((PASS+1)); } || { echo "  FAIL codex not read-only in plan-review"; FAIL=$((FAIL+1)); }
-printf '%s' "$out" | grep -q -- "--mode=ask"                   && { echo "  ok   [-] cursor runs in ask (Q&A) mode"; PASS=$((PASS+1)); } || { echo "  FAIL cursor not in ask mode"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep 'REVIEW-codex' | grep -q -- "--sandbox read-only" && { echo "  ok   [-] codex runs read-only (--sandbox read-only)"; PASS=$((PASS+1)); } || { echo "  FAIL codex not read-only in plan-review"; FAIL=$((FAIL+1)); }
+# Grep cursor's own line, like claude's check above. Whole-stdout matching is satisfied by ANY
+# reviewer's line carrying the flag, so it would keep passing if cursor silently lost it while a
+# future reviewer happened to use the same one. Today's stubs echo argv, not stdin, so the plan
+# text itself cannot trigger it — the point is not to depend on that staying true.
+cu=$(printf '%s' "$out" | grep 'REVIEW-cursor')
+printf '%s' "$cu" | grep -q -- "--mode=ask"                    && { echo "  ok   [-] cursor runs in ask (Q&A) mode"; PASS=$((PASS+1)); } || { echo "  FAIL cursor not in ask mode"; FAIL=$((FAIL+1)); }
+# cursor-agent's own default model is "Auto", which routes to the frontier models and may pick a
+# CLAUDE one — so the agent that usually wrote the plan would be grading it while the panel reports
+# an independent "Cursor" reviewer. The pin is what keeps the panel honest, so it is asserted.
+printf '%s' "$cu" | grep -q -- "--model cursor-grok-4.5-high"  && { echo "  ok   [-] cursor model is pinned (not Auto)"; PASS=$((PASS+1)); } || { echo "  FAIL cursor model not pinned: $cu"; FAIL=$((FAIL+1)); }
 # kimi3's read-only guarantee: OPENCODE_CONFIG_CONTENT (highest-precedence config layer)
 # DENIES `edit` AND `bash` (removing both tools — no write, no shell), OPENCODE_CONFIG is
 # unset (empty), it runs --pure and in an isolated cwd OUTSIDE the checkout, and never the
@@ -205,6 +218,11 @@ printf '%s' "$km" | grep -q -- "--agent build"         && { echo "  FAIL kimi3 u
 # edit/bash must be overridden by our deny (we own the highest-precedence layer).
 hostile=$(printf 'plan\n' | PATH="$PBIN:$PATH" OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"allow","bash":"allow"}}' bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
 printf '%s' "$hostile" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && ! printf '%s' "$hostile" | grep -q '"edit":"allow"' && { echo "  ok   [-] kimi3 overrides a hostile inherited OPENCODE_CONFIG_CONTENT"; PASS=$((PASS+1)); } || { echo "  FAIL a hostile OPENCODE_CONFIG_CONTENT survived (read-only bypass)"; FAIL=$((FAIL+1)); }
+
+# CURSOR_REVIEW_MODEL is the documented way out if Cursor retires the pinned id, so it is part of
+# the contract rather than a convenience: a pin that could not be overridden would be a dead end.
+cuo=$(printf 'plan\n' | PATH="$PBIN:$PATH" CURSOR_REVIEW_MODEL=composer-2.5 bash "$CLI" plan-review --reviewers cursor 2>/dev/null | grep 'REVIEW-cursor')
+printf '%s' "$cuo" | grep -q -- "--model composer-2.5" && { echo "  ok   [-] CURSOR_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL CURSOR_REVIEW_MODEL ignored: $cuo"; FAIL=$((FAIL+1)); }
 
 
 # grok45high: Grok 4.5 high effort, prompt-file (not stdin), read-only ALLOWLIST, runs in the
