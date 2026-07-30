@@ -439,6 +439,26 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$PBIN/codex"; chmod +x "$PBIN/codex"
 ( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 --parallel >/dev/null 2>&1 ); check "plan-review --parallel stays fail-closed (3)" $? 3
 make_reviewer codex 0 codex   # restore
 
+# The EXIT trap must actually delete STATUS_DIR. It expands "$STATUS_DIR" when it fires, which is
+# after cmd_plan_review has returned — so if that variable is ever made function-local again, the
+# name is unbound by then, `set -u` aborts the trap body, and every run leaves its directory (with
+# each reviewer's buffered review in it) behind forever. That regression is invisible except for a
+# stderr line, which is why it survived ~310 leaks a day until someone counted /tmp.
+# Give the CLI its own TMPDIR so this measures only what plan-review created, and keep the panel to
+# codex: kimi3 forces TMPDIR=/tmp for its own isolated cwd, which would muddy the count.
+leakdir="$WORK/leak"; mkdir -p "$leakdir"
+leakerr="$WORK/leak.err"
+( printf 'plan\n' | PATH="$PBIN:$PATH" TMPDIR="$leakdir" bash "$CLI" plan-review --reviewers codex >/dev/null 2>"$leakerr" )
+# Numeric compare: `wc -l` can emit padded output, so a string test against "0" would false-fail.
+leftovers=$(find "$leakdir" -mindepth 1 | wc -l)
+[ "$leftovers" -eq 0 ] \
+  && { echo "  ok   [-] plan-review removes its temp dir on exit"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL plan-review leaked $leftovers entries under its TMPDIR: $(find "$leakdir" -mindepth 1 -maxdepth 1)"; FAIL=$((FAIL+1)); }
+# Secondary, and only that: a fix which merely silenced the message would still pass this one.
+grep -q 'unbound variable' "$leakerr" \
+  && { echo "  FAIL plan-review printed an unbound-variable error: $(grep 'unbound variable' "$leakerr")"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] plan-review exits without an unbound-variable error"; PASS=$((PASS+1)); }
+
 # Interrupt teardown: ^C during --parallel must kill the reviewer's deep descendants
 # (subshell -> $() -> timeout -> agent), not leak them. A slow stub holds a `sleep`
 # grandchild; we record every descendant PID, SIGINT the CLI, then assert they're gone.
