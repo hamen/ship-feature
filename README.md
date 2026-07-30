@@ -81,7 +81,7 @@ ship-feature skill for any feature/fix.
   guarantee for reviewers that run inside the checkout. Defaults the panel to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; nothing is
   written or posted. Supported reviewers
   are the ones that can actually be constrained: `claude` (`--permission-mode plan --safe-mode`), `codex`
-  (`--sandbox read-only`), `cursor` (ask/Q&A mode, pinned to `--model cursor-grok-4.5-high`; see
+  (`--sandbox read-only`), `cursor` (ask/Q&A mode, pinned to `--model composer-2.5`; see
   [Why the Cursor model is pinned](#why-the-cursor-model-is-pinned)), `kimi3` (Kimi K3 via opencode: `OPENCODE_CONFIG_CONTENT`
   — opencode's highest-precedence config layer — denies the `edit`+`bash` permissions so it can't write
   even via shell and can't be overridden by a merged global/checkout config; inherited `OPENCODE_CONFIG*`
@@ -111,7 +111,7 @@ the process from `WORKFLOW.md`.
 ## Why the Cursor model is pinned
 
 `plan-review` invokes the Cursor reviewer with `--model "$CURSOR_REVIEW_MODEL"`
-(default `cursor-grok-4.5-high`). Left off, `cursor-agent` uses whatever is in your
+(default `composer-2.5`). Left off, `cursor-agent` uses whatever is in your
 `~/.cursor/cli-config.json`, which out of the box is **Auto** — and Auto routes to the frontier
 models, including Claude's.
 
@@ -124,10 +124,15 @@ different family is what keeps the second opinion a second opinion.
 It also stops the reviews from billing Cursor's small *Other Models* quota (Claude/GPT) instead of
 the much larger Cursor-branded pool — a real problem for a command you run before every change.
 
+The default is **Composer 2.5, Cursor's own model**: Cursor-pool, and not Claude, GPT, Codex or
+Grok. Every reviewer on the panel then stays on the model its own vendor built, which keeps them
+failing differently from each other and not just from the author.
+
 Override with `CURSOR_REVIEW_MODEL`; `cursor-agent --list-models` shows what your account offers.
-**Pick something outside the author's family.** Setting it back to `auto`, or to any
-`claude-*` id when Claude is writing your plans, reopens exactly the hole the default closes — the
-override exists for retired model ids, not for going back to Auto.
+**Pick something outside the other reviewers' families.** Setting it back to `auto`, to a
+`claude-*` id while Claude writes your plans, or to a `cursor-grok-*` id while `grok45high` is on
+your panel, all collapse two nominally independent seats onto one model family — the override
+exists for retired model ids, not for going back to Auto.
 The variable has no `SHIP_FEATURE_` prefix on purpose: it describes your Cursor account rather than
 this tool, [`pr-review-relay`](https://github.com/hamen/pr-review-relay) reads the same one, and a
 single export should configure both. Being outside that namespace it is **env-only** — it is never

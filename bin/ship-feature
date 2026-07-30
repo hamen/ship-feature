@@ -301,8 +301,9 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # free to pick a CLAUDE one. This command reviews a plan that Claude usually wrote, right before
   # the human approves it: Claude grading its own plan while the panel labels it an independent
   # "Cursor" reviewer defeats the point of the gate. (It also bills Cursor's small "Other Models"
-  # quota instead of the much larger Cursor-branded pool.) cursor-grok-4.5-high is Cursor-pool and
-  # is neither Claude nor GPT nor Codex, so it is a genuinely distinct reader.
+  # quota instead of the much larger Cursor-branded pool.) composer-2.5 is Cursor's own model:
+  # Cursor-pool, and not Claude, GPT, Codex or Grok, so every reviewer on the panel stays on the
+  # model its own vendor built and they keep failing differently from each other.
   # Deliberately NOT named SHIP_FEATURE_*: it describes the user's Cursor account rather than this
   # tool, pr-review-relay reads the same variable, and one export should configure both. Being
   # outside the SHIP_FEATURE_* namespace it is env-only — load_config never reads it.
@@ -310,7 +311,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # the override survives and nothing leaks to global scope. It is safe here only because this
   # variable is read inside the function and nowhere else; anything a trap expands must NOT be
   # local, since traps fire once the function has already returned.
-  local CURSOR_REVIEW_MODEL="${CURSOR_REVIEW_MODEL:-cursor-grok-4.5-high}"
+  local CURSOR_REVIEW_MODEL="${CURSOR_REVIEW_MODEL:-composer-2.5}"
 
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
   # under --parallel neither the reviews nor the failure messages interleave; the caller
