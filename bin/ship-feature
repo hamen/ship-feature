@@ -284,7 +284,8 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # Single-quoted trap body, double-quoted var: evaluated safely at exit even if a path
   # ever held a quote. Baking the path in with a double-quoted body would work only while the path
   # holds no single quote, which is exactly what this form was written to survive.
-  trap 'rm -rf "$STATUS_DIR"' EXIT
+  # `--` so a TMPDIR that legitimately starts with '-' cannot have its path parsed as options.
+  trap 'rm -rf -- "$STATUS_DIR"' EXIT
   # On interrupt, tear down the parallel reviewers so they don't keep burning credits.
   # kill_tree walks each backgrounded job's whole descendant tree (subshell → $() →
   # timeout → agent), which a group-kill can't reach because `timeout` re-groups its child.

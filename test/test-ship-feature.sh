@@ -448,7 +448,11 @@ make_reviewer codex 0 codex   # restore
 # codex: kimi3 forces TMPDIR=/tmp for its own isolated cwd, which would muddy the count.
 leakdir="$WORK/leak"; mkdir -p "$leakdir"
 leakerr="$WORK/leak.err"
-( printf 'plan\n' | PATH="$PBIN:$PATH" TMPDIR="$leakdir" bash "$CLI" plan-review --reviewers codex >/dev/null 2>"$leakerr" )
+( printf 'plan\n' | PATH="$PBIN:$PATH" TMPDIR="$leakdir" bash "$CLI" plan-review --reviewers codex >/dev/null 2>"$leakerr" ); leakrc=$?
+# Assert the run actually SUCCEEDED first. Without this the other two assertions pass vacuously:
+# a `die` before mktemp -d would leave nothing behind and print no unbound-variable line, so a
+# broken CLI would look like a clean one and the cleanup path would never be exercised at all.
+check "plan-review leak probe ran successfully" "$leakrc" 0
 # Numeric compare: `wc -l` can emit padded output, so a string test against "0" would false-fail.
 leftovers=$(find "$leakdir" -mindepth 1 | wc -l)
 [ "$leftovers" -eq 0 ] \
