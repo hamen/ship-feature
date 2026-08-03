@@ -54,11 +54,23 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT
 # HALF applied while the suite stayed green, which is the fail-open shape this whole change exists
 # to remove. The first version skipped the proof tests and counted them as passes, which made that
 # worse: green suite, no isolation, including when launched from a hook. Refuse instead.
-if ! GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=sf.probe GIT_CONFIG_VALUE_0=1 \
-     git config --get sf.probe >/dev/null 2>&1; then
+# The probe requires the VALUE, not merely that the lookup succeeded. Checking only the exit status
+# meant an ambient config that happens to define sf.probe would satisfy it on a pre-2.31 git, and the
+# suite would then run with the isolation half applied — precisely the fail-open this gate exists to
+# prevent. The value is deliberately unlikely to collide.
+_probe=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=sf.probe GIT_CONFIG_VALUE_0=sf-isolation-probe-ok \
+         git config --get sf.probe 2>/dev/null)
+if [ "$_probe" != "sf-isolation-probe-ok" ]; then
   echo "ship-feature tests: need git 2.31+ (GIT_CONFIG_COUNT) to isolate the fixtures; found $(git --version)" >&2
   exit 2
 fi
+# The unset half depends on this listing, and a process substitution that fails leaves the loop a
+# silent no-op while the exports proceed — the same half-applied shape. Require it to name GIT_DIR.
+if ! git rev-parse --local-env-vars 2>/dev/null | grep -qx GIT_DIR; then
+  echo "ship-feature tests: 'git rev-parse --local-env-vars' does not list GIT_DIR; cannot isolate fixtures" >&2
+  exit 2
+fi
+unset _probe
 
 sf_isolate_git() {
   while IFS= read -r _v; do [ -n "$_v" ] && unset "$_v"; done < <(git rev-parse --local-env-vars)
@@ -96,6 +108,19 @@ export SHIP_FEATURE_CONFIG=/dev/null
 # pr-review-relay is in use, and an exported value would quietly satisfy the default-pin assertions
 # below. Clear it here so the suite stays hermetic no matter who runs it.
 unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL
+
+# Assert the isolation is actually in force HERE, before a single fixture runs. This check used to
+# sit at the very end with the others, which meant that if the sf_isolate_git call were deleted the
+# whole suite would run against the host repo and only complain afterwards — with a hook-exported
+# GIT_DIR that is the corruption this change exists to stop, reported far too late to help. The
+# end-of-suite cases prove the isolation WORKS; this one proves it was APPLIED.
+sf_check_isolated() {
+  [ "${GIT_CONFIG_COUNT:-0}" = 7 ] && [ "$(git config --get commit.gpgsign 2>/dev/null)" = "false" ]
+}
+if ! sf_check_isolated; then
+  echo "ship-feature tests: the top-level sf_isolate_git call is missing or ineffective — refusing to run" >&2
+  exit 2
+fi
 
 PASS=0; FAIL=0
 check() { # check <desc> <actual_rc> <want_rc>
@@ -585,21 +610,24 @@ fi
 #
 # Everything runs in a subshell so a planted variable cannot leak back into the suite.
 
-# 0. The suite-level call at the top is in force. Every case below calls sf_isolate_git itself, so
-#    deleting the ONE call that protects the real fixtures would leave all of them green while the
-#    fixture setup ran under whatever a hook handed us. This is the only check that watches it.
-[ "${GIT_CONFIG_COUNT:-0}" = 7 ] && [ "$(git config --get commit.gpgsign 2>/dev/null)" = "false" ] \
-  && { echo "  ok   [-] the suite-level git isolation is actually in force"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL the top-level sf_isolate_git call is missing or ineffective"; FAIL=$((FAIL+1)); }
+# 0. Still in force after every fixture has run: nothing in the suite re-polluted the environment.
+sf_check_isolated \
+  && { echo "  ok   [-] the git isolation is still in force after the whole suite"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the git isolation was lost partway through the run"; FAIL=$((FAIL+1)); }
 
 # 0b. init.templateDir="" was in the first draft of sf_isolate_git and broke `>> .git/info/exclude`,
 #     which is how the worktree marker gets ignored. It was removed with only a comment as memory —
 #     this is the assertion that fires if someone "helps" the function again.
 ( T="$WORK/tpl"; rm -rf "$T"; mkdir -p "$T"; cd "$T" || exit 1
-  sf_isolate_git; git init -q . 2>/dev/null
+  sf_isolate_git
+  git init -q . 2>/dev/null || exit 4          # tell "init itself broke" from "no info dir"
   echo x >> .git/info/exclude 2>/dev/null || exit 3 ) >/dev/null 2>&1
-[ $? = 0 ] && { echo "  ok   [-] git init still produces .git/info (no empty templateDir)"; PASS=$((PASS+1)); } \
-           || { echo "  FAIL .git/info missing — init.templateDir was probably reintroduced"; FAIL=$((FAIL+1)); }
+t0b=$?
+case "$t0b" in
+  0) echo "  ok   [-] git init still produces .git/info (no empty templateDir)"; PASS=$((PASS+1));;
+  3) echo "  FAIL .git/info missing — init.templateDir was probably reintroduced"; FAIL=$((FAIL+1));;
+  *) echo "  FAIL .git/info check could not run (git init failed, rc=$t0b)"; FAIL=$((FAIL+1));;
+esac
 
 # 1. Signing off at the COMMIT level, against a genuinely planted ambient gpgsign.
 #    Asserted as exactly %G? = N, not "not G": a signature that fails verification reports E/B/R,
@@ -695,6 +723,19 @@ h3c=$?
   && { echo "  ok   [-] a planted core.excludesFile cannot hide a fixture's file"; PASS=$((PASS+1)); } \
   || { echo "  FAIL git isolation: excludesFile (rc=$h3c out='$(tail -1 "$WORK/h3c.out" 2>/dev/null)')"; FAIL=$((FAIL+1)); }
 
+# 3d. The three remaining neutralised keys have no commit-level symptom in this suite, so they get
+#     config assertions — the same weight as tag.gpgsign. Without these you could no-op KEY_4..6,
+#     keep seven keys so the startup guard still passes, and stay green. color.ui is the one that
+#     would bite first: color.ui=always puts ANSI into the `%G?` read above.
+( cd "$WORK" || exit 1; sf_isolate_git
+  printf '%s|%s|%s' "$(git config --get core.attributesFile 2>/dev/null)" \
+                    "$(git config --get core.fsmonitor 2>/dev/null)" \
+                    "$(git config --get color.ui 2>/dev/null)" ) > "$WORK/h3d.out" 2>/dev/null
+h3dv="$(tail -1 "$WORK/h3d.out" 2>/dev/null)"
+[ "$h3dv" = "/dev/null|false|false" ] \
+  && { echo "  ok   [-] attributesFile, fsmonitor and color.ui are neutralised too"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL git isolation: attributesFile/fsmonitor/color.ui (got '"'"'$h3dv'"'"')"; FAIL=$((FAIL+1)); }
+
 # 4. tag.gpgsign has no commit-level effect in this suite, which is exactly why it would rot
 #    unnoticed. A config assertion is the right weight for it.
 ( cd "$WORK" || exit 1; sf_isolate_git; git config --get tag.gpgsign 2>/dev/null | tail -1 ) > "$WORK/h4.out" 2>/dev/null
@@ -728,7 +769,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=113
+EXPECTED=114
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
