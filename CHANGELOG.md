@@ -6,99 +6,36 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
-### Added
-
-- **`grok45high` plan-reviewer** — Grok 4.5 with **high** reasoning effort via `grok --prompt-file`
-  (headless ignores stdin), `--permission-mode plan`, `--sandbox read-only`. Bare `grok` is
-  relay-only at the plan gate (PR cross-review name in pr-review-relay).
-
-
-### Changed
-
-- **The `cursor` plan reviewer's pinned model moved from `cursor-grok-4.5-high` to `composer-2.5`.**
-  The pin itself landed first (see *Fixed*) with Cursor's Grok build as the default. That was the
-  wrong choice: `grok45high` is a supported plan reviewer, so a Cursor-branded Grok put **two
-  Grok-family readers** on a panel reporting two independent ones — the same defect as `Auto`
-  picking Claude, one row down. Composer 2.5 is Cursor's own model: Cursor-branded quota pool, and
-  not Claude, GPT, Codex or Grok, so every reviewer stays on the model its own vendor built.
-  `pr-review-relay` made the same move, so one `CURSOR_REVIEW_MODEL` export still configures both.
-
-- **`grok45high` now reviews with the code in front of it.** It used to run in an isolated empty cwd
-  with `--deny '*'`, so it could only review the plan's prose — it would open its review saying it
-  could not read the tree, while `codex` and `cursor` were finding blockers that only reading the code
-  reveals (a stale line reference, a client call that would crash, a CI step the change would turn
-  red). It now runs in **your checkout**, like `claude`, `codex` and `cursor`.
-  Read-only is enforced by an **allowlist** — `--tools read_file,list_dir,grep` — rather than a
-  denylist: an unknown tool name is accepted silently by the CLI, so a denylist typo would fail open.
-  That covers the built-ins (`run_terminal_command`, `search_replace`, `spawn_subagent`,
-  `scheduler_*`).
-  **The MCP bridge survives the built-in allowlist**, so it is removed explicitly with
-  `--disallowed-tools search_tool,use_tool`. Verified against the CLI: with `--tools read_file` alone
-  the session still exposes `search_tool` and `use_tool` — every MCP server configured on the machine
-  stays reachable, including ones that write. With both removed it reports exactly
-  `read_file`/`list_dir`/`grep`.
-  `--permission-mode plan` and `--sandbox read-only` are unchanged.
-- **`grok45high` now fails the round when the read-only sandbox is not enforced.** `--sandbox read-only`
-  can warn and continue unenforced when its setup fails; the warning was only inspected on a **nonzero**
-  exit, so the one shape worth catching — a clean review on stdout, a sandbox complaint on stderr, exit
-  `0` — was reported as a passing round. stderr is now inspected regardless of the exit code, the review
-  is **discarded** rather than printed, and the round fails with `3`.
-  Detection alone is only a signal, though: by the time the warning arrives the checkout's hooks have
-  already run. So the barrier is checked **before** Grok starts — on Linux, bubblewrap present and
-  unprivileged user namespaces enabled. When it cannot be enforced the reviewer **degrades** to its
-  previous posture (isolated empty cwd, every tool denied) and labels the review as text-only, rather
-  than refusing outright — refusing would make `grok45high` unusable on any Linux without bubblewrap,
-  CI runners included. The stderr match keys off failure phrasing
-  ("continuing without enforcement", "failed to set up sandbox"), not the bare words "sandbox" or
-  "namespace", which appear in healthy logs. Both paths have regression tests, including one asserting a
-  benign sandbox log does **not** discard a good review.
-  **Trade-offs, stated:** a checkout-scoped `.grok` is now loaded, exactly as `CLAUDE.md`, `AGENTS.md`
-  and the cursor config already are for the other three in-checkout reviewers; Grok has no
-  `--safe-mode` equivalent, so checkout hooks/plugins can still load, and `--sandbox read-only` can
-  warn and continue unenforced if its setup fails — it is a layer, not the guarantee. `kimi3` stays
-  isolated.
-
-- **plan-review: replaced `qwen` with `kimi3` (Kimi K3 via opencode).** `kimi3` runs Kimi K3 through
-  opencode, pinned **genuinely read-only** by a temp `OPENCODE_CONFIG` that denies the `edit` **and**
-  `bash` permissions — removing both tools, so the model can't write even via shell. The denial is set
-  through **`OPENCODE_CONFIG_CONTENT`, opencode's highest-precedence config layer** (applied last, so it
-  wins over any merged global/checkout config — verified it overrides even a project `opencode.json` that
-  sets `edit`/`bash` `"allow"`); inherited `OPENCODE_CONFIG*` are unset so a hostile environment can't
-  pre-seed an `"allow"`, and it runs in an isolated cwd created outside the checkout so the repo's own
-  `opencode.json` is never discovered. Plus `--pure` (no external plugins) and `--agent plan` as defense
-  in depth. The guarantee is "your checkout is untouched", not "nothing touches disk" — like every
-  reviewer, opencode still writes its own session data under its data dir. `qwen` is no longer a supported
-  plan reviewer; `agy` and the **bare** `opencode` name stay relay-only (a plain `opencode run` uses the
-  all-allow `build` agent). Read-only contract tests assert `kimi3` runs `--pure` + `--agent plan`, pins
-  `edit`+`bash` deny via `OPENCODE_CONFIG_CONTENT`, unsets `OPENCODE_CONFIG`, runs in an isolated cwd, and
-  **overrides a hostile inherited `OPENCODE_CONFIG_CONTENT`** — never the `build` agent.
-
 ### Fixed
 
-- **`plan-review` no longer leaks its temp directory on every run.** `STATUS_DIR` was a function
-  local, but the `EXIT` trap expands `"$STATUS_DIR"` when it fires — after `cmd_plan_review` has
-  returned. By then the local is gone, `set -u` aborts the trap body on the unbound name, and the
-  `rm` never runs. Every invocation left behind a directory holding that run's buffered artifacts:
-  each reviewer's full review (`out_k_*`), plus `err_k_*`, `diag_k_*` and status files. On the
-  machine where this was found: **931 orphaned directories, 32 MB, roughly 310 a day.** The only
-  outward sign was a `STATUS_DIR: unbound variable` line on stderr after an otherwise successful
-  run — which read as noise, not as the cleanup failing out loud. `STATUS_DIR` is now a plain
-  global. Covered by a regression test that asserts the directory is actually gone, not merely that
-  the message stopped: it fails on the old code (2 failures) and passes on the new.
-- **The `cursor` plan reviewer no longer runs on Cursor's `Auto` model.** It is now invoked with
-  `--model`, from a `CURSOR_REVIEW_MODEL` default set once in `cmd_plan_review`. Without it, `cursor-agent` fell back to
-  `~/.cursor/cli-config.json`, whose default is `Auto` — which routes to the frontier models and may
-  pick a **Claude** one. `plan-review` checks a plan an agent (usually Claude) just wrote, right
-  before a human approves it, so Auto could have Claude grading its own plan while the panel reported
-  an independent "Cursor" reviewer: two reviewers on the page, one model in reality. Auto also billed
-  Cursor's small *Other Models* quota instead of the larger Cursor-branded pool. `CURSOR_REVIEW_MODEL`
-  is env-only and intentionally **not** `SHIP_FEATURE_*`-prefixed —
-  [`pr-review-relay`](https://github.com/hamen/pr-review-relay) reads the same variable, so one export
-  configures both tools. Asserted in the read-only argv contract tests (default **and** override).
-- **`test-ship-feature.sh` is hermetic against `CURSOR_REVIEW_MODEL`** — cleared with the other knobs
-  at the top of the suite, so an exported value cannot satisfy the default-pin assertion.
-- **The `--mode=ask` assertion now greps cursor's own line**, like the `claude` check above it,
-  instead of the whole panel output where another reviewer echoing the plan could satisfy it.
+- **The test suite inherited the ambient git environment**, so its result depended on how the
+  machine running it happened to be configured — and, from a git hook, it wrote into the repository
+  it was launched from.
+  - **Signing.** With `commit.gpgsign = true` and an agent-backed signer (1Password's `op-ssh-sign`),
+    every fixture commit really was signed — measured, `%G?` came back `G`. With the agent locked the
+    signer returns nothing and the commits fail or block, producing failures unrelated to the code.
+    The suite's green was conditional on 1Password being unlocked.
+  - **Repo-local environment.** git exports `GIT_DIR` (and friends) to its hooks, and those outrank
+    the working directory: with `GIT_DIR` set, a fixture's `cd "$repo" && git init && git commit`
+    commits to the **host** repo and leaves the fixture empty. The sibling `pr-review-relay` suite
+    did exactly that from its `pre-push` gate — junk commits on the branch being pushed, the branch
+    renamed, `HEAD` moved, `user.name` rewritten in the real repository.
+  - Isolation is one function, `sf_isolate_git`, applied at suite start and inside every hostile
+    subprocess. The variable list comes from `git rev-parse --local-env-vars` — git's own answer, 15
+    entries, and it cannot go stale; a hand-written version missed 7 of them. Ordering is
+    load-bearing: `GIT_CONFIG_COUNT` is itself on that list, and `GIT_CONFIG_PARAMETERS` (set
+    whenever anything up the process tree ran `git -c …`) **overrides** it, so the clearing must come
+    first.
+  - Also neutralised: `core.hooksPath`, `core.excludesFile` (a global `*.dat` ignore rule silently
+    breaks the binary-scan fixture), `core.attributesFile`, `core.fsmonitor` and `color.ui`.
+  - **Not** `GIT_CONFIG_GLOBAL=/dev/null`: it discards the whole global config including
+    `safe.directory`. **Not** `git config` inside fixtures: tried in `pr-review-relay` and worse than
+    the bug, since a fixture whose `git init` fails quietly writes into the host repo's config.
+  - git **2.31+** is now required (for `GIT_CONFIG_COUNT`) and the suite refuses to run without it,
+    rather than half-applying the isolation while reporting green.
+  - Eight checks cover it, each planting the hostility and proving the plant is live before asserting
+    isolation won. The exit gate asserts an exact `PASS` total, so a test that stops running is
+    visible instead of silently absent.
 
 ## [0.2.0] — 2026-07-22
 
