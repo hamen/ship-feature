@@ -138,6 +138,18 @@ this tool, [`pr-review-relay`](https://github.com/hamen/pr-review-relay) reads t
 single export should configure both. Being outside that namespace it is **env-only** — it is never
 read from `~/.config/ship-feature/config`.
 
+## Running the tests
+
+```bash
+bash test/test-ship-feature.sh
+```
+
+Needs **git 2.31+**. The suite isolates its fixtures from your own git environment — signing, hooks,
+`core.excludesFile`, and the `GIT_DIR` family that git hands to hooks — using `GIT_CONFIG_COUNT`,
+which arrived in 2.31. On an older git it refuses to run rather than applying half the isolation and
+reporting green. That isolation is why the suite behaves the same whether or not your commit signing
+is on, and why running it from a git hook cannot write into the repository being tested.
+
 ## Keeping it clean (privacy)
 
 This repo is generic — no private, project-specific data. Two guards:

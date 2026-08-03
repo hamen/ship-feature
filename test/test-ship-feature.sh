@@ -71,14 +71,14 @@ sf_isolate_git() {
   # binary-scan fixture's file invisible and that test fails for a reason nobody would guess.
   # attributesFile can rewrite content through filters; fsmonitor attaches a daemon to throwaway
   # repos. color.ui=always would put ANSI into the `%G?` read below and break an exact comparison.
+  # A path that does not exist: hooks are then simply never found. An ambient core.hooksPath can
+  # otherwise fail or mutate every fixture commit — measured, a planted pre-commit made `git commit`
+  # exit 1 until this was set.
+  export GIT_CONFIG_KEY_2=core.hooksPath      GIT_CONFIG_VALUE_2="${WORK:-/nonexistent}/no-such-hooks"
   export GIT_CONFIG_KEY_3=core.excludesFile   GIT_CONFIG_VALUE_3=/dev/null
   export GIT_CONFIG_KEY_4=core.attributesFile GIT_CONFIG_VALUE_4=/dev/null
   export GIT_CONFIG_KEY_5=core.fsmonitor      GIT_CONFIG_VALUE_5=false
   export GIT_CONFIG_KEY_6=color.ui            GIT_CONFIG_VALUE_6=false
-  # A path that does not exist: hooks are then simply never found. An ambient core.hooksPath can
-  # otherwise fail or mutate every fixture commit — measured, a planted pre-commit made `git commit`
-  # exit 1 until this was set.
-  export GIT_CONFIG_KEY_2=core.hooksPath   GIT_CONFIG_VALUE_2="${WORK:-/nonexistent}/no-such-hooks"
   # DELIBERATELY NOT init.templateDir="". It was in the first version of this function, to stop a
   # global template installing hooks, and it is both redundant and harmful. Redundant because
   # core.hooksPath above already wins over anything a template drops in .git/hooks — measured, a
@@ -671,6 +671,30 @@ h3b=$?; h3bv="$(tail -1 "$WORK/h3b.out" 2>/dev/null)"
   && { echo "  ok   [-] a plain global commit.gpgsign is defeated too (%G? = N)"; PASS=$((PASS+1)); } \
   || { echo "  FAIL git isolation: global-config signing survived (rc=$h3b out='$h3bv')"; FAIL=$((FAIL+1)); }
 
+# 3c. core.excludesFile is the sharpest of the remaining ambient settings and had no plant: a global
+#     ignore rule for a pattern a fixture uses makes that file invisible to `git add`, and the test
+#     that needed it fails for a reason nobody would guess. (`*.dat` is not hypothetical — the
+#     binary-scan fixture commits a .dat file.) The other three neutralised keys —
+#     core.attributesFile, core.fsmonitor, color.ui — are asserted through this same function being
+#     in force, not individually; excludesFile is the one with a demonstrated failure.
+( H="$WORK/h3c"; IG="$WORK/h3c.ignore"; mkdir -p "$H"; cd "$H" || exit 1
+  while IFS= read -r _v; do [ -n "$_v" ] && unset "$_v"; done < <(git rev-parse --local-env-vars)
+  printf '*.dat\n' > "$IG"
+  export GIT_CONFIG_GLOBAL="$IG.cfg"
+  printf '[core]\n\texcludesFile = %s\n' "$IG" > "$IG.cfg"
+  git init -q . 2>/dev/null
+  : > payload.dat
+  git add payload.dat 2>/dev/null
+  git diff --cached --name-only 2>/dev/null | grep -q payload.dat && { echo PLANT_DEAD; exit 3; }
+  sf_isolate_git
+  git add payload.dat 2>/dev/null
+  git diff --cached --name-only 2>/dev/null | grep -q payload.dat || { echo STILL_IGNORED; exit 4; }
+  echo OK ) > "$WORK/h3c.out" 2>/dev/null
+h3c=$?
+[ "$h3c" = 0 ] \
+  && { echo "  ok   [-] a planted core.excludesFile cannot hide a fixture's file"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL git isolation: excludesFile (rc=$h3c out='$(tail -1 "$WORK/h3c.out" 2>/dev/null)')"; FAIL=$((FAIL+1)); }
+
 # 4. tag.gpgsign has no commit-level effect in this suite, which is exactly why it would rot
 #    unnoticed. A config assertion is the right weight for it.
 ( cd "$WORK" || exit 1; sf_isolate_git; git config --get tag.gpgsign 2>/dev/null | tail -1 ) > "$WORK/h4.out" 2>/dev/null
@@ -698,11 +722,14 @@ h5=$?
 
 echo "-------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"
-# 104 before this change, plus the 8 isolation checks above. Update this deliberately when adding
-# a test — that edit is the review surface for "did a test quietly disappear?".
-EXPECTED="${SF_EXPECTED_PASS:-112}"
+# FAIL is checked FIRST: when a case fails, PASS is naturally short of the total, and reporting that
+# as "a test was silently dropped" sends the reader after the wrong problem.
+[ "$FAIL" = 0 ] || exit 1
+# Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
+# let the very thing this suite now guarantees — that its result does not depend on the environment
+# it is run in — be switched off from outside, and would hide a removed test.
+EXPECTED=113
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
 fi
-[ "$FAIL" = 0 ]
