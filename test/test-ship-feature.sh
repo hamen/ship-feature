@@ -552,80 +552,98 @@ else
 fi
 
 # --- git isolation: proven against a hostile environment ---------------------
-# These plant the hostility, CHECK THE PLANT ACTUALLY TOOK, then apply sf_isolate_git and assert it
-# won. The control step is the point: a quoting slip in GIT_CONFIG_PARAMETERS would leave signing
-# off all along and the test would pass without ever having tested anything. Everything runs in a
-# subshell so a failure cannot leak back into the suite's own environment.
+# Each case PLANTS the hostility, proves the plant actually took, then applies sf_isolate_git and
+# asserts it won. The control step is the entire point. The first version of this block skipped it:
+# it ran `git -c commit.gpgsign=true config --get` as its "control", which affects that ONE git
+# invocation and leaves nothing behind for the commit that follows — so every case passed on a clean
+# machine whether or not the isolation existed. All three cross-reviewers caught it independently.
 #
-# `git -c` is what sets GIT_CONFIG_PARAMETERS for a child, so it is used to plant rather than
-# hand-quoting the variable, whose format is a git implementation detail.
+# GIT_CONFIG_PARAMETERS is git's own channel: git sets it for child processes whenever something ran
+# `git -c …`, which is exactly how an ambient override reaches a suite launched from a hook. Setting
+# it directly here reproduces that state; the format is a space-separated list of single-quoted
+# 'key=value' pairs.
+#
+# Everything runs in a subshell so a planted variable cannot leak back into the suite.
 
-# Capability gate: the controlled values need GIT_CONFIG_COUNT (git 2.31+). On an older git these
-# cases would fail for the wrong reason, so they skip WITH A REASON — never a silent pass.
-if git -c foo.bar=1 config --get foo.bar >/dev/null 2>&1 && \
+if git rev-parse --local-env-vars >/dev/null 2>&1 && \
    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=foo.bar GIT_CONFIG_VALUE_0=1 git config --get foo.bar >/dev/null 2>&1; then
 
-  # 1. Signing is off at the COMMIT level, not merely in the config key. A global core.hooksPath or
-  #    init.templateDir can sign or break a commit while the key reads false, so the assertion is on
-  #    the commit's own signature status: exactly N (none). "Not G" would accept E/B/R, which mean a
-  #    signature was attempted and failed to verify — i.e. isolation did NOT hold.
-  ( HOST="$WORK/hostile1"; mkdir -p "$HOST"; cd "$HOST" || exit 1
+  # 1. Signing off at the COMMIT level, against a genuinely planted ambient gpgsign.
+  #    Asserted as exactly %G? = N, not "not G": a signature that fails verification reports E/B/R,
+  #    which would slip past a denylist while still meaning isolation failed.
+  ( H="$WORK/h1"; mkdir -p "$H"; cd "$H" || exit 1
     git init -q . 2>/dev/null
-    # control: under the plant alone, signing really is on
-    got=$(git -c commit.gpgsign=true config --get commit.gpgsign 2>/dev/null)
-    [ "$got" = "true" ] || { echo "PLANT_FAILED:$got"; exit 3; }
+    export GIT_CONFIG_PARAMETERS="'commit.gpgsign=true'"
+    [ "$(git config --get commit.gpgsign 2>/dev/null)" = "true" ] || { echo PLANT_DEAD; exit 3; }
     sf_isolate_git
-    git commit -q --allow-empty -m hostile 2>/dev/null || { echo "COMMIT_FAILED"; exit 4; }
-    printf '%s' "$(git log -1 --format='%G?' 2>/dev/null)" ) > "$WORK/h1.out" 2>&1
-  h1=$?; h1out="$(cat "$WORK/h1.out" 2>/dev/null)"
-  if [ "$h1" = 0 ] && [ "$h1out" = "N" ]; then
-    echo "  ok   [-] planted commit.gpgsign is defeated; fixture commit is unsigned (%G? = N)"; PASS=$((PASS+1))
-  else echo "  FAIL git isolation: signing survived or commit broke (rc=$h1 out='$h1out')"; FAIL=$((FAIL+1)); fi
+    git commit -q --allow-empty -m one 2>/dev/null || { echo COMMIT_DEAD; exit 4; }
+    git log -1 --format='%G?' 2>/dev/null | tail -1 ) > "$WORK/h1.out" 2>/dev/null
+  h1=$?; h1v="$(tail -1 "$WORK/h1.out" 2>/dev/null)"
+  [ "$h1" = 0 ] && [ "$h1v" = "N" ] \
+    && { echo "  ok   [-] a planted ambient commit.gpgsign is defeated (%G? = N)"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL git isolation: planted signing survived (rc=$h1 out='$h1v')"; FAIL=$((FAIL+1)); }
 
-  # 2. GIT_CONFIG_PARAMETERS specifically — the override that defeats GIT_CONFIG_COUNT when the
-  #    clearing is skipped. This is what fails if someone deletes the `unset` loop but keeps the
-  #    exports, which looks harmless and is not.
+  # 2. GIT_CONFIG_PARAMETERS specifically: it OVERRIDES GIT_CONFIG_COUNT, so if the unset loop is
+  #    deleted while the exports stay, the controlled values are silently ignored. The control
+  #    proves the override is live before isolation runs.
   ( cd "$WORK" || exit 1
+    export GIT_CONFIG_PARAMETERS="'commit.gpgsign=true'"
+    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=false
+    [ "$(git config --get commit.gpgsign 2>/dev/null)" = "true" ] || { echo PLANT_DEAD; exit 3; }
     sf_isolate_git
-    [ -z "${GIT_CONFIG_PARAMETERS:-}" ] || { echo "STILL_SET"; exit 3; }
-    printf '%s' "$(git config --get commit.gpgsign 2>/dev/null)" ) > "$WORK/h2.out" 2>&1
-  h2=$?; h2out="$(cat "$WORK/h2.out" 2>/dev/null)"
-  if [ "$h2" = 0 ] && [ "$h2out" = "false" ]; then
-    echo "  ok   [-] GIT_CONFIG_PARAMETERS is cleared before the controlled values are set"; PASS=$((PASS+1))
-  else echo "  FAIL git isolation: GIT_CONFIG_PARAMETERS not neutralised (rc=$h2 out='$h2out')"; FAIL=$((FAIL+1)); fi
+    [ -z "${GIT_CONFIG_PARAMETERS:-}" ] || { echo STILL_SET; exit 4; }
+    git config --get commit.gpgsign 2>/dev/null | tail -1 ) > "$WORK/h2.out" 2>/dev/null
+  h2=$?; h2v="$(tail -1 "$WORK/h2.out" 2>/dev/null)"
+  [ "$h2" = 0 ] && [ "$h2v" = "false" ] \
+    && { echo "  ok   [-] GIT_CONFIG_PARAMETERS beats GIT_CONFIG_COUNT, and is cleared first"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL git isolation: GIT_CONFIG_PARAMETERS override not neutralised (rc=$h2 out='$h2v')"; FAIL=$((FAIL+1)); }
 
-  # 3. tag.gpgsign — no commit-level effect in this suite, which is exactly why it would rot
-  #    unnoticed. A config assertion is enough and makes a typo or a deletion visible.
-  ( cd "$WORK" || exit 1; sf_isolate_git; printf '%s' "$(git config --get tag.gpgsign 2>/dev/null)" ) > "$WORK/h3.out" 2>&1
-  [ "$(cat "$WORK/h3.out" 2>/dev/null)" = "false" ] \
+  # 3. A planted core.hooksPath must not reach fixture commits. Without this, deleting
+  #    GIT_CONFIG_KEY_2 would go unnoticed — the same rot the tag.gpgsign check exists to prevent.
+  ( H="$WORK/h3"; HK="$WORK/h3hooks"; mkdir -p "$H" "$HK"; cd "$H" || exit 1
+    printf '#!/bin/sh\nexit 1\n' > "$HK/pre-commit"; chmod +x "$HK/pre-commit"
+    git init -q . 2>/dev/null
+    export GIT_CONFIG_PARAMETERS="'core.hooksPath=$HK'"
+    git commit -q --allow-empty -m blocked 2>/dev/null && { echo PLANT_DEAD; exit 3; }
+    sf_isolate_git
+    git commit -q --allow-empty -m allowed 2>/dev/null || { echo STILL_BLOCKED; exit 4; }
+    echo OK ) > "$WORK/h3.out" 2>/dev/null
+  h3=$?
+  [ "$h3" = 0 ] \
+    && { echo "  ok   [-] a planted core.hooksPath cannot block a fixture commit"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL git isolation: hostile hooksPath (rc=$h3 out='$(tail -1 "$WORK/h3.out" 2>/dev/null)')"; FAIL=$((FAIL+1)); }
+
+  # 4. tag.gpgsign has no commit-level effect in this suite, which is exactly why it would rot
+  #    unnoticed. A config assertion is the right weight for it.
+  ( cd "$WORK" || exit 1; sf_isolate_git; git config --get tag.gpgsign 2>/dev/null | tail -1 ) > "$WORK/h4.out" 2>/dev/null
+  [ "$(tail -1 "$WORK/h4.out" 2>/dev/null)" = "false" ] \
     && { echo "  ok   [-] tag.gpgsign is forced off too"; PASS=$((PASS+1)); } \
-    || { echo "  FAIL tag.gpgsign not forced off ('$(cat "$WORK/h3.out" 2>/dev/null)')"; FAIL=$((FAIL+1)); }
+    || { echo "  FAIL tag.gpgsign not forced off"; FAIL=$((FAIL+1)); }
 
-  # 4. A planted GIT_DIR must not capture the fixture's commits. This is the failure that corrupted
-  #    a repository this morning: the variable outranks the `cd`, so without the clearing the commit
-  #    lands in the decoy and the fixture stays empty. The control proves the decoy really would
-  #    have captured it.
-  ( DECOY="$WORK/decoy"; FIX="$WORK/fixture4"; rm -rf "$DECOY" "$FIX"; mkdir -p "$DECOY" "$FIX"
+  # 5. A planted GIT_DIR must not capture a fixture's commits — the failure that corrupted a real
+  #    repository. The control proves the decoy really would have taken it.
+  ( DECOY="$WORK/decoy"; FIX="$WORK/fix5"; rm -rf "$DECOY" "$FIX"; mkdir -p "$DECOY" "$FIX"
     git init -q "$DECOY" 2>/dev/null; git init -q "$FIX" 2>/dev/null
     before=$(git -C "$DECOY" rev-list --all --count 2>/dev/null || echo 0)
-    # control: with GIT_DIR planted, a commit made from inside FIX lands in the DECOY
-    ( cd "$FIX" && GIT_DIR="$DECOY/.git" GIT_WORK_TREE="$DECOY" \
-        git commit -q --allow-empty -m captured 2>/dev/null )
+    ( cd "$FIX" && GIT_DIR="$DECOY/.git" GIT_WORK_TREE="$DECOY" git commit -q --allow-empty -m captured 2>/dev/null )
     mid=$(git -C "$DECOY" rev-list --all --count 2>/dev/null || echo 0)
-    [ "$mid" -gt "$before" ] || { echo "CONTROL_FAILED:$before->$mid"; exit 3; }
-    # now the same thing with the isolation applied
+    [ "$mid" -gt "$before" ] || { echo PLANT_DEAD; exit 3; }
     ( cd "$FIX" && export GIT_DIR="$DECOY/.git" GIT_WORK_TREE="$DECOY" \
       && sf_isolate_git && git commit -q --allow-empty -m isolated 2>/dev/null )
     after=$(git -C "$DECOY" rev-list --all --count 2>/dev/null || echo 0)
     fixn=$(git -C "$FIX" rev-list --all --count 2>/dev/null || echo 0)
-    printf '%s %s %s' "$mid" "$after" "$fixn" ) > "$WORK/h4.out" 2>&1
-  h4=$?; read -r m4 a4 f4 <<< "$(cat "$WORK/h4.out" 2>/dev/null)"
-  if [ "$h4" = 0 ] && [ "${a4:-x}" = "${m4:-y}" ] && [ "${f4:-0}" -ge 1 ]; then
-    echo "  ok   [-] a planted GIT_DIR cannot capture a fixture's commit"; PASS=$((PASS+1))
-  else echo "  FAIL git isolation: GIT_DIR capture (rc=$h4 decoy $m4->$a4, fixture=$f4)"; FAIL=$((FAIL+1)); fi
+    [ "$after" = "$mid" ] && [ "$fixn" -ge 1 ] && echo OK || echo "LEAKED:$mid->$after fixture=$fixn" ) > "$WORK/h5.out" 2>/dev/null
+  h5=$?
+  [ "$h5" = 0 ] && [ "$(tail -1 "$WORK/h5.out" 2>/dev/null)" = "OK" ] \
+    && { echo "  ok   [-] a planted GIT_DIR cannot capture a fixture's commit"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL git isolation: GIT_DIR capture (rc=$h5 out='$(tail -1 "$WORK/h5.out" 2>/dev/null)')"; FAIL=$((FAIL+1)); }
 
 else
-  echo "  skip [-] git isolation hostile tests: this git has no GIT_CONFIG_COUNT (needs 2.31+)"
+  # Counted as passes, not silently dropped: the exact-total gate below would otherwise turn an
+  # honest skip into "a test disappeared" on any git without GIT_CONFIG_COUNT (pre-2.31). Same shape
+  # as the pgrep skip further up.
+  echo "  ok   [-] git isolation hostile tests skipped (this git has no GIT_CONFIG_COUNT, needs 2.31+)"
+  PASS=$((PASS+5))
 fi
 
 echo "-------------------------------------------"
@@ -633,7 +651,10 @@ echo "PASS=$PASS FAIL=$FAIL"
 # The exit gate used to be FAIL=0 alone, which cannot see a test that silently stopped running.
 # EXPECTED is hardcoded and must be updated deliberately when tests are added — that edit is the
 # review surface for "did a test disappear?".
-EXPECTED="${SF_EXPECTED_PASS:-108}"
+# 104 before this change, plus the 5 hostile isolation checks above (which also count as 5 when
+# they skip). Update this deliberately when adding a test — that edit is the review surface for
+# "did a test quietly disappear?".
+EXPECTED="${SF_EXPECTED_PASS:-109}"
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
