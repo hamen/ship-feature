@@ -24,7 +24,12 @@ jobs:
           shopt -s nullglob   # so an empty glob doesn't become a literal '*.sh' and fail the job
           for f in bin/ship-feature install.sh scripts/*.sh test/*.sh; do bash -n "$f"; done
       - name: tests
-        run: bash test/test-ship-feature.sh
+        # The suite isolates its fixtures from the ambient git environment with GIT_CONFIG_COUNT,
+        # which needs git 2.31+. It refuses to run on anything older rather than half-applying the
+        # isolation and reporting green; both runner images are well past that.
+        run: |
+          git --version
+          bash test/test-ship-feature.sh
       - name: generic leak scan (emails / home paths)
         run: bash scripts/scan-generic.sh
 

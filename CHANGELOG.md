@@ -100,6 +100,36 @@ All notable changes to **ship-feature** are documented here. This project follow
 - **The `--mode=ask` assertion now greps cursor's own line**, like the `claude` check above it,
   instead of the whole panel output where another reviewer echoing the plan could satisfy it.
 
+### Fixed
+
+- **The test suite inherited the ambient git environment**, so its result depended on how the machine
+  running it happened to be configured — and, from a git hook, it wrote into the repository it was
+  launched from.
+  - **Signing.** With `commit.gpgsign = true` and an agent-backed signer (1Password's `op-ssh-sign`),
+    every fixture commit really was signed — measured, `%G?` came back `G`. With the agent locked the
+    signer returns nothing and the commits fail or block, producing failures unrelated to the code.
+    The suite's green was conditional on 1Password being unlocked.
+  - **Repo-local environment.** git exports `GIT_DIR` (and friends) to its hooks, and those outrank
+    the working directory: with `GIT_DIR` set, a fixture's `cd "$repo" && git init && git commit`
+    commits to the **host** repo and leaves the fixture empty. The sibling `pr-review-relay` suite did
+    exactly that from its `pre-push` gate — junk commits on the branch being pushed, the branch
+    renamed, `HEAD` moved, `user.name` rewritten in the real repository.
+  - Isolation is one function, `sf_isolate_git`, applied at suite start and inside every hostile
+    subprocess. The variable list comes from `git rev-parse --local-env-vars` — git's own answer, 15
+    entries, and it cannot go stale; a hand-written version missed 7 of them. Ordering is
+    load-bearing: `GIT_CONFIG_COUNT` is itself on that list, and `GIT_CONFIG_PARAMETERS` (set whenever
+    anything up the process tree ran `git -c …`) **overrides** it, so the clearing must come first.
+  - Also neutralised: `core.hooksPath`, `core.excludesFile` (a global `*.dat` ignore rule silently
+    breaks the binary-scan fixture), `core.attributesFile`, `core.fsmonitor` and `color.ui`.
+  - **Not** `GIT_CONFIG_GLOBAL=/dev/null`: it discards the whole global config including
+    `safe.directory`. **Not** `git config` inside fixtures: tried in `pr-review-relay` and worse than
+    the bug, since a fixture whose `git init` fails quietly writes into the host repo's config.
+  - git **2.31+** is now required (for `GIT_CONFIG_COUNT`) and the suite refuses to run without it,
+    rather than half-applying the isolation while reporting green.
+  - Nine checks cover it, each planting the hostility and proving the plant is live before asserting
+    isolation won. The exit gate asserts an exact `PASS` total, so a test that stops running is
+    visible instead of silently absent.
+
 ## [0.2.0] — 2026-07-22
 
 ### Added
