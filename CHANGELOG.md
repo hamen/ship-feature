@@ -58,13 +58,24 @@ All notable changes to **ship-feature** are documented here. This project follow
     positions, where the human accepts the downgrade or rejects it and sends the PR back. Still
     **two** gates; what changed is what Gate 2 receives.
 
-- **The adapters are now tested against `WORKFLOW.md` instead of trusted to match it.** Editing
+- **The documents are now tested against each other instead of trusted to match.** Editing
   `WORKFLOW.md` was never the propagation: each adapter restates the rules in its own words, and
   `~/.codex/AGENTS.md` receives a **copy** of its block rather than a symlink. All three had been
   left on the old "iterate while any Blocker/Should-fix remains" long after the rule moved on, and
-  nothing would ever have said so. Nine clauses are now asserted per adapter, whitespace-normalised
-  so the check is about the rules and not about line wrapping. Reverting one adapter turns the suite
-  red nine times.
+  nothing would ever have said so.
+
+  **15 clauses** are asserted across `WORKFLOW.md` **and** all three adapters — both directions, since
+  `WORKFLOW.md` reverting while the adapters hold leaves agents on mixed rules just as effectively.
+  Plus **3 clauses on `bin/ship-feature`'s exit-`0` message**, because what the tool prints on every
+  run out-ranks a document nobody re-reads. Reverting any one of those five files turns the suite red
+  — 15 times for a document, 3 for the tool.
+
+  Matching is whitespace-normalised and phrased as multi-word anchors, so the check is about the rules
+  rather than about line wrapping or exact wording. Three earlier versions of this test were quietly
+  useless and each was caught by a reviewer: single-token greps that survive the rule being *reversed*;
+  a tool check that grepped the whole file and so matched the explanatory comment instead of the
+  message; and the `WORKFLOW.md` entry appended *after* the clause calls, where it checked nothing at
+  all.
 
   **After merging, re-run `install.sh`** — the symlinked targets (WORKFLOW.md, the Cursor rule, the
   skill) follow the local checkout once it is fast-forwarded, but the Codex block is a copy and does

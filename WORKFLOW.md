@@ -98,10 +98,16 @@ conformance check, the stale count, the rule the implementation quietly skipped.
 `pr-review-relay` #23: same number of findings, different kind, and the first review to open with
 "the PR matches the plan" and a conformance checklist.
 
-**The plan file is the source, and it is immutable once approved.** The PR body is generated from it
+**The plan file is the source, and it is immutable once approved.** Write and revise it freely before
+Gate 1 — that is what step 1 and step 2 are for — and not after. The PR body is generated from it
 (`gh pr edit --body-file <plan.md>`), never hand-edited, so the two cannot drift. When later rounds
 need dispositions (below), build a **derived** per-round file — the plan verbatim, plus a
 Dispositions section — and point `--context-file` at that. Never hand-edit either one.
+
+**Do not re-publish the derived file to the PR body.** `gh pr edit --body-file` runs for the plan and
+only the plan; a Dispositions section that grows every round would bury the plan under the argument
+about the plan. Dispositions belong in the round's prompt, where the reviewer reads them, and in the
+PR thread, where the human reads them at Gate 2.
 
 **Read the exit code** (`ship-feature relay` preserves it):
 - `0` — every dispatched reviewer ran and posted **against a stable SHA**. This does **not** mean the

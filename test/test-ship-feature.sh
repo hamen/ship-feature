@@ -772,7 +772,12 @@ h5=$?
 # deliberately worded differently, so a whole-sentence match would either fail on wording or pass on a
 # partial statement. One grep per clause per file, so a missing one names itself.
 echo "adapter consistency:"
-SF_ADAPTERS="adapters/codex/AGENTS.snippet.md adapters/cursor/ship-feature.md adapters/skill/SKILL.md"
+# WORKFLOW.md is in this list, checked against the SAME clauses. The stated failure mode is adapters
+# drifting from the canonical document, but the inverse — WORKFLOW.md reverting while the adapters
+# hold — leaves agents on mixed rules just as effectively, and a suite watching one direction says
+# nothing about the other. (It was first appended AFTER the clause calls, where it did nothing at
+# all: reverting WORKFLOW.md produced zero failures. Order matters; the list must exist first.)
+SF_ADAPTERS="adapters/codex/AGENTS.snippet.md adapters/cursor/ship-feature.md adapters/skill/SKILL.md WORKFLOW.md"
 # Whitespace is NORMALISED before matching. Without it this test is really a test of line wrapping:
 # the first run of it failed on "the plan file is / the source" and "Still two / gates, never three",
 # both correct sentences that happened to break across a line. That would have taught the next person
@@ -796,25 +801,34 @@ sf_clause "the plan file is the source of the PR body" 'plan file is the source'
 sf_clause "iterate ONLY for a Blocker or qualifying"  'iterate only for a .{0,20}blocker.{0,60}qualifying'
 sf_clause "narrow panel = stake + downgraded"         'narrow.{0,200}(stake|open finding).{0,120}downgraded'
 sf_clause "the closing round is the full quorum"      'closing.{0,120}full quorum|full quorum again'
-sf_clause "a clean round 1 IS the closing round"      'round 1 was already clean'
-sf_clause "exit 0 = DISPATCHED, and benched still exits 0" 'dispatched reviewer ran.{0,240}benched'
+sf_clause "a clean round 1 IS the closing round"      'round 1 was already clean|clean initial round is the closing round'
+sf_clause "exit 0 = DISPATCHED, and benched still exits 0" '(dispatched reviewer ran|supposed to dispatch).{0,400}benched'
 sf_clause "non-qualifying findings are left unfixed"  'non-qualifying findings are recorded and left unfixed'
-sf_clause "post dispositions BEFORE re-running"       'post dispositions before re-running'
-sf_clause "keep the relay marker out of that comment" 'automated cross-review.{0,60}(out of|in) that comment|marker text.{0,120}automated cross-review'
-sf_clause "disputes go to the merge gate, not a third gate" 'two gates, never three'
+sf_clause "post dispositions BEFORE re-running"       'post (the )?dispositions before re-running'
+sf_clause "keep the relay marker out of that comment" '(do .{0,4}not.{0,4} put|keep|must not contain).{0,80}marker text.{0,180}delet'
+sf_clause "disputes are routed to Gate 2 with both positions" 'disput.{0,80}gate 2.{0,60}both positions|disput.{0,80}both positions'
+sf_clause "and that is not a third gate"                     'two.{0,12}gates, (never|not) three'
+sf_clause "the plan is immutable once approved"              'immutable once approved'
+sf_clause "the initial quorum excludes the author"           'except the author'
+sf_clause "the author classifies findings in writing"        'author classifies( each finding)? in writing'
 
 # And the TOOL, not only the documents. `bin/ship-feature` prints the loop rule to the operator on
 # every relay run, which out-ranks any document nobody re-reads — so a revert of that one string must
 # turn the suite red too. It was not covered until a reviewer pointed out that it silently stays green.
+#
+# Matched against the `echo` LINE ONLY, not the whole file: the explanatory comment above that `case`
+# arm also contains the words, so a whole-file grep stays green when the operator-facing string is
+# reverted — the test would then be asserting my own comment, which is the greenwash this whole
+# section exists to remove. A reviewer caught it; grep the message, not the prose about it.
 sf_tool_clause() {  # sf_tool_clause <label> <extended-regex>
   local label="$1" re="$2"
-  tr '\n' ' ' < "$CLI" | tr -s ' ' | grep -Eqi -- "$re" \
-    && { echo "  ok   [-] bin/ship-feature states: $label"; PASS=$((PASS+1)); } \
-    || { echo "  FAIL adapter consistency: '$label' missing from bin/ship-feature"; FAIL=$((FAIL+1)); }
+  grep -E '^[[:space:]]*0\)[[:space:]]*echo' "$CLI" | grep -Eqi -- "$re" \
+    && { echo "  ok   [-] bin/ship-feature's exit-0 message states: $label"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL adapter consistency: '$label' missing from bin/ship-feature's exit-0 message"; FAIL=$((FAIL+1)); }
 }
-sf_tool_clause "exit 0 means every DISPATCHED reviewer ran" 'every dispatched reviewer ran'
-sf_tool_clause "a benched seat must be checked for"         'benched'
-sf_tool_clause "resolve qualifying Should-fix, not all"     'qualifying should-fix'
+sf_tool_clause "every DISPATCHED reviewer ran"          'every dispatched reviewer ran'
+sf_tool_clause "check the startup lines for a benched seat" 'startup lines for a benched seat'
+sf_tool_clause "resolve qualifying Should-fix, not all" 'qualifying should-fix'
 
 echo "-------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"
@@ -824,7 +838,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=128
+EXPECTED=132
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
