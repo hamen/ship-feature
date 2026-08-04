@@ -20,9 +20,12 @@ All notable changes to **ship-feature** are documented here. This project follow
   adapter — not just `WORKFLOW.md`.
 
   **1. Always pass the plan** (`--context-file <plan.md>`). The flag already existed in
-  `pr-review-relay` and nothing used it: eight cross-review rounds ran across four PRs without a
-  single reviewer seeing the intent it was meant to verify against. A reviewer with only the diff can
-  find bugs; it cannot find *"this is not what we agreed to build"*. Measured on `pr-review-relay`
+  `pr-review-relay` and nothing used it: **four PRs shipped in one day without a single reviewer
+  seeing the intent it was meant to verify against**, and on one of them the old loop rule ran
+  **eight full-quorum rounds** of which the last five found no Blocker at all. Two separate facts —
+  they were previously written as one sentence ("eight rounds across four PRs"), which is true of
+  neither. A reviewer with only the diff can find bugs; it cannot find *"this is not what we agreed
+  to build"*. Measured on `pr-review-relay`
   #23 — same number of findings, different **kind**: the first review to open with "the PR matches
   the plan" and a conformance checklist, a changelog count that had drifted from the suite it
   described, and a rule the implementation had quietly skipped.
@@ -64,11 +67,11 @@ All notable changes to **ship-feature** are documented here. This project follow
   left on the old "iterate while any Blocker/Should-fix remains" long after the rule moved on, and
   nothing would ever have said so.
 
-  **15 clauses** are asserted across `WORKFLOW.md` **and** all three adapters — both directions, since
+  **18 clauses** are asserted across `WORKFLOW.md` **and** all three adapters — both directions, since
   `WORKFLOW.md` reverting while the adapters hold leaves agents on mixed rules just as effectively.
   Plus **3 clauses on `bin/ship-feature`'s exit-`0` message**, because what the tool prints on every
   run out-ranks a document nobody re-reads. Reverting any one of those five files turns the suite red
-  — 15 times for a document, 3 for the tool.
+  — 18 times for a document, 3 for the tool.
 
   Matching is whitespace-normalised and phrased as multi-word anchors, so the check is about the rules
   rather than about line wrapping or exact wording. Three earlier versions of this test were quietly

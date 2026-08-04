@@ -144,7 +144,8 @@ would merge a SHA that no full panel ever saw, which is the thing the closing ro
   dropped deliberately and still exits `0`. A benched seat in an **initial or closing** round is a
   decision for the human **before the round**, taken when the relay announces the bench at startup:
   wait for the quota to reset, or authorise the reduced panel explicitly, recorded in the PR thread
-  and repeated at Gate 2.
+  and repeated at Gate 2. **Narrow rounds are unaffected**: a benched seat there simply means the
+  finding it raised stays open until that seat comes back — nothing to decide, nothing to wait for.
 - **Iterate only for a Blocker, or a qualifying Should-fix** — one that is a material problem of
   **correctness, safety, deployability, or verification**. That covers documentation that
   misinstructs, release and deploy configuration, packaging, migrations, portability and API

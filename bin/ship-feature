@@ -159,8 +159,9 @@ cmd_relay() {
     # NOT "every reviewer ran": a benched (out-of-quota) reviewer is dropped deliberately and the run
     # still exits 0, so this message must not claim a full panel. And the loop rule is no longer
     # "resolve every Should-fix" — only qualifying ones open a round. The tool telling the operator
-    # the old rule out-ranks any document, so it says the same thing WORKFLOW.md does.
-    0) echo "  → relay: every DISPATCHED reviewer ran (exit 0) — check the startup lines for a benched seat. NOT approval: READ the verdicts, resolve every Blocker and every qualifying Should-fix (correctness / safety / deployability / verification)." >&2 ;;
+    # the old rule out-ranks any document, so it says the same thing WORKFLOW.md does — including
+    # UNDISPUTED, without which it would push agents into re-rounds on findings the rule sends to Gate 2.
+    0) echo "  → relay: every DISPATCHED reviewer ran (exit 0) — check the startup lines for a benched seat. NOT approval: READ the verdicts, resolve every Blocker and every UNDISPUTED qualifying Should-fix (correctness / safety / deployability / verification) — a disputed classification does not block the loop, it goes to Gate 2." >&2 ;;
     3) echo "  → relay: round not clean (exit 3) — do not trust these reviews, re-run." >&2 ;;
     4) echo "  → relay: round cap reached (exit 4) — stop and escalate to a human." >&2 ;;
   esac

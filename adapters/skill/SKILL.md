@@ -39,6 +39,11 @@ The essentials you must honor:
    A benched seat in an initial or closing round is the human's call before the round.
    **Non-qualifying findings are recorded and left unfixed** until a follow-up PR — fixing one creates
    a commit after the reviewed SHA, and then the merged code is not the code anyone reviewed.
+   If the **closing** round raises a new qualifying finding it becomes the INITIAL round of another
+   cycle — full, narrow, then a full quorum again on the new candidate; not fix-narrow-stop, which
+   merges a SHA no full panel ever saw. **Never `gh pr edit` the derived context file** — the body is
+   generated from the plan and only the plan. **Exit `4` is the round cap**: stop and escalate to the
+   human; never a reason to merge and never a reason to pass `--reset`.
    **The author classifies each finding in writing**, naming it and the reason.
    **Post dispositions before re-running** — the relay deletes each reviewer's previous comment, so an
    unposted finding and its classification are lost; keep the relay's marker text
