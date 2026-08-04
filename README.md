@@ -27,6 +27,17 @@ each driver agent (Claude, Codex, Cursor) gets a thin adapter that points at it,
 
 ## 🆕 What's new
 
+**v0.3.0** — **the review panel is given the plan, and stops iterating on findings that change
+nothing.** Reviewers used to see only the diff, so they could find bugs but never *"this is not what
+we agreed to build"* — `--context-file` now carries the plan on every round. And the loop runs in
+three named phases (full panel → narrow fix rounds → a closing full panel on the SHA that merges)
+instead of iterating on every Should-fix, which had produced eight full-quorum rounds on one PR where
+the last five found no Blocker. Both rules live in `WORKFLOW.md`, all three adapters **and** the CLI's
+own message — and a consistency suite now fails if any of those five drift apart, in either direction.
+
+**v0.2.0** — the `grok45high` plan reviewer, model pins that keep every seat on its own vendor's
+model, and a test suite that no longer inherits the ambient git environment.
+
 **v0.1.0** — first release: the canonical `WORKFLOW.md`, a `ship-feature` CLI (`preflight` +
 a transparent `relay` wrapper), thin adapters for Claude / Codex / Cursor, an idempotent `install.sh`,
 and a two-layer privacy guard. Full history in the [CHANGELOG](CHANGELOG.md).
