@@ -35,8 +35,8 @@ instead of iterating on every Should-fix, which had produced eight full-quorum r
 the last five found no Blocker. Both rules live in `WORKFLOW.md`, all three adapters **and** the CLI's
 own message — and a consistency suite now fails if any of those five drift apart, in either direction.
 
-**v0.2.0** — the `grok45high` plan reviewer, model pins that keep every seat on its own vendor's
-model, and a test suite that no longer inherits the ambient git environment.
+**v0.2.0** — **`ship-feature plan-review`**: step 2 as a first-class command, fanning an
+implementation plan out to a panel of agents for a read-only review before any code is written.
 
 **v0.1.0** — first release: the canonical `WORKFLOW.md`, a `ship-feature` CLI (`preflight` +
 a transparent `relay` wrapper), thin adapters for Claude / Codex / Cursor, an idempotent `install.sh`,
