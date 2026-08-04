@@ -787,15 +787,34 @@ sf_clause() {  # sf_clause <label> <extended-regex>
     && { echo "  ok   [-] every adapter states: $label"; PASS=$((PASS+1)); } \
     || { echo "  FAIL adapter consistency: '$label' missing from$miss"; FAIL=$((FAIL+1)); }
 }
-sf_clause "pass the plan with --context-file"        'context-file'
-sf_clause "the plan file is the source, not the copy" 'plan file is the source'
-sf_clause "iterate only on qualifying findings"       'qualifying'
-sf_clause "the narrow panel from round 2"             'narrow'
-sf_clause "the closing full-quorum round"             'closing'
-sf_clause "a benched reviewer still exits 0"          'benched'
-sf_clause "post dispositions before re-running"       'dispositions'
-sf_clause "keep the relay marker out of them"         'automated cross-review'
+# The patterns are MULTI-WORD ANCHORS, not single tokens. The first version of this test grepped for
+# `qualifying`, `narrow`, `benched`, `dispositions` — words that survive having the rule around them
+# deleted or REVERSED, so the test would stay green while the adapter said the opposite. Two reviewers
+# caught it independently. Each pattern below has to match a phrase that only the correct rule makes.
+sf_clause "always pass the plan with --context-file"  'always pass the plan.{0,40}context-file|context-file.{0,80}always pass the plan'
+sf_clause "the plan file is the source of the PR body" 'plan file is the source'
+sf_clause "iterate ONLY for a Blocker or qualifying"  'iterate only for a .{0,20}blocker.{0,60}qualifying'
+sf_clause "narrow panel = stake + downgraded"         'narrow.{0,200}(stake|open finding).{0,120}downgraded'
+sf_clause "the closing round is the full quorum"      'closing.{0,120}full quorum|full quorum again'
+sf_clause "a clean round 1 IS the closing round"      'round 1 was already clean'
+sf_clause "exit 0 = DISPATCHED, and benched still exits 0" 'dispatched reviewer ran.{0,240}benched'
+sf_clause "non-qualifying findings are left unfixed"  'non-qualifying findings are recorded and left unfixed'
+sf_clause "post dispositions BEFORE re-running"       'post dispositions before re-running'
+sf_clause "keep the relay marker out of that comment" 'automated cross-review.{0,60}(out of|in) that comment|marker text.{0,120}automated cross-review'
 sf_clause "disputes go to the merge gate, not a third gate" 'two gates, never three'
+
+# And the TOOL, not only the documents. `bin/ship-feature` prints the loop rule to the operator on
+# every relay run, which out-ranks any document nobody re-reads — so a revert of that one string must
+# turn the suite red too. It was not covered until a reviewer pointed out that it silently stays green.
+sf_tool_clause() {  # sf_tool_clause <label> <extended-regex>
+  local label="$1" re="$2"
+  tr '\n' ' ' < "$CLI" | tr -s ' ' | grep -Eqi -- "$re" \
+    && { echo "  ok   [-] bin/ship-feature states: $label"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL adapter consistency: '$label' missing from bin/ship-feature"; FAIL=$((FAIL+1)); }
+}
+sf_tool_clause "exit 0 means every DISPATCHED reviewer ran" 'every dispatched reviewer ran'
+sf_tool_clause "a benched seat must be checked for"         'benched'
+sf_tool_clause "resolve qualifying Should-fix, not all"     'qualifying should-fix'
 
 echo "-------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"
@@ -805,7 +824,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=123
+EXPECTED=128
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

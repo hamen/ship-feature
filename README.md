@@ -56,8 +56,10 @@ own work. Everything else runs on its own.
 
 **Step 5 in one paragraph.** The reviewers are given the **plan** (`--context-file`), not just the
 diff, so they can say *"this is not what we agreed to build"* and not only *"this line is wrong"*.
-Round 1 is the full panel; the fix rounds are **narrow** — only the reviewers with a stake in an open
-finding; the closing round is the full panel again, on the SHA that will merge. Iterating happens for
+Round 1 is the full panel; the fix rounds are **narrow** — the reviewers with a stake in an open
+finding, plus anyone whose finding you downgraded, so nobody is classified out of their own
+objection; the closing round is the full panel again, on the SHA that will merge, unless round 1 was
+already clean and there was nothing to fix. Iterating happens for
 a **Blocker** or a **qualifying** Should-fix (correctness, safety, deployability, verification), not
 for every remark. Anything the author downgrades is written down, and if the reviewer still disagrees
 it goes to you at the merge gate — which is a change to what that gate *receives*, not a third gate.
@@ -110,8 +112,9 @@ ship-feature skill for any feature/fix.
   `PR_RELAY_AGENT_TIMEOUT`, then 300s. Lets you say "review this plan with codex and kimi3" as one command.
 - `ship-feature relay [args…]` — a **transparent** wrapper over
   [`pr-review-relay`](https://github.com/hamen/pr-review-relay) that preserves its stdout and exact exit
-  code, and reminds you what each code means (`0` = everyone ran, not "clean"; `3` = re-run;
-  `4` = escalate). It injects your configured reviewer quorum when you omit `--reviewers`.
+  code, and reminds you what each code means: `0` = every **dispatched** reviewer ran — not that
+  everyone ran, since a benched (out-of-quota) seat is dropped and still exits `0` — and not "clean";
+  `3` = re-run; `4` = escalate. It injects your configured reviewer quorum when you omit `--reviewers`.
 
 State/resume (`new`/`status`) is intentionally deferred — the CLI stays a thin helper; the agent drives
 the process from `WORKFLOW.md`.

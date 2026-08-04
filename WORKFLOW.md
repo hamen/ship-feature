@@ -119,11 +119,22 @@ PR where the last five found no Blocker. The loop now has **three named phases**
 | phase | panel | purpose |
 |---|---|---|
 | **Initial** — round 1 | full quorum | find everything |
-| **Narrow** — rounds 2…n | only reviewers with a stake in an open finding | verify targeted fixes |
+| **Narrow** — rounds 2…n | reviewers with a stake in an open finding, **plus any whose finding you downgraded** | verify targeted fixes |
 | **Closing** — final round | full quorum, on the SHA that will merge | confirm the merge candidate |
 
-- **A round only counts if it completed** — every configured reviewer **except the author** produced
-  and posted a review. Exit `0` is *not* that statement: a **benched** reviewer (out of quota) is
+**A clean initial round IS the closing round.** If round 1 completes with no Blocker and no qualifying
+Should-fix, you are done — there is nothing to fix, so the SHA the panel reviewed is already the SHA
+that will merge. Do not run a second full quorum to "close" a round that never opened. The closing
+round exists only because *fixing* something creates a SHA nobody reviewed in full.
+
+**If the closing round raises a new qualifying finding, it becomes the initial round of another
+cycle** — fix, narrow, then a full quorum again on the new merge candidate. Not fix-narrow-stop: that
+would merge a SHA that no full panel ever saw, which is the thing the closing round is for.
+
+- **A round only counts if it completed** — every reviewer **the round was supposed to dispatch**
+  produced and posted a review. For an initial or closing round that is every configured reviewer
+  except the author; for a narrow round it is the narrow set, not the whole `SHIP_FEATURE_REVIEWERS`
+  list. Exit `0` is *not* that statement: a **benched** reviewer (out of quota) is
   dropped deliberately and still exits `0`. A benched seat in an **initial or closing** round is a
   decision for the human **before the round**, taken when the relay announces the bench at startup:
   wait for the quota to reset, or authorise the reduced panel explicitly, recorded in the PR thread

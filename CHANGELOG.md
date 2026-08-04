@@ -25,8 +25,15 @@ All notable changes to **ship-feature** are documented here. This project follow
   find bugs; it cannot find *"this is not what we agreed to build"*. Measured on `pr-review-relay`
   #23 — same number of findings, different **kind**: the first review to open with "the PR matches
   the plan" and a conformance checklist, a changelog count that had drifted from the suite it
-  described, and a rule the implementation had quietly skipped. It also cost 69 % fewer prompt bytes
-  and 10 % more wall clock. The plan file is the **source** the PR body is generated from; later
+  described, and a rule the implementation had quietly skipped.
+
+  **The byte saving in that experiment was not this.** The B arm also omitted the inline diff
+  (`LINK_DIFF_FALLBACK_MAX_BYTES=0`), and that is where the −69 % came from; passing the plan *adds*
+  bytes. Only the **kind of finding** is attributable to the plan. Omitting the diff was deferred —
+  it needs a changed-file list, because a clean checkout has no deleted file to read — so conflating
+  the two here would re-teach exactly the mistake that deferral exists to correct.
+
+  The plan file is the **source** the PR body is generated from; later
   rounds point `--context-file` at a *derived* copy (plan + dispositions), and neither is hand-edited.
 
   **2. Three named phases, replacing "iterate while any Should-fix exists"** — the rule that produced

@@ -30,9 +30,13 @@ The essentials you must honor:
    Iterate only for a **Blocker** or a **qualifying** Should-fix — a material problem of correctness,
    safety, deployability, or verification. Round 1 is the full quorum; rounds 2+ are **narrow** (only
    reviewers with a stake in an open finding, plus any whose finding you downgraded); the **closing**
-   round is the full quorum again, on the SHA that will merge. Branch on the exit code — `0` means
-   everyone ran, **not** that reviews are clean, and a **benched** (out-of-quota) reviewer still exits
-   `0`, so a benched seat in an initial or closing round is the human's call before the round.
+   round is the full quorum again, on the SHA that will merge — **unless round 1 was already clean**,
+   in which case it IS the closing round and a second full panel is waste. Branch on the exit code —
+   `0` means every DISPATCHED reviewer ran, **not** that everyone ran and not that reviews are clean:
+   a **benched** (out-of-quota) reviewer is dropped and still exits `0`, so check the startup lines.
+   A benched seat in an initial or closing round is the human's call before the round.
+   **Non-qualifying findings are recorded and left unfixed** until a follow-up PR — fixing one creates
+   a commit after the reviewed SHA, and then the merged code is not the code anyone reviewed.
    **Post dispositions before re-running** — the relay deletes each reviewer's previous comment, so an
    unposted finding and its classification are lost; keep the relay's marker text
    (`<Name> review (automated cross-review)`) out of that comment or it is deleted too.
