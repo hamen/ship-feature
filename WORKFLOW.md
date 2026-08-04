@@ -87,8 +87,27 @@ head.
 
 ```
 # Name the reviewers YOU actually run — adjust the list to the agents you have installed.
-ship-feature relay --author <self> --reviewers <your reviewer set>   # e.g. claude,codex,cursor
+# ALWAYS pass the plan: reviewers that cannot see the intent can only find bugs.
+ship-feature relay --author <self> --reviewers <your reviewer set> --context-file <plan.md>
 ```
+
+**Always pass the plan with `--context-file`.** The plan already exists — §2 wrote it for the plan
+review — and the flag prepends it as a document every reviewer must verify the PR *against*. Without
+it a reviewer can find bugs but cannot find **"this is not what we agreed to build"**: the plan
+conformance check, the stale count, the rule the implementation quietly skipped. Measured on
+`pr-review-relay` #23: same number of findings, different kind, and the first review to open with
+"the PR matches the plan" and a conformance checklist.
+
+**The plan file is the source, and it is immutable once approved.** Write and revise it freely before
+Gate 1 — that is what step 1 and step 2 are for — and not after. The PR body is generated from it
+(`gh pr edit --body-file <plan.md>`), never hand-edited, so the two cannot drift. When later rounds
+need dispositions (below), build a **derived** per-round file — the plan verbatim, plus a
+Dispositions section — and point `--context-file` at that. Never hand-edit either one.
+
+**Do not re-publish the derived file to the PR body.** `gh pr edit --body-file` runs for the plan and
+only the plan; a Dispositions section that grows every round would bury the plan under the argument
+about the plan. Dispositions belong in the round's prompt, where the reviewer reads them, and in the
+PR thread, where the human reads them at Gate 2.
 
 **Read the exit code** (`ship-feature relay` preserves it):
 - `0` — every dispatched reviewer ran and posted **against a stable SHA**. This does **not** mean the
@@ -100,12 +119,57 @@ ship-feature relay --author <self> --reviewers <your reviewer set>   # e.g. clau
 failure rather than a silently thinned panel — a partial pass must not read as consensus. Set it once in
 `~/.config/ship-feature/config` via `SHIP_FEATURE_REVIEWERS` for convenience.
 
-**Loop-termination rule:** the review loop **continues as long as any Blocker or Should-fix exists** —
-finding one means keep iterating (fix, push, re-run). It ends **only** when either:
-- (a) all reviewers agree with **no** Blocker and **no** Should-fix, or
-- (b) only **Nits** remain.
+**Loop-termination rule.** Iterating on *every* Should-fix produced eight full-quorum rounds on one
+PR where the last five found no Blocker. The loop now has **three named phases**:
 
-The round cap is an **escalation** threshold, never permission to merge with open Blockers/Should-fix.
+| phase | panel | purpose |
+|---|---|---|
+| **Initial** — round 1 | full quorum | find everything |
+| **Narrow** — rounds 2…n | reviewers with a stake in an open finding, **plus any whose finding you downgraded** | verify targeted fixes |
+| **Closing** — final round | full quorum, on the SHA that will merge | confirm the merge candidate |
+
+**A clean initial round IS the closing round.** If round 1 completes with no Blocker and no qualifying
+Should-fix, you are done — there is nothing to fix, so the SHA the panel reviewed is already the SHA
+that will merge. Do not run a second full quorum to "close" a round that never opened. The closing
+round exists only because *fixing* something creates a SHA nobody reviewed in full.
+
+**If the closing round raises a new qualifying finding, it becomes the initial round of another
+cycle** — fix, narrow, then a full quorum again on the new merge candidate. Not fix-narrow-stop: that
+would merge a SHA that no full panel ever saw, which is the thing the closing round is for.
+
+- **A round only counts if it completed** — every reviewer **the round was supposed to dispatch**
+  produced and posted a review. For an initial or closing round that is every configured reviewer
+  except the author; for a narrow round it is the narrow set, not the whole `SHIP_FEATURE_REVIEWERS`
+  list. Exit `0` is *not* that statement: a **benched** reviewer (out of quota) is
+  dropped deliberately and still exits `0`. A benched seat in an **initial or closing** round is a
+  decision for the human **before the round**, taken when the relay announces the bench at startup:
+  wait for the quota to reset, or authorise the reduced panel explicitly, recorded in the PR thread
+  and repeated at Gate 2. **Narrow rounds are unaffected**: a benched seat there simply means the
+  finding it raised stays open until that seat comes back — nothing to decide, nothing to wait for.
+- **Iterate only for a Blocker, or a qualifying Should-fix** — one that is a material problem of
+  **correctness, safety, deployability, or verification**. That covers documentation that
+  misinstructs, release and deploy configuration, packaging, migrations, portability and API
+  contracts; it does not cover wording, structure, or coverage of paths the PR does not touch.
+- **The author classifies in writing**, naming the finding and the reason.
+- **The narrow panel is defined by stake, not by size**: every reviewer that raised a qualifying
+  finding, **plus** every reviewer whose finding the author downgraded — otherwise classifying
+  someone out of the panel removes their only way to object. Usually that is fewer seats, which is
+  where the saving is; if everyone has a stake, it is everyone.
+- **A downgraded reviewer must be able to see the downgrade.** Reviewers are told not to read the PR
+  discussion, so dispositions travel in the **derived context file** — each finding, its
+  classification, the reason, and whether it is disputed.
+- **Post the dispositions before re-running.** The relay deletes each reviewer's previous comment
+  before posting the next, so the original finding and its classification are gone from the PR by the
+  time the human reaches Gate 2 unless they were written down separately. The disposition comment
+  **must not contain the relay's own marker text** (`<Name> review (automated cross-review)`), or the
+  next round deletes it too.
+- **Non-qualifying findings are recorded and left unfixed** until a follow-up PR. Fixing one creates
+  a commit after the reviewed SHA, and then the merged code is not the code anyone reviewed.
+- **Stop** when the closing round returns no Blocker and no undisputed qualifying Should-fix.
+  Documented **disputes do not block the stop** — they travel to Gate 2 as open items.
+
+The round cap (exit `4`) is an **escalation** threshold: stop and hand the open findings to the
+human. It is never permission to merge, and never grounds for `--reset`.
 
 **Exact-SHA rule:** capture the PR `headRefOid`; require local `HEAD` to equal it before testing; run the
 tests; then re-check that the PR head has not moved. CI must check out the PR **head** SHA
@@ -113,8 +177,17 @@ tests; then re-check that the PR head has not moved. CI must check out the PR **
 code.
 
 ### 6. 🚦 Gate 2 — human merges
-Summarize the state ("green on the PR head, no open Blockers/Should-fix") and **stop**. The **human**
-merges. The agent never self-merges — merge authority stays with the human.
+Summarize the state and **stop**. The **human** merges. The agent never self-merges — merge authority
+stays with the human.
+
+The summary must state: green on the PR head; **no open Blockers and no open qualifying Should-fix**;
+every remaining finding recorded with its classification; **every disputed classification listed with
+both positions**; and any reduced panel that was authorised. The human rules on the disputes as part
+of deciding to merge — accept the downgrade and merge, or reject it, which sends the PR back into the
+narrow/closing cycle with that finding reclassified as qualifying.
+
+This is still **two** gates, not three: a dispute does not create a new stopping point, it changes
+what Gate 2 receives.
 
 ### 7. Verify on the merge commit
 After the merge, re-run the tests on the merge commit. Red = stop and fix.

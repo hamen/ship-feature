@@ -15,6 +15,75 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Changed
 
+- **The cross-review panel is given the plan, and the loop stops iterating on findings that do not
+  change anything.** Two rules, both measured rather than guessed, and both written into **every**
+  adapter — not just `WORKFLOW.md`.
+
+  **1. Always pass the plan** (`--context-file <plan.md>`). The flag already existed in
+  `pr-review-relay` and nothing used it: **four PRs shipped in one day without a single reviewer
+  seeing the intent it was meant to verify against**, and on one of them the old loop rule ran
+  **eight full-quorum rounds** of which the last five found no Blocker at all. Two separate facts —
+  they were previously written as one sentence ("eight rounds across four PRs"), which is true of
+  neither. A reviewer with only the diff can find bugs; it cannot find *"this is not what we agreed
+  to build"*. Measured on `pr-review-relay`
+  #23 — same number of findings, different **kind**: the first review to open with "the PR matches
+  the plan" and a conformance checklist, a changelog count that had drifted from the suite it
+  described, and a rule the implementation had quietly skipped.
+
+  **The byte saving in that experiment was not this.** The B arm also omitted the inline diff
+  (`LINK_DIFF_FALLBACK_MAX_BYTES=0`), and that is where the −69 % came from; passing the plan *adds*
+  bytes. Only the **kind of finding** is attributable to the plan. Omitting the diff was deferred —
+  it needs a changed-file list, because a clean checkout has no deleted file to read — so conflating
+  the two here would re-teach exactly the mistake that deferral exists to correct.
+
+  The plan file is the **source** the PR body is generated from; later
+  rounds point `--context-file` at a *derived* copy (plan + dispositions), and neither is hand-edited.
+
+  **2. Three named phases, replacing "iterate while any Should-fix exists"** — the rule that produced
+  those eight rounds, of which the last five found no Blocker at all. **Initial** round: full quorum.
+  **Narrow** rounds: only reviewers with a stake in an open finding, plus any reviewer whose finding
+  the author downgraded — otherwise classifying someone out of the panel removes their only way to
+  object. **Closing** round: full quorum again, on the SHA that will merge, so the exact-SHA
+  guarantee is not quietly traded away for the saving. Iterating happens for a Blocker or a
+  **qualifying** Should-fix — a material problem of correctness, safety, deployability or
+  verification, which deliberately covers documentation that misinstructs and release configuration,
+  not only runtime behaviour.
+
+  Three things that make it hold rather than merely read well:
+  - **A round only counts if it completed** — and exit `0` no longer says that, because a **benched**
+    (out-of-quota) reviewer is dropped deliberately and still exits `0`. A benched seat in an initial
+    or closing round is the human's call *before* the round, not a silent thinning.
+  - **Dispositions are posted before re-running.** The relay deletes each reviewer's previous comment
+    before posting the next, so an unrecorded finding and its classification are gone by the time the
+    human reaches the merge gate. The comment must not contain the relay's own marker text, or the
+    next round deletes that too.
+  - **A disputed classification does not block the stop** — it travels to **Gate 2** with both
+    positions, where the human accepts the downgrade or rejects it and sends the PR back. Still
+    **two** gates; what changed is what Gate 2 receives.
+
+- **The documents are now tested against each other instead of trusted to match.** Editing
+  `WORKFLOW.md` was never the propagation: each adapter restates the rules in its own words, and
+  `~/.codex/AGENTS.md` receives a **copy** of its block rather than a symlink. All three had been
+  left on the old "iterate while any Blocker/Should-fix remains" long after the rule moved on, and
+  nothing would ever have said so.
+
+  **18 clauses** are asserted across `WORKFLOW.md` **and** all three adapters — both directions, since
+  `WORKFLOW.md` reverting while the adapters hold leaves agents on mixed rules just as effectively.
+  Plus **3 clauses on `bin/ship-feature`'s exit-`0` message**, because what the tool prints on every
+  run out-ranks a document nobody re-reads. Reverting any one of those five files turns the suite red
+  — 18 times for a document, 3 for the tool.
+
+  Matching is whitespace-normalised and phrased as multi-word anchors, so the check is about the rules
+  rather than about line wrapping or exact wording. Three earlier versions of this test were quietly
+  useless and each was caught by a reviewer: single-token greps that survive the rule being *reversed*;
+  a tool check that grepped the whole file and so matched the explanatory comment instead of the
+  message; and the `WORKFLOW.md` entry appended *after* the clause calls, where it checked nothing at
+  all.
+
+  **After merging, re-run `install.sh`** — the symlinked targets (WORKFLOW.md, the Cursor rule, the
+  skill) follow the local checkout once it is fast-forwarded, but the Codex block is a copy and does
+  not.
+
 - **The `cursor` plan reviewer's pinned model moved from `cursor-grok-4.5-high` to `composer-2.5`.**
   The pin itself landed first (see *Fixed*) with Cursor's Grok build as the default. That was the
   wrong choice: `grok45high` is a supported plan reviewer, so a Cursor-branded Grok put **two
