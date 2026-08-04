@@ -156,7 +156,11 @@ cmd_relay() {
   local rc=$?
   # Workflow-policy reminder only (on stderr, so it never pollutes the forwarded stdout).
   case "$rc" in
-    0) echo "  → relay: every reviewer ran (exit 0). This is NOT approval — READ the verdicts and resolve every Blocker/Should-fix before merging." >&2 ;;
+    # NOT "every reviewer ran": a benched (out-of-quota) reviewer is dropped deliberately and the run
+    # still exits 0, so this message must not claim a full panel. And the loop rule is no longer
+    # "resolve every Should-fix" — only qualifying ones open a round. The tool telling the operator
+    # the old rule out-ranks any document, so it says the same thing WORKFLOW.md does.
+    0) echo "  → relay: every DISPATCHED reviewer ran (exit 0) — check the startup lines for a benched seat. NOT approval: READ the verdicts, resolve every Blocker and every qualifying Should-fix (correctness / safety / deployability / verification)." >&2 ;;
     3) echo "  → relay: round not clean (exit 3) — do not trust these reviews, re-run." >&2 ;;
     4) echo "  → relay: round cap reached (exit 4) — stop and escalate to a human." >&2 ;;
   esac

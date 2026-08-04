@@ -761,6 +761,42 @@ h5=$?
   && { echo "  ok   [-] a planted GIT_DIR cannot capture a fixture's commit"; PASS=$((PASS+1)); } \
   || { echo "  FAIL git isolation: GIT_DIR capture (rc=$h5 out='$(tail -1 "$WORK/h5.out" 2>/dev/null)')"; FAIL=$((FAIL+1)); }
 
+# --- the adapters must state the same rules as WORKFLOW.md ---------------------------------------
+# WORKFLOW.md is NOT the propagation. Each adapter restates the rules in its own words for its own
+# audience, and ~/.codex/AGENTS.md gets a COPY of its block rather than a symlink — so an adapter can
+# be left behind and every agent but one keeps following the old workflow, silently and indefinitely.
+# That is exactly what had happened before this change: all three still said "iterate while any
+# Blocker/Should-fix remains" long after the rule moved on.
+#
+# Asserted CLAUSE BY CLAUSE rather than by matching a sentence out of WORKFLOW.md: the adapters are
+# deliberately worded differently, so a whole-sentence match would either fail on wording or pass on a
+# partial statement. One grep per clause per file, so a missing one names itself.
+echo "adapter consistency:"
+SF_ADAPTERS="adapters/codex/AGENTS.snippet.md adapters/cursor/ship-feature.md adapters/skill/SKILL.md"
+# Whitespace is NORMALISED before matching. Without it this test is really a test of line wrapping:
+# the first run of it failed on "the plan file is / the source" and "Still two / gates, never three",
+# both correct sentences that happened to break across a line. That would have taught the next person
+# to reflow prose to please a grep, which is backwards — the adapters are prose for humans and their
+# wrapping must stay free.
+sf_clause() {  # sf_clause <label> <extended-regex>
+  local label="$1" re="$2" f miss=""
+  for f in $SF_ADAPTERS; do
+    tr '\n' ' ' < "$HERE/../$f" | tr -s ' ' | grep -Eqi -- "$re" || miss="$miss $f"
+  done
+  [ -z "$miss" ] \
+    && { echo "  ok   [-] every adapter states: $label"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL adapter consistency: '$label' missing from$miss"; FAIL=$((FAIL+1)); }
+}
+sf_clause "pass the plan with --context-file"        'context-file'
+sf_clause "the plan file is the source, not the copy" 'plan file is the source'
+sf_clause "iterate only on qualifying findings"       'qualifying'
+sf_clause "the narrow panel from round 2"             'narrow'
+sf_clause "the closing full-quorum round"             'closing'
+sf_clause "a benched reviewer still exits 0"          'benched'
+sf_clause "post dispositions before re-running"       'dispositions'
+sf_clause "keep the relay marker out of them"         'automated cross-review'
+sf_clause "disputes go to the merge gate, not a third gate" 'two gates, never three'
+
 echo "-------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"
 # FAIL is checked FIRST: when a case fails, PASS is naturally short of the total, and reporting that
@@ -769,7 +805,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=114
+EXPECTED=123
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

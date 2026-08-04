@@ -21,12 +21,23 @@ The essentials you must honor:
 2. 🚦 **Stop for the human to approve the plan.** Do not write to the source repository before that.
 3. Implement in a **git worktree** (never the main tree), stage explicit paths, open a **PR**. Run
    `ship-feature preflight` first.
-4. Run the **cross-review**: `ship-feature relay --author <self> --reviewers <your agents>` (name the
-   reviewers you have — the quorum — so a missing one fails rather than thinning the panel; e.g.
-   `claude,codex,cursor`). Branch on its exit code — `0` means everyone ran, **not** that reviews are
-   clean; read the verdicts. Keep iterating while any **Blocker** or **Should-fix** exists; stop only at
-   full agreement or **Nits-only**.
-5. 🚦 **Stop for the human to merge.** Never self-merge.
+4. Run the **cross-review**: `ship-feature relay --author <self> --reviewers <your agents> --context-file <plan.md>`
+   (name the reviewers you have — the quorum — so a missing one fails rather than thinning the panel;
+   e.g. `claude,codex,cursor`). **Always pass the plan** with `--context-file`: a reviewer that cannot
+   see the intent can find bugs but not *"this is not what we agreed to build"*.
+   The **plan file is the source** the PR body is generated from — never hand-edit either; for later
+   rounds point `--context-file` at a derived copy (plan + dispositions).
+   Iterate only for a **Blocker** or a **qualifying** Should-fix — a material problem of correctness,
+   safety, deployability, or verification. Round 1 is the full quorum; rounds 2+ are **narrow** (only
+   reviewers with a stake in an open finding, plus any whose finding you downgraded); the **closing**
+   round is the full quorum again, on the SHA that will merge. Branch on the exit code — `0` means
+   everyone ran, **not** that reviews are clean, and a **benched** (out-of-quota) reviewer still exits
+   `0`, so a benched seat in an initial or closing round is the human's call before the round.
+   **Post dispositions before re-running** — the relay deletes each reviewer's previous comment, so an
+   unposted finding and its classification are lost; keep the relay's marker text
+   (`<Name> review (automated cross-review)`) out of that comment or it is deleted too.
+5. 🚦 **Stop for the human to merge.** Never self-merge. Disputed classifications do not block the
+   stop — they go to this gate with both positions. Still two gates, never three.
 6. **Verify** the tests on the merge commit.
 
 For a trivial change, the human may say `--light` (may skip only the plan review — never the worktree,

@@ -47,12 +47,20 @@ The authoritative version is [`WORKFLOW.md`](WORKFLOW.md). At a glance:
 | 2 | A second agent **reviews the plan** | |
 | 3 | You **approve the plan** | 🚦 **human gate** |
 | 4 | **Implement** in a worktree → open a **PR** | |
-| 5 | **Cross-review + tests** — keep iterating while any Blocker / Should-fix remains | |
+| 5 | **Cross-review + tests** — the panel gets the **plan**, and iterates only for a Blocker or a *qualifying* Should-fix | |
 | 6 | You **merge** | 🚦 **human gate** |
 | 7 | **Verify** on the merge commit | |
 
 The two 🚦 gates are the only places the agent stops and waits for you — and the agent never merges its
 own work. Everything else runs on its own.
+
+**Step 5 in one paragraph.** The reviewers are given the **plan** (`--context-file`), not just the
+diff, so they can say *"this is not what we agreed to build"* and not only *"this line is wrong"*.
+Round 1 is the full panel; the fix rounds are **narrow** — only the reviewers with a stake in an open
+finding; the closing round is the full panel again, on the SHA that will merge. Iterating happens for
+a **Blocker** or a **qualifying** Should-fix (correctness, safety, deployability, verification), not
+for every remark. Anything the author downgrades is written down, and if the reviewer still disagrees
+it goes to you at the merge gate — which is a change to what that gate *receives*, not a third gate.
 
 ## Install
 
