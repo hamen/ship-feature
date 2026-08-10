@@ -815,6 +815,22 @@ sf_clause "the plan is immutable once approved"              'immutable once app
 sf_clause "the initial quorum excludes the author"           'except the author'
 sf_clause "the author classifies findings in writing"        'author classifies( each finding)? in writing'
 
+# --- plan-review (step 2) gets the SAME discipline, in its own terms ----------------------------
+# A real session ran 13 rounds of plan-review before the panel agreed (~1h15m burned on convergence,
+# not the plan) because step 2 only ever said "iterate (approx 2 rounds)" — a suggestion, not a rule.
+# "plan-qualifying" is asserted as a term DISTINCT from step 5's "qualifying Should-fix" (PR-qualifying:
+# correctness/safety/deployability/verification) — the two must not collapse into one grep-satisfying
+# phrase, or an adapter could state step 5's rule alone and wrongly pass for step 2's.
+sf_clause "plan-review round excludes exit 3"                'exit .?3.?.{0,200}(does not|doesn.t) count as a round|round.{0,80}exit .?3'
+sf_clause "two consecutive exit-3s drop that reviewer"        'two consecutive.{0,80}(exit .?3.?|attempts)|consecutive attempts.{0,120}stop retrying'
+sf_clause "plan-review cap is 2 rounds"                       '(2|two).{0,10}round.{0,40}cap|cap.{0,20}(2|two).{0,10}round'
+sf_clause "a clean round 1 skips a wasted round 2"            'clean round 1|round 1 .{0,60}(raises no|no blocker).{0,120}gate 1'
+sf_clause "plan-qualifying is distinct from PR-qualifying"    'plan-qualifying'
+sf_clause "plan-qualifying covers missing edge cases/failure modes" 'materially incomplete.{0,120}(missing edge case|failure mode)|(missing edge case|failure mode).{0,160}materially incomplete'
+sf_clause "round 2 still open -> disagreement summary -> Gate 1" 'disagreement summary'
+sf_clause "a human-authorized round is not a second autonomous loop" 'human-authorized.{0,80}not a (second|third) autonomous'
+sf_clause "Gate 1 accepts the plan plus a disagreement summary" 'plan plus a disagreement summary|plan.{0,20}disagreement summary'
+
 # And the TOOL, not only the documents. `bin/ship-feature` prints the loop rule to the operator on
 # every relay run, which out-ranks any document nobody re-reads — so a revert of that one string must
 # turn the suite red too. It was not covered until a reviewer pointed out that it silently stays green.
@@ -833,6 +849,20 @@ sf_tool_clause "every DISPATCHED reviewer ran"          'every dispatched review
 sf_tool_clause "check the startup lines for a benched seat" 'startup lines for a benched seat'
 sf_tool_clause "resolve UNDISPUTED qualifying Should-fix" 'undisputed qualifying should-fix'
 
+# Same idea, for `cmd_plan_review`'s exit-0 message: it used to unconditionally say "revise the plan",
+# which itself pushed unbounded revision loops. Matched against that ECHO LINE ONLY (not the whole
+# file, for the same greenwash reason as sf_tool_clause above), so a revert of the operator-facing
+# string turns the suite red even though the surrounding comments still describe the rule correctly.
+sf_plan_tool_clause() {  # sf_plan_tool_clause <label> <extended-regex>
+  local label="$1" re="$2"
+  grep -E 'Plan review done' "$CLI" | grep -Eqi -- "$re" \
+    && { echo "  ok   [-] bin/ship-feature's plan-review exit-0 message states: $label"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL adapter consistency: '$label' missing from bin/ship-feature's plan-review exit-0 message"; FAIL=$((FAIL+1)); }
+}
+sf_plan_tool_clause "clean round goes straight to Gate 1"     'straight to gate 1'
+sf_plan_tool_clause "cap is 2 rounds"                         'cap.{0,10}(2|two) rounds'
+sf_plan_tool_clause "do not run a round 3 on your own"        'do not run a round 3'
+
 echo "-------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"
 # FAIL is checked FIRST: when a case fails, PASS is naturally short of the total, and reporting that
@@ -841,7 +871,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=135
+EXPECTED=147
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

@@ -16,9 +16,23 @@ It is the single source of truth — do not restate or fork it here.
 The essentials you must honor:
 
 1. **Plan** it, then **review the plan** with a panel: `ship-feature plan-review <file> --reviewers <your agents>`
-   (defaults to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; read-only; exit `0` clean, `3` re-run). A single reviewer via
+   (defaults to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; read-only; exit `0` means every
+   reviewer responded — not that the reviews are clean, `3` re-run). A single reviewer via
    `codex exec --sandbox read-only` still works.
-2. 🚦 **Stop for the human to approve the plan.** Do not write to the source repository before that.
+   **Plan-review has its own 2-round cap**, distinct from step 4's cross-review loop. A round is one
+   `plan-review` call where every reviewer responded — exit `3` does not count as a round, and if the
+   same reviewer hits exit `3` on **two consecutive attempts** at the same round, stop retrying it and
+   drop that reviewer for the round. Iterate only for a Blocker or a **plan-qualifying** Should-fix (the plan is wrong about the
+   tree, unsafe, or materially incomplete — a missing edge case, failure mode, or verification gap — not a
+   style/approach preference). A clean round 1 skips straight to Gate 1; do not spend a round
+   confirming an already-clean plan. If round 2 still has an open plan-qualifying finding, **stop —
+   do not run a round 3 on your own**; write a disagreement summary (each reviewer's objection, your
+   classification, the reason) and bring it to Gate 1 instead of "the agreed plan." A human-authorized
+   extra round is not a second autonomous loop — it resolves cleanly or produces an updated
+   disagreement summary and returns to Gate 1 again.
+2. 🚦 **Stop for the human to approve the plan** — the agreed plan, or the plan plus a disagreement
+   summary if the plan-review cap was hit with a finding still open. Do not write to the source
+   repository before that.
 3. Implement in a **git worktree** (never the main tree), stage explicit paths, open a **PR**. Run
    `ship-feature preflight` first.
 4. Run the **cross-review**: `ship-feature relay --author <self> --reviewers <your agents> --context-file <plan.md>`

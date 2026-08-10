@@ -27,6 +27,14 @@ each driver agent (Claude, Codex, Cursor) gets a thin adapter that points at it,
 
 ## 🆕 What's new
 
+**v0.4.0** — **plan-review gets its own 2-round cap.** Step 2's "iterate (≈2 rounds)" was a suggestion,
+not a rule — one real session ran 13 rounds before the panel agreed, burning ~1h15m on convergence
+instead of the plan. Plan-review now stops after round 2 with an open **plan-qualifying** finding
+(the plan is wrong, unsafe, or materially incomplete — a distinct term from step 5's PR-qualifying
+Should-fix) and hands Gate 1 a **disagreement summary** instead of grinding for consensus. A clean
+round 1 skips a wasted round 2 entirely. `WORKFLOW.md`, all three adapters, and the CLI's plan-review
+message state the same rule, checked by the same consistency suite as step 5.
+
 **v0.3.0** — **the review panel is given the plan, and stops iterating on findings that change
 nothing.** Reviewers used to see only the diff, so they could find bugs but never *"this is not what
 we agreed to build"* — `--context-file` now carries the plan on every round. And the loop runs in
@@ -55,7 +63,7 @@ The authoritative version is [`WORKFLOW.md`](WORKFLOW.md). At a glance:
 | Step | What happens | Gate |
 |:----:|--------------|:--|
 | 1 | **Plan** the change | |
-| 2 | A second agent **reviews the plan** | |
+| 2 | A second agent **reviews the plan** (capped at 2 rounds; open disagreement → Gate 1) | |
 | 3 | You **approve the plan** | 🚦 **human gate** |
 | 4 | **Implement** in a worktree → open a **PR** | |
 | 5 | **Cross-review + tests** — the panel gets the **plan**, and iterates only for a Blocker or a *qualifying* Should-fix | |
