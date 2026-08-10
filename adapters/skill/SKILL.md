@@ -25,7 +25,8 @@ The essentials you must honor:
    `plan-review` call where every reviewer responded — exit `3` does not count as a round, and if the
    same reviewer hits exit `3` on **two consecutive attempts** at the same round, stop retrying it,
    drop that reviewer for the round, and **tell the human about the reduced panel before Gate 1**
-   rather than silently substituting. Iterate only for a Blocker or a **plan-qualifying** Should-fix
+   rather than silently substituting (if that leaves zero reviewers, it isn't a completed round —
+   take the failure itself to Gate 1). Iterate only for a Blocker or a **plan-qualifying** Should-fix
    (the plan is wrong about the tree, unsafe, or materially incomplete — a missing edge case, failure
    mode, or verification gap — not a style/approach preference). A clean round 1 skips straight to
    Gate 1; do not spend a round confirming an already-clean plan. Round 2, if it happens, runs against

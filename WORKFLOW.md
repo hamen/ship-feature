@@ -78,7 +78,9 @@ exists, not a **PR** under cross-review, so "plan-qualifying" below is a distinc
   re-run it. If the **same** reviewer hits exit `3` on **two consecutive attempts** at the same round,
   stop retrying that reviewer, drop that reviewer for the round, and proceed with the remaining panel
   — but **tell the human about the reduced panel** before Gate 1, the same way a benched reviewer in
-  step 5's initial or closing round is the human's call, not a silent substitution.
+  step 5's initial or closing round is the human's call, not a silent substitution. **If dropping the
+  reviewer leaves zero reviewers, that is not a completed round at all** — stop and take the failure
+  itself to Gate 1 (a plan nobody reviewed is not "the agreed plan").
 - **Cap: 2 rounds.** Round 1 is the full configured panel (`SHIP_FEATURE_PLAN_REVIEWERS`, or your
   `--reviewers`). If round 1 raises no Blocker and no plan-qualifying Should-fix, **stop — go straight
   to Gate 1.** Do not spend a second round confirming an already-clean plan. If round 1 raised a

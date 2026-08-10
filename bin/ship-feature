@@ -558,7 +558,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   if [ "$ran" = 0 ]; then
     die "no supported reviewers ran. plan-review supports: claude, codex, cursor, kimi3, grok45high (agy, bare opencode, and bare grok are relay-only). Pass --reviewers with a supported agent."
   fi
-  if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Re-run once; on a SECOND consecutive failure of the SAME reviewer, drop it and tell the human about the reduced panel before Gate 1 — do not keep retrying." >&2; return 3; fi
+  if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Re-run THIS ROUND. If the SAME reviewer fails a SECOND consecutive attempt, drop that one reviewer, proceed with the rest, and tell the human about the reduced panel before Gate 1 — do not keep retrying it." >&2; return 3; fi
   echo "✔ Plan review done — $ran/$ran reviewer(s) responded (cap: 2 rounds, same full panel both times). READ the findings: no Blocker/plan-qualifying Should-fix → straight to Gate 1. Was this round 1 with a plan-qualifying finding → revise once and re-run. Was this round 2 with a plan-qualifying finding still open → do not run a round 3 on your own — write a disagreement summary (objection, classification, reason) and take it to Gate 1 instead." >&2
   return 0
 }
