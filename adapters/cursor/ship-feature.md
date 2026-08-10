@@ -12,6 +12,22 @@ away. The canonical process is `~/.config/ship-feature/WORKFLOW.md` — read it 
 Non-negotiable points:
 - Plan first; have the plan reviewed; then **stop for explicit human approval before writing to the
   source repo**.
+- **Plan-review has its own 2-round cap** (distinct from the PR cross-review loop below — its
+  **plan-qualifying** term is not the same as, and must not be conflated with, the "qualifying
+  Should-fix" used in cross-review). A round is
+  one `plan-review` call where every reviewer responded — exit `3` does not count as a round, and if
+  the same reviewer hits exit `3` on **two consecutive attempts** at the same round, stop retrying it,
+  drop that reviewer for the round, and **tell the human about the reduced panel before Gate 1** rather
+  than silently substituting (if that leaves zero reviewers, it isn't a completed round — take the
+  failure itself to Gate 1). Iterate only for a Blocker or a **plan-qualifying** Should-fix (the plan
+  is wrong about the tree, unsafe, or materially incomplete — a missing edge case, failure mode, or
+  verification gap — not a style/approach preference). A clean round 1 skips straight to Gate 1. Round
+  2, if it happens, runs against **the same full panel — never narrowed**. If round 2 still has an open
+  plan-qualifying finding, **stop — do not run a round 3 on your own**; bring the plan plus a
+  disagreement summary (objection, your classification, reason) to Gate 1, where the human can accept
+  it as classified, authorize one more round with explicit reasoning, or drop the change. A
+  human-authorized extra round is not a third autonomous round: it either resolves cleanly, or produces
+  an updated disagreement summary and returns to Gate 1 again.
 - Implement in a **git worktree**, stage explicit paths, open a PR.
 - Cross-review with `ship-feature relay --author cursor --reviewers <your agents> --context-file <plan.md>`
   (explicit list = the agents you have, e.g. claude,codex,cursor). **Always pass the plan** with

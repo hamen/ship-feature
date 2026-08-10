@@ -6,6 +6,23 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
+### Changed
+
+- **Plan-review (step 2) gets a 2-round cap and a disagreement-summary escalation to Gate 1** — the
+  same discipline step 5's cross-review got in v0.3.0, in its own terms. `WORKFLOW.md` previously said
+  only "iterate ≈2 rounds," which is a suggestion, not a rule: a real session ran **13 rounds** of
+  plan-review before the panel agreed, burning roughly an hour and a quarter on convergence rather than
+  the plan itself. Now: a round is one `plan-review` invocation where every dispatched reviewer
+  responded (exit `3` doesn't count, and doesn't retry the same reviewer past two consecutive
+  failures); a clean round 1 skips straight to Gate 1; a round only reopens for a Blocker or a
+  **plan-qualifying** Should-fix (the plan is wrong about the tree, unsafe, or materially incomplete —
+  a distinct term from step 5's PR-qualifying Should-fix, since a plan and a PR are different objects
+  under review); and if round 2 still has an open plan-qualifying finding, the agent stops — no round
+  3 on its own — and takes a **disagreement summary** (objection, classification, reason) to Gate 1,
+  where the human decides. `bin/ship-feature`'s plan-review exit-`0` message, `WORKFLOW.md`, and all
+  three adapters state the same rule, checked by the same `sf_clause`/`sf_tool_clause` consistency
+  suite that already guards step 5's rule.
+
 ## [0.3.0] — 2026-08-04
 
 ### Added

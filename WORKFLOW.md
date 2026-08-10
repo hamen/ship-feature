@@ -60,14 +60,52 @@ them is given a way to write your checkout or post anywhere. It is not a sandbox
 extend by opening the repo in that agent. Review a plan for a repository you do not trust with `kimi3`,
 or not at all.
 Exit `0` = every reviewer responded, `3` = a
-reviewer failed/timed out/returned empty (re-run), `1` = usage error. The single-reviewer default still
-works too: `cat plan.md | codex exec --sandbox read-only`.
+reviewer failed/timed out/returned empty (re-run — see the two-consecutive-failure rule below), `1` =
+usage error. The single-reviewer default still works too: `cat plan.md | codex exec --sandbox read-only`.
 
-Read the feedback, revise, and iterate (≈2 rounds). The reviewers catch wrong assumptions and stale
-facts before they become code.
+Read the feedback and revise — but only within the cap below, not without limit. The reviewers catch
+wrong assumptions and stale facts before they become code.
+
+**Loop-termination rule.** A plan under review that keeps drawing new objections to each revision can
+spin as long as an unreviewed PR can — one real round ran **13 rounds** before the panel agreed, burning
+roughly an hour and a quarter on convergence instead of on the plan. Plan-review gets the same discipline
+as step 5's cross-review, in its own terms: this is a **plan** under read-only review before any code
+exists, not a **PR** under cross-review, so "plan-qualifying" below is a distinct term from step 5's
+"qualifying Should-fix" (correctness / safety / deployability / verification) — do not conflate the two.
+
+- **A round** is one `plan-review` invocation where every dispatched reviewer returned a review (exit
+  `0`). Exit `3` (a reviewer failed, timed out, or returned empty) does **not** count as a round —
+  re-run it. If the **same** reviewer hits exit `3` on **two consecutive attempts** at the same round,
+  stop retrying that reviewer, drop that reviewer for the round, and proceed with the remaining panel
+  — but **tell the human about the reduced panel** before Gate 1, the same way a benched reviewer in
+  step 5's initial or closing round is the human's call, not a silent substitution. **If dropping the
+  reviewer leaves zero reviewers, that is not a completed round at all** — stop and take the failure
+  itself to Gate 1 (a plan nobody reviewed is not "the agreed plan").
+- **Cap: 2 rounds.** Round 1 is the full configured panel (`SHIP_FEATURE_PLAN_REVIEWERS`, or your
+  `--reviewers`). If round 1 raises no Blocker and no plan-qualifying Should-fix, **stop — go straight
+  to Gate 1.** Do not spend a second round confirming an already-clean plan. If round 1 raised a
+  plan-qualifying finding, revise **once** and run round 2 against **the same full panel — never a
+  narrowed one.** A plan-review panel is 2–3 reviewers, too small to narrow the way step 5 narrows a PR
+  panel; unlike step 5, there is no narrow phase here at all.
+- **Plan-qualifying** means: a **Blocker**, or a **Should-fix** saying the plan is wrong about the
+  existing tree, unsafe to execute as written, or **materially incomplete** — a missing edge case, an
+  unhandled failure mode, or missing verification that would let a broken change ship. A **Nit**, or a
+  Should-fix that only expresses a stylistic or approach preference without any of the above, does not
+  reopen a round.
+- **If round 2 still has an open plan-qualifying finding, stop — do not run a round 3 on your own.**
+  Write a short **disagreement summary**: for each open finding, the reviewer's objection, your
+  classification, and the reason. Take that summary to Gate 1 instead of "the agreed plan."
+- **A human-authorized extra round is not a third autonomous round.** If the human reviews the
+  disagreement summary at Gate 1 and asks for one more pass, that round runs like round 2: it either
+  resolves and reaches Gate 1 clean, or it produces an updated disagreement summary and returns to
+  Gate 1 again. There is no agent-initiated round beyond the cap — only a human-authorized one.
 
 ### 3. 🚦 Gate 1 — human approves the plan
-Summarize the agreed plan and **stop**. Do not touch the source repository until the human says go.
+Summarize the plan and **stop**. This is one of two shapes: **the agreed plan** (a clean round, or a
+later round resolved every plan-qualifying finding), or **the plan plus a disagreement summary** (the
+cap was hit with a plan-qualifying finding still open). In the second shape the human chooses: accept
+the plan as you classified it, authorize one more round with explicit reasoning for why, or drop the
+change. Do not touch the source repository until the human says go.
 
 ### 4. Implement in a worktree, open a PR
 - Work in a **git worktree**, never the main working tree. Default root `.claude/worktrees/`, override
