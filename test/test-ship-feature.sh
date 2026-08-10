@@ -821,10 +821,12 @@ sf_clause "the author classifies findings in writing"        'author classifies(
 # "plan-qualifying" is asserted as a term DISTINCT from step 5's "qualifying Should-fix" (PR-qualifying:
 # correctness/safety/deployability/verification) — the two must not collapse into one grep-satisfying
 # phrase, or an adapter could state step 5's rule alone and wrongly pass for step 2's.
-sf_clause "plan-review round excludes exit 3"                'exit .?3.?.{0,200}(does not|doesn.t) count as a round|round.{0,80}exit .?3'
-sf_clause "two consecutive exit-3s drop that reviewer"        'two consecutive.{0,80}(exit .?3.?|attempts)|consecutive attempts.{0,120}stop retrying'
+sf_clause "plan-review round excludes exit 3"                'exit .?3.?.{0,200}does.{0,6}not.{0,6}count as a round'
+sf_clause "two consecutive exit-3s stop retrying and drop that reviewer" 'two consecutive attempts.{0,120}stop retrying.{0,160}drop that reviewer'
+sf_clause "a reduced panel is escalated to the human, not silent" '(tell the human|human.{0,20}call).{0,160}reduced panel|reduced panel.{0,160}(tell the human|human.{0,20}call)'
 sf_clause "plan-review cap is 2 rounds"                       '(2|two).{0,10}round.{0,40}cap|cap.{0,20}(2|two).{0,10}round'
 sf_clause "a clean round 1 skips a wasted round 2"            'clean round 1|round 1 .{0,60}(raises no|no blocker).{0,120}gate 1'
+sf_clause "round 2 runs the same full panel, never narrowed" 'same full panel.{0,60}never.{0,10}narrow|never.{0,10}narrow.{0,120}same full panel'
 sf_clause "plan-qualifying is distinct from PR-qualifying, not conflated" 'plan-qualifying.{0,300}(not the same as|must not be conflated|distinct term|do not conflate)|(not the same as|must not be conflated|distinct term|do not conflate).{0,300}plan-qualifying'
 sf_clause "plan-qualifying covers missing edge cases/failure modes/verification" 'materially incomplete.{0,160}(missing edge case|failure mode).{0,60}verification|(missing edge case|failure mode).{0,60}verification.{0,160}materially incomplete'
 sf_clause "round 2 still open -> disagreement summary -> Gate 1" 'round 2.{0,300}disagreement summary.{0,200}gate 1|disagreement summary.{0,300}round 2'
@@ -864,6 +866,19 @@ sf_plan_tool_clause() {  # sf_plan_tool_clause <label> <extended-regex>
 sf_plan_tool_clause "clean round goes straight to Gate 1"     'straight to gate 1'
 sf_plan_tool_clause "cap is 2 rounds"                         'cap.{0,10}(2|two) rounds'
 sf_plan_tool_clause "do not run a round 3 on your own"        'do not run a round 3'
+sf_plan_tool_clause "write a disagreement summary instead"    'disagreement summary'
+
+# The exit-3 (NOT clean) message gets the same treatment: it used to say "Fix and re-run" with no
+# mention of the two-consecutive-failure drop rule, which itself invites retrying the same reviewer
+# forever.
+sf_plan_tool_clause_notclean() {  # same pattern as sf_plan_tool_clause, but for the "NOT clean" line
+  local label="$1" re="$2"
+  grep -E 'Plan review NOT clean' "$CLI" | grep -Eqi -- "$re" \
+    && { echo "  ok   [-] bin/ship-feature's plan-review exit-3 message states: $label"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL adapter consistency: '$label' missing from bin/ship-feature's plan-review exit-3 message"; FAIL=$((FAIL+1)); }
+}
+sf_plan_tool_clause_notclean "drop the reviewer on a second consecutive failure" 'second consecutive failure.{0,60}drop'
+sf_plan_tool_clause_notclean "tell the human about the reduced panel"           'reduced panel'
 
 echo "-------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"
@@ -873,7 +888,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=149
+EXPECTED=154
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
