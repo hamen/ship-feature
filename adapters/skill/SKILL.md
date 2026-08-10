@@ -19,7 +19,9 @@ The essentials you must honor:
    (defaults to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; read-only; exit `0` means every
    reviewer responded — not that the reviews are clean, `3` re-run). A single reviewer via
    `codex exec --sandbox read-only` still works.
-   **Plan-review has its own 2-round cap**, distinct from step 4's cross-review loop. A round is one
+   **Plan-review has its own 2-round cap**, distinct from the cross-review loop below — its
+   **plan-qualifying** term is not the same as, and must not be conflated with, the "qualifying
+   Should-fix" used in cross-review. A round is one
    `plan-review` call where every reviewer responded — exit `3` does not count as a round, and if the
    same reviewer hits exit `3` on **two consecutive attempts** at the same round, stop retrying it and
    drop that reviewer for the round. Iterate only for a Blocker or a **plan-qualifying** Should-fix (the plan is wrong about the
@@ -28,7 +30,7 @@ The essentials you must honor:
    confirming an already-clean plan. If round 2 still has an open plan-qualifying finding, **stop —
    do not run a round 3 on your own**; write a disagreement summary (each reviewer's objection, your
    classification, the reason) and bring it to Gate 1 instead of "the agreed plan." A human-authorized
-   extra round is not a second autonomous loop — it resolves cleanly or produces an updated
+   extra round is not a third autonomous round — it resolves cleanly or produces an updated
    disagreement summary and returns to Gate 1 again.
 2. 🚦 **Stop for the human to approve the plan** — the agreed plan, or the plan plus a disagreement
    summary if the plan-review cap was hit with a finding still open. Do not write to the source

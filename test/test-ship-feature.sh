@@ -825,10 +825,12 @@ sf_clause "plan-review round excludes exit 3"                'exit .?3.?.{0,200}
 sf_clause "two consecutive exit-3s drop that reviewer"        'two consecutive.{0,80}(exit .?3.?|attempts)|consecutive attempts.{0,120}stop retrying'
 sf_clause "plan-review cap is 2 rounds"                       '(2|two).{0,10}round.{0,40}cap|cap.{0,20}(2|two).{0,10}round'
 sf_clause "a clean round 1 skips a wasted round 2"            'clean round 1|round 1 .{0,60}(raises no|no blocker).{0,120}gate 1'
-sf_clause "plan-qualifying is distinct from PR-qualifying"    'plan-qualifying'
-sf_clause "plan-qualifying covers missing edge cases/failure modes" 'materially incomplete.{0,120}(missing edge case|failure mode)|(missing edge case|failure mode).{0,160}materially incomplete'
-sf_clause "round 2 still open -> disagreement summary -> Gate 1" 'disagreement summary'
-sf_clause "a human-authorized round is not a second autonomous loop" 'human-authorized.{0,80}not a (second|third) autonomous'
+sf_clause "plan-qualifying is distinct from PR-qualifying, not conflated" 'plan-qualifying.{0,300}(not the same as|must not be conflated|distinct term|do not conflate)|(not the same as|must not be conflated|distinct term|do not conflate).{0,300}plan-qualifying'
+sf_clause "plan-qualifying covers missing edge cases/failure modes/verification" 'materially incomplete.{0,160}(missing edge case|failure mode).{0,60}verification|(missing edge case|failure mode).{0,60}verification.{0,160}materially incomplete'
+sf_clause "round 2 still open -> disagreement summary -> Gate 1" 'round 2.{0,300}disagreement summary.{0,200}gate 1|disagreement summary.{0,300}round 2'
+sf_clause "disagreement summary states objection + classification + reason" 'objection.{0,60}classification.{0,60}reason|disagreement summary.{0,400}(objection|classification|reason).{0,120}(objection|classification|reason).{0,120}(objection|classification|reason)'
+sf_clause "a human-authorized round is not a third autonomous round" 'human-authorized.{0,80}not a third autonomous'
+sf_clause "a human-authorized round resolves clean or re-escalates" 'human-authorized.{0,200}(resolves cleanly|resolve).{0,160}(disagreement summary|gate 1)'
 sf_clause "Gate 1 accepts the plan plus a disagreement summary" 'plan plus a disagreement summary|plan.{0,20}disagreement summary'
 
 # And the TOOL, not only the documents. `bin/ship-feature` prints the loop rule to the operator on
@@ -871,7 +873,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=147
+EXPECTED=149
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
