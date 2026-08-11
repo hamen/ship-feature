@@ -168,6 +168,20 @@ this tool, [`pr-review-relay`](https://github.com/hamen/pr-review-relay) reads t
 single export should configure both. Being outside that namespace it is **env-only** — it is never
 read from `~/.config/ship-feature/config`.
 
+## Overriding the kimi3 model
+
+`plan-review` invokes the `kimi3` reviewer with `opencode run --pure --agent plan -m
+"$KIMI3_REVIEW_MODEL"` (default `opencode-go/kimi-k3`, the bundled OpenCode Go tier). Override with
+`KIMI3_REVIEW_MODEL` to route it at a different model instead — for example a pay-as-you-go
+OpenRouter id (`openrouter/z-ai/glm-5.2`) if you want kimi3 off the bundled subscription tier
+without waiting on its quota reset. `opencode models` lists what your account can reach.
+
+Same env-only convention as `CURSOR_REVIEW_MODEL`: no `SHIP_FEATURE_` prefix, never read from
+`~/.config/ship-feature/config`. Unlike `CURSOR_REVIEW_MODEL`, it is not shared with
+`pr-review-relay` — that tool's opencode reviewer has its own separate override,
+`PR_RELAY_OPENCODE_MODEL`, for a different code path (the relay's `opencode` seat, not
+plan-review's `kimi3` seat).
+
 ## Running the tests
 
 ```bash

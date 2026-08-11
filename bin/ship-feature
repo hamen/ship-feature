@@ -179,7 +179,8 @@ cmd_relay() {
 # text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
 # load either), codex (--sandbox read-only), cursor (--mode=ask,
 # Q&A, on a model pinned away from Cursor's Auto — see CURSOR_REVIEW_MODEL below),
-# kimi3 (Kimi K3 via opencode, pinned read-only by OPENCODE_CONFIG_CONTENT — opencode's
+# kimi3 (Kimi K3 via opencode, model pinned away from the bundled default via
+# KIMI3_REVIEW_MODEL — see below — and pinned read-only by OPENCODE_CONFIG_CONTENT — opencode's
 # highest-precedence config layer — denying `edit`+`bash` so nothing can be written even via
 # shell, run in an isolated cwd, plus `--pure` and `--agent plan`). agy, bare `opencode`, and bare `grok`
 # name are RELAY-ONLY here — agy has no read-only mode (its relay flag disables ALL permissions)
@@ -318,6 +319,13 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # local, since traps fire once the function has already returned.
   local CURSOR_REVIEW_MODEL="${CURSOR_REVIEW_MODEL:-composer-2.5}"
 
+  # Pin the kimi3 reviewer's model. Same override pattern as CURSOR_REVIEW_MODEL above: env-only,
+  # outside SHIP_FEATURE_* (load_config never reads it), local so the override survives without
+  # leaking to global scope. Left unset, defaults to the bundled OpenCode Go tier; export
+  # KIMI3_REVIEW_MODEL=openrouter/<vendor>/<model> to route through a pay-as-you-go OpenRouter
+  # model instead (e.g. after dropping a different reviewer's subscription for billing reasons).
+  local KIMI3_REVIEW_MODEL="${KIMI3_REVIEW_MODEL:-opencode-go/kimi-k3}"
+
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
   # under --parallel neither the reviews nor the failure messages interleave; the caller
   # emits them in panel order after the barrier. kimi3 cannot modify your working tree: it pins
@@ -348,7 +356,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
                     && unset OPENCODE_CONFIG \
                     && export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"allow"}}' \
                     && printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" \
-                       | run_reviewer opencode run --pure --agent plan -m opencode-go/kimi-k3 2>"$errf"); rc=$?
+                       | run_reviewer opencode run --pure --agent plan -m "$KIMI3_REVIEW_MODEL" 2>"$errf"); rc=$?
               [ -n "$ro_cwd" ] && rm -rf "$ro_cwd";;
       grok45high)
               # Grok headless ignores stdin: plan goes in --prompt-file (kept in STATUS_DIR, never
