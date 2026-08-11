@@ -103,11 +103,12 @@ sf_isolate_git
 
 # Isolate from the user's real config/env so the suite is deterministic outside CI.
 export SHIP_FEATURE_CONFIG=/dev/null
-# CURSOR_REVIEW_MODEL is not a SHIP_FEATURE_* key (it is shared with pr-review-relay, env-only), so
-# it would not be caught by the namespace above — but it is a knob people really do export once
-# pr-review-relay is in use, and an exported value would quietly satisfy the default-pin assertions
-# below. Clear it here so the suite stays hermetic no matter who runs it.
-unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL
+# CURSOR_REVIEW_MODEL and KIMI3_REVIEW_MODEL are not SHIP_FEATURE_* keys (env-only, shared with
+# pr-review-relay in CURSOR_REVIEW_MODEL's case), so they would not be caught by the namespace
+# above — but they are knobs people really do export once ship-feature/pr-review-relay are in use,
+# and an exported value would quietly satisfy the default-pin assertions below. Clear both here so
+# the suite stays hermetic no matter who runs it.
+unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL KIMI3_REVIEW_MODEL
 
 # Assert the isolation is actually in force HERE, before a single fixture runs. This check used to
 # sit at the very end with the others, which meant that if the sf_isolate_git call were deleted the
@@ -327,6 +328,12 @@ printf '%s' "$hostile" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"ba
 # the contract rather than a convenience: a pin that could not be overridden would be a dead end.
 cuo=$(printf 'plan\n' | PATH="$PBIN:$PATH" CURSOR_REVIEW_MODEL=cursor-grok-4.5-high bash "$CLI" plan-review --reviewers cursor 2>/dev/null | grep 'REVIEW-cursor')
 printf '%s' "$cuo" | grep -q -- "--model cursor-grok-4.5-high" && { echo "  ok   [-] CURSOR_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL CURSOR_REVIEW_MODEL ignored: $cuo"; FAIL=$((FAIL+1)); }
+
+# KIMI3_REVIEW_MODEL is the documented way to route kimi3 at a pay-as-you-go model (e.g. an
+# OpenRouter id) instead of the bundled OpenCode Go tier — same contract as CURSOR_REVIEW_MODEL
+# above: a pin that could not be overridden would be a dead end.
+kmo=$(printf 'plan\n' | PATH="$PBIN:$PATH" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
+printf '%s' "$kmo" | grep -q -- "-m openrouter/z-ai/glm-5.2" && { echo "  ok   [-] KIMI3_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL KIMI3_REVIEW_MODEL ignored: $kmo"; FAIL=$((FAIL+1)); }
 
 
 # grok45high: Grok 4.5 high effort, prompt-file (not stdin), read-only ALLOWLIST, runs in the
@@ -892,7 +899,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=158
+EXPECTED=159
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
