@@ -179,7 +179,8 @@ cmd_relay() {
 # text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
 # load either), codex (--sandbox read-only), cursor (--mode=ask,
 # Q&A, on a model pinned away from Cursor's Auto — see CURSOR_REVIEW_MODEL below),
-# kimi3 (Kimi K3 via opencode, pinned read-only by OPENCODE_CONFIG_CONTENT — opencode's
+# kimi3 (Kimi K3 via opencode, model pinned away from the bundled default via
+# KIMI3_REVIEW_MODEL — see below — and pinned read-only by OPENCODE_CONFIG_CONTENT — opencode's
 # highest-precedence config layer — denying `edit`+`bash` so nothing can be written even via
 # shell, run in an isolated cwd, plus `--pure` and `--agent plan`). agy, bare `opencode`, and bare `grok`
 # name are RELAY-ONLY here — agy has no read-only mode (its relay flag disables ALL permissions)

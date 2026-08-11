@@ -41,7 +41,9 @@ with no file and no stdin it reads
 `$CURSOR_REVIEW_MODEL` — default `composer-2.5`, Cursor's own model — so Cursor's `Auto` cannot
 quietly route the review to a Claude model and have Claude grade a plan Claude wrote, and so the
 seat stays out of `grok45high`'s family too), `kimi3`
-(Kimi K3 via opencode, pinned read-only by `OPENCODE_CONFIG_CONTENT` — the highest-precedence config
+(Kimi K3 via opencode, model pinned to `$KIMI3_REVIEW_MODEL` — default `opencode-go/kimi-k3`, the
+bundled OpenCode Go tier, overridable to a pay-as-you-go model — pinned read-only by
+`OPENCODE_CONFIG_CONTENT` — the highest-precedence config
 layer — denying `edit`+`bash`, with inherited `OPENCODE_CONFIG*` unset, an isolated cwd, plus `--pure`
 and `--agent plan`), `grok45high` (Grok 4.5 high effort via `grok --prompt-file`, running in your
 checkout with a read-only tool allowlist `--tools read_file,list_dir,grep`, the MCP bridge removed

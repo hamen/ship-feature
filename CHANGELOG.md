@@ -6,6 +6,13 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
+### Added
+
+- **`KIMI3_REVIEW_MODEL`** overrides the `kimi3` plan-review reviewer's model (default
+  `opencode-go/kimi-k3`, the bundled OpenCode Go tier) — same env-only override pattern as
+  `CURSOR_REVIEW_MODEL`, so `kimi3` can be pointed at a pay-as-you-go model (e.g. an OpenRouter id)
+  without a code change.
+
 ### Changed
 
 - **Plan-review (step 2) gets a 2-round cap and a disagreement-summary escalation to Gate 1** — the
