@@ -103,12 +103,13 @@ sf_isolate_git
 
 # Isolate from the user's real config/env so the suite is deterministic outside CI.
 export SHIP_FEATURE_CONFIG=/dev/null
-# CURSOR_REVIEW_MODEL and KIMI3_REVIEW_MODEL are not SHIP_FEATURE_* keys (env-only, shared with
-# pr-review-relay in CURSOR_REVIEW_MODEL's case), so they would not be caught by the namespace
-# above — but they are knobs people really do export once ship-feature/pr-review-relay are in use,
-# and an exported value would quietly satisfy the default-pin assertions below. Clear both here so
-# the suite stays hermetic no matter who runs it.
-unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL KIMI3_REVIEW_MODEL
+# CURSOR_REVIEW_MODEL, KIMI3_REVIEW_MODEL and GROK45HIGH_REVIEW_MODEL are not SHIP_FEATURE_* keys
+# (env-only, shared with pr-review-relay in CURSOR_REVIEW_MODEL's case), so they would not be
+# caught by the namespace above — but they are knobs people really do export once
+# ship-feature/pr-review-relay are in use, and an exported value would quietly satisfy the
+# default-pin assertions below. Clear all three here so the suite stays hermetic no matter who
+# runs it.
+unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL KIMI3_REVIEW_MODEL GROK45HIGH_REVIEW_MODEL
 
 # Assert the isolation is actually in force HERE, before a single fixture runs. This check used to
 # sit at the very end with the others, which meant that if the sf_isolate_git call were deleted the
@@ -335,12 +336,18 @@ printf '%s' "$cuo" | grep -q -- "--model cursor-grok-4.5-high" && { echo "  ok  
 kmo=$(printf 'plan\n' | PATH="$PBIN:$PATH" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
 printf '%s' "$kmo" | grep -q -- "-m openrouter/z-ai/glm-5.2" && { echo "  ok   [-] KIMI3_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL KIMI3_REVIEW_MODEL ignored: $kmo"; FAIL=$((FAIL+1)); }
 
+# GROK45HIGH_REVIEW_MODEL is the documented way to pin grok45high at a different Grok version —
+# same contract as CURSOR_REVIEW_MODEL/KIMI3_REVIEW_MODEL above: a pin that could not be
+# overridden would be a dead end when xAI ships the next model.
+gmo=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok GROK45HIGH_REVIEW_MODEL=grok-4.7 bash "$CLI" plan-review --reviewers grok45high 2>/dev/null | grep 'REVIEW-grok45high')
+printf '%s' "$gmo" | grep -q -- "-m grok-4.7" && { echo "  ok   [-] GROK45HIGH_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL GROK45HIGH_REVIEW_MODEL ignored: $gmo"; FAIL=$((FAIL+1)); }
 
-# grok45high: Grok 4.5 high effort, prompt-file (not stdin), read-only ALLOWLIST, runs in the
+
+# grok45high: Grok 4.6 high effort, prompt-file (not stdin), read-only ALLOWLIST, runs in the
 # checkout so it can verify the plan against the code (parity with claude/codex/cursor).
 out=$(printf 'UNIQUE_PLAN_TOKEN_42\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok45high 2>/dev/null); rc=$?
 check "plan-review grok45high clean exit" "$rc" 0
-printf '%s' "$out" | grep -q -- '-m grok-4.5' && printf '%s' "$out" | grep -q -- '--reasoning-effort high' \
+printf '%s' "$out" | grep -q -- '-m grok-4.6' && printf '%s' "$out" | grep -q -- '--reasoning-effort high' \
   && printf '%s' "$out" | grep -q -- '--permission-mode plan' && printf '%s' "$out" | grep -q -- '--sandbox read-only' \
   && printf '%s' "$out" | grep -qF -- '--tools read_file,list_dir,grep' && printf '%s' "$out" | grep -q -- '--verbatim' \
   && printf '%s' "$out" | grep -qF -- '--disallowed-tools search_tool,use_tool' \
@@ -427,11 +434,22 @@ dg=$(printf '%s' "$out" | grep 'REVIEW-grok45high' | head -1)
 printf '%s' "$dg" | grep -qF -- "--deny *" && ! printf '%s' "$dg" | grep -qF -- '--tools read_file' \
   && { echo "  ok   [-] degraded grok45high denies every tool"; PASS=$((PASS+1)); } \
   || { echo "  FAIL degraded grok45high did not fall back to deny-all"; FAIL=$((FAIL+1)); }
+printf '%s' "$dg" | grep -qF -- '-m grok-4.6' \
+  && { echo "  ok   [-] degraded grok45high pins the default model too"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL degraded grok45high did not pin -m grok-4.6"; FAIL=$((FAIL+1)); }
 dcwd=$(printf '%s' "$dg" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
 case "$dcwd" in
   *iso-grok45high*) echo "  ok   [-] degraded grok45high runs outside the checkout"; PASS=$((PASS+1));;
   *) echo "  FAIL degraded grok45high ran in $dcwd"; FAIL=$((FAIL+1));;
 esac
+
+# GROK45HIGH_REVIEW_MODEL must reach the degraded path too — not just the normal one, since a
+# pin that silently reverts to the default the moment the sandbox is unavailable would be a
+# surprise no one asked for.
+dgo=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=fail GROK45HIGH_REVIEW_MODEL=grok-4.7 bash "$CLI" plan-review --reviewers grok45high 2>&1 | grep 'REVIEW-grok45high')
+printf '%s' "$dgo" | grep -qF -- '-m grok-4.7' \
+  && { echo "  ok   [-] GROK45HIGH_REVIEW_MODEL overrides the degraded-path model too"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL GROK45HIGH_REVIEW_MODEL ignored on the degraded path: $dgo"; FAIL=$((FAIL+1)); }
 
 # bare grok is relay-only (PR panel name), not a plan-reviewer
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok,codex 2>&1); rc=$?
@@ -899,7 +917,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=159
+EXPECTED=162
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

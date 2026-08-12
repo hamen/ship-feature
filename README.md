@@ -115,7 +115,8 @@ ship-feature skill for any feature/fix.
   — opencode's highest-precedence config layer — denies the `edit`+`bash` permissions so it can't write
   even via shell and can't be overridden by a merged global/checkout config; inherited `OPENCODE_CONFIG*`
   are unset, it runs in an isolated cwd outside the checkout, plus `--pure` and `--agent plan`),
-  `grok45high` (Grok 4.5 high effort: `grok --prompt-file` — headless Grok ignores stdin — running in
+  `grok45high` (Grok 4.6 high effort — pin with `GROK45HIGH_REVIEW_MODEL`, env-only, same contract as
+  `CURSOR_REVIEW_MODEL` below: `grok --prompt-file` — headless Grok ignores stdin — running in
   your checkout like `claude`/`codex`/`cursor`, held read-only by a tool **allowlist**
   `--tools read_file,list_dir,grep`, with the MCP bridge removed explicitly
   (`--disallowed-tools search_tool,use_tool` — it survives the built-in allowlist), plus
