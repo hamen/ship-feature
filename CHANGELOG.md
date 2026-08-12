@@ -8,6 +8,10 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Added
 
+- **`GROK45HIGH_REVIEW_MODEL`** overrides the `grok45high` plan-review reviewer's model (default bumped
+  to `grok-4.6`, xAI released it 2026-08-12) — same env-only override pattern as `CURSOR_REVIEW_MODEL`
+  and `KIMI3_REVIEW_MODEL`, so `grok45high` can be pinned to a different Grok version without a code
+  change when the next one ships.
 - **`KIMI3_REVIEW_MODEL`** overrides the `kimi3` plan-review reviewer's model (default
   `opencode-go/kimi-k3`, the bundled OpenCode Go tier) — same env-only override pattern as
   `CURSOR_REVIEW_MODEL`, so `kimi3` can be pointed at a pay-as-you-go model (e.g. an OpenRouter id)

@@ -45,7 +45,8 @@ seat stays out of `grok45high`'s family too), `kimi3`
 bundled OpenCode Go tier, overridable to a pay-as-you-go model — pinned read-only by
 `OPENCODE_CONFIG_CONTENT` — the highest-precedence config
 layer — denying `edit`+`bash`, with inherited `OPENCODE_CONFIG*` unset, an isolated cwd, plus `--pure`
-and `--agent plan`), `grok45high` (Grok 4.5 high effort via `grok --prompt-file`, running in your
+and `--agent plan`), `grok45high` (Grok 4.6 high effort, model pinned to `$GROK45HIGH_REVIEW_MODEL` —
+default `grok-4.6` — via `grok --prompt-file`, running in your
 checkout with a read-only tool allowlist `--tools read_file,list_dir,grep`, the MCP bridge removed
 (`--disallowed-tools search_tool,use_tool`), `--permission-mode plan`, `--sandbox read-only`); `agy`, bare `opencode`, and bare `grok`
 are relay-only and skipped with a warning (use `grok45high` for plan review).

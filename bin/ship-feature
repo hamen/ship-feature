@@ -326,6 +326,13 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # model instead (e.g. after dropping a different reviewer's subscription for billing reasons).
   local KIMI3_REVIEW_MODEL="${KIMI3_REVIEW_MODEL:-opencode-go/kimi-k3}"
 
+  # Pin the grok45high reviewer's model. Same override pattern as CURSOR_REVIEW_MODEL and
+  # KIMI3_REVIEW_MODEL above: env-only, outside SHIP_FEATURE_* (load_config never reads it),
+  # local so the override survives without leaking to global scope. Defaults to grok-4.6
+  # (xAI released it 2026-08-12); export GROK45HIGH_REVIEW_MODEL=grok-<version> to pin a
+  # different one without editing this script.
+  local GROK45HIGH_REVIEW_MODEL="${GROK45HIGH_REVIEW_MODEL:-grok-4.6}"
+
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
   # under --parallel neither the reviews nor the failure messages interleave; the caller
   # emits them in panel order after the barrier. kimi3 cannot modify your working tree: it pins
@@ -443,7 +450,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
                       && run_reviewer grok \
                            --prompt-file "$prompt_file" \
                            --cwd "$ro_cwd" \
-                           -m grok-4.5 \
+                           -m "$GROK45HIGH_REVIEW_MODEL" \
                            --reasoning-effort high \
                            --permission-mode plan \
                            --deny '*' \
@@ -457,7 +464,7 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
               else
                 out=$(run_reviewer grok \
                          --prompt-file "$prompt_file" \
-                         -m grok-4.5 \
+                         -m "$GROK45HIGH_REVIEW_MODEL" \
                          --reasoning-effort high \
                          --permission-mode plan \
                          --sandbox read-only \
