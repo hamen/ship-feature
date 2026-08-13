@@ -19,6 +19,15 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Changed
 
+- **`plan-review` now runs the panel in parallel by default**, with `--sequential` as the opt-out
+  (`--parallel` is kept as a no-op so existing callers keep working). The reviewers are independent, so
+  sequencing them bought nothing and multiplied the per-reviewer timeout by the panel size: a four-seat
+  panel at the standard 300s cap could sit for twenty minutes before printing a verdict, and a real
+  session lost two of those seats to timeouts before the third had even started. Parallel was already
+  implemented and already correct — reviews and diagnostics are buffered per reviewer and emitted in
+  panel order after the barrier, so nothing interleaves — it just had to be asked for by name, which
+  meant remembering it. `--sequential` remains useful when you want to watch one reviewer work, or to
+  keep concurrent agent load down.
 - **Plan-review (step 2) gets a 2-round cap and a disagreement-summary escalation to Gate 1** — the
   same discipline step 5's cross-review got in v0.3.0, in its own terms. `WORKFLOW.md` previously said
   only "iterate ≈2 rounds," which is a suggestion, not a rule: a real session ran **13 rounds** of

@@ -558,6 +558,19 @@ printf '%s' "$out" | grep -q "REVIEW-codex" && { echo "  ok   [-] plan-review re
 GDIR="$WORK/globdir"; mkdir -p "$GDIR"; : > "$GDIR/aaa"; : > "$GDIR/abb"
 ( cd "$GDIR" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers 'a*' >/dev/null 2>&1 ); check "plan-review does not glob-expand the reviewer list" $? 3
 
+# Parallel is the DEFAULT, so the flagless run must behave like the --parallel one: reviews are
+# buffered and emitted in panel order after the barrier, and the banner does not say "sequential".
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 2>&1); rc=$?
+check "plan-review runs the panel in parallel with no flag (0)" "$rc" 0
+n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review (default) ran all three reviewers" "$n" 3
+n=$(printf '%s' "$out" | grep -c -- "— sequential"); check "plan-review (default) does not announce sequential" "$n" 0
+
+# --sequential is the opt-out: still clean, still every reviewer, and it says so on the banner.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 --sequential 2>&1); rc=$?
+check "plan-review --sequential clean run exits 0" "$rc" 0
+n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review --sequential ran all three reviewers" "$n" 3
+n=$(printf '%s' "$out" | grep -c -- "— sequential"); check "plan-review --sequential announces the mode" "$n" 1
+
 # --parallel: clean run exits 0 and prints every reviewer (order-independent)
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 --parallel 2>/dev/null); rc=$?
 check "plan-review --parallel clean run exits 0" "$rc" 0
@@ -917,7 +930,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=162
+EXPECTED=168
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

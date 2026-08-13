@@ -103,9 +103,12 @@ ship-feature skill for any feature/fix.
 
 - `ship-feature preflight` — assert you're in a feature worktree branched off the default branch, with
   the worktree marker git-excluded (run before you start implementing).
-- `ship-feature plan-review [<file>] [--reviewers a,b,c] [--parallel]` — step 2: fan an implementation
+- `ship-feature plan-review [<file>] [--reviewers a,b,c] [--sequential]` — step 2: fan an implementation
   plan (a file, stdin, or `./plan.md`) out to a panel of agents for a **read-only** review and print each
-  one. Read-only means each reviewer is pinned to its CLI's read-only mode and none is given a way to
+  one. The panel runs **in parallel by default** — the reviewers are independent, so running them one
+  after another only serializes their timeouts, and a four-seat panel at 300s each can sit for twenty
+  minutes before it prints a verdict. Pass `--sequential` to run them one at a time and stream each
+  review as it lands. Read-only means each reviewer is pinned to its CLI's read-only mode and none is given a way to
   write your checkout or post anywhere — see [`WORKFLOW.md`](WORKFLOW.md) for what that does and does not
   guarantee for reviewers that run inside the checkout. Defaults the panel to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; nothing is
   written or posted. Supported reviewers

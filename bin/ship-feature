@@ -7,11 +7,17 @@
 #   ship-feature relay [..]  Transparent pass-through to `pr-review-relay`: forwards all args, preserves
 #                            stdout and the EXACT exit code, and prints (on stderr) a one-line reminder of
 #                            what each code means for the workflow.
-#   ship-feature plan-review [<file>] [--reviewers a,b,c] [--parallel]
+#   ship-feature plan-review [<file>] [--reviewers a,b,c] [--sequential]
 #                            Step 2: fan an implementation PLAN (a file, stdin, or ./plan.md) out to a
 #                            panel of agents for a read-only review; prints each review. Defaults the
-#                            panel to SHIP_FEATURE_PLAN_REVIEWERS, then SHIP_FEATURE_REVIEWERS. Exit 0
-#                            clean, 3 not-clean, 1 usage error.
+#                            panel to SHIP_FEATURE_PLAN_REVIEWERS, then SHIP_FEATURE_REVIEWERS. The
+#                            panel runs in PARALLEL by default: reviewers are independent, and running
+#                            them one after another multiplies the per-reviewer timeout by the panel
+#                            size (a 4-seat panel at 300s each could sit for 20 minutes before
+#                            printing a verdict). --sequential restores one-at-a-time, streaming each
+#                            review as it lands, for when you want to watch a single reviewer work or
+#                            to keep concurrent agent load down. Exit 0 clean, 3 not-clean, 1 usage
+#                            error.
 #   ship-feature help        This message.
 #
 # The workflow itself lives in WORKFLOW.md; this tool does not drive it. State/resume is intentionally
@@ -199,7 +205,10 @@ plan_relay_only() { case "$1" in opencode|antigravity|agy|grok) return 0;; *) re
 
 cmd_plan_review() {
   load_config
-  local reviewers="" file="" parallel=0 have_file=0 have_reviewers=0
+  # Parallel by default: the reviewers are independent, so sequencing them only serializes
+  # their timeouts. --sequential is the opt-out; --parallel is kept as a no-op so existing
+  # scripts and docs that pass it keep working.
+  local reviewers="" file="" parallel=1 have_file=0 have_reviewers=0
   while [ $# -gt 0 ]; do
     case "$1" in
       # Guard $2 so a trailing `--reviewers` (or one followed by a flag) is a clean usage
@@ -208,8 +217,9 @@ cmd_plan_review() {
                      case "$2" in -*) die "--reviewers needs a list, got the flag '$2'.";; esac
                      reviewers="$2"; have_reviewers=1; shift 2;;
       --reviewers=*) die "pass reviewers as two tokens: --reviewers <list> (the --reviewers=... form isn't supported)." ;;
-      --parallel)    parallel=1; shift;;
-      -h|--help)     echo "usage: ship-feature plan-review [<plan-file>] [--reviewers a,b,c] [--parallel]"; return 0;;
+      --parallel)    parallel=1; shift;;   # already the default; accepted so old callers don't break
+      --sequential)  parallel=0; shift;;
+      -h|--help)     echo "usage: ship-feature plan-review [<plan-file>] [--reviewers a,b,c] [--sequential]"; return 0;;
       # Everything after `--` is positional — collect the plan file from there too, don't drop it.
       --)            shift; while [ $# -gt 0 ]; do [ "$have_file" = 0 ] || die "only one plan file may be given."; file="$1"; have_file=1; shift; done; break;;
       -)             [ "$have_file" = 0 ] || die "only one plan file may be given (got '$file' and '-')."; file="-"; have_file=1; shift;;   # '-' = read stdin
@@ -268,7 +278,7 @@ cases, unhandled failure modes, risky or out-of-order steps, and anything it ove
 You have read-only access — do NOT write code or modify anything. Be concise. Group findings
 by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one line.')"
 
-  echo "▶ Plan review — reviewers: $reviewers${src:+ — plan: $src}$([ "$parallel" = 1 ] && printf ' — parallel')" >&2
+  echo "▶ Plan review — reviewers: $reviewers${src:+ — plan: $src}$([ "$parallel" = 1 ] || printf ' — sequential')" >&2
 
   # Per-reviewer state lives in files so it survives the subshells used under --parallel
   # (same technique as pr-review-relay). The EXIT trap removes the dir; the INT/TERM trap
