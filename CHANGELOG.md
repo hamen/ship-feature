@@ -6,6 +6,8 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-13
+
 ### Added
 
 - **`GROK45HIGH_REVIEW_MODEL`** overrides the `grok45high` plan-review reviewer's model (default bumped
@@ -304,6 +306,7 @@ First release.
   and gitleaks. (`scan-personal-data.sh` needs a private deny-list, so it runs locally pre-publication,
   not in CI.)
 
+[0.4.0]: https://github.com/hamen/ship-feature/releases/tag/v0.4.0
 [0.3.0]: https://github.com/hamen/ship-feature/releases/tag/v0.3.0
 [0.2.0]: https://github.com/hamen/ship-feature/releases/tag/v0.2.0
 [0.1.0]: https://github.com/hamen/ship-feature/releases/tag/v0.1.0

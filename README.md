@@ -27,13 +27,19 @@ each driver agent (Claude, Codex, Cursor) gets a thin adapter that points at it,
 
 ## 🆕 What's new
 
-**v0.4.0** — **plan-review gets its own 2-round cap.** Step 2's "iterate (≈2 rounds)" was a suggestion,
-not a rule — one real session ran 13 rounds before the panel agreed, burning ~1h15m on convergence
-instead of the plan. Plan-review now stops after round 2 with an open **plan-qualifying** finding
-(the plan is wrong, unsafe, or materially incomplete — a distinct term from step 5's PR-qualifying
-Should-fix) and hands Gate 1 a **disagreement summary** instead of grinding for consensus. A clean
-round 1 skips a wasted round 2 entirely. `WORKFLOW.md`, all three adapters, and the CLI's plan-review
-message state the same rule, checked by the same consistency suite as step 5.
+**v0.4.0** — **the plan-review panel runs in parallel, and knows when to stop.** Reviewers are
+independent, so running them one after another only serialized their timeouts: a four-seat panel at a
+300s cap could sit for twenty minutes before printing a verdict, and one real session lost two seats
+to timeouts before the third had even started. Parallel is now the default (`--sequential` opts out).
+Step 2 also gets its own **2-round cap** — its "iterate (≈2 rounds)" was a suggestion, not a rule, and
+one session ran 13 rounds before the panel agreed, burning ~1h15m on convergence instead of on the
+plan. Plan-review now stops after round 2 with an open **plan-qualifying** finding (the plan is wrong,
+unsafe, or materially incomplete — a distinct term from step 5's PR-qualifying Should-fix) and hands
+Gate 1 a **disagreement summary** instead of grinding for consensus; a clean round 1 skips a wasted
+round 2 entirely. `WORKFLOW.md`, all three adapters, and the CLI's plan-review message state the same
+rule, checked by the same consistency suite as step 5. Plus `GROK45HIGH_REVIEW_MODEL` and
+`KIMI3_REVIEW_MODEL`, so a reviewer can be re-pinned when its vendor ships a new model without waiting
+for a release.
 
 **v0.3.0** — **the review panel is given the plan, and stops iterating on findings that change
 nothing.** Reviewers used to see only the diff, so they could find bugs but never *"this is not what
