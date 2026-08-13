@@ -26,8 +26,9 @@ the **source repository**.
 Write a short, concrete plan: the problem, the approach, the files you expect to touch, and how success is
 verified.
 
-**Keep it in `~/.config/ship-feature/plans/<repo>-<slug>.md`** — not in the repository, and **not in an
-agent's session scratchpad.** The scratchpad is `/tmp` on most setups and `/tmp` is tmpfs on many of
+**Keep it in `~/.config/ship-feature/plans/<repo>-<slug>.md`** — creating that directory if it is not
+there, which on an install updated by `git pull` alone it will not be — and **not in the repository**,
+and **not in an agent's session scratchpad.** The scratchpad is `/tmp` on most setups and `/tmp` is tmpfs on many of
 them, so a plan kept there is held in RAM: a reboot destroys it, silently and completely.
 
 That matters more than it looks, because the plan is not a session artifact. It has to live as long as

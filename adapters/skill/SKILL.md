@@ -15,7 +15,7 @@ It is the single source of truth — do not restate or fork it here.
 
 The essentials you must honor:
 
-1. **Plan** it into `~/.config/ship-feature/plans/<repo>-<slug>.md` — **never** the repo, **never** a session
+1. **Plan** it into `~/.config/ship-feature/plans/<repo>-<slug>.md` (`mkdir -p` it if missing) — **never** the repo, **never** a session
    scratchpad (`/tmp` is tmpfs on many setups: a reboot destroys it, and the plan has to outlive every
    review round) — then **review the plan** with a panel:
    `ship-feature plan-review <that file> --reviewers <your agents>`

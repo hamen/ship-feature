@@ -11,7 +11,8 @@ task like diagnosis, review, or a question), follow the ship-feature workflow in
 code. The canonical process is `~/.config/ship-feature/WORKFLOW.md` — read it and follow it.
 
 Non-negotiable points:
-- Keep the plan in `~/.config/ship-feature/plans/<repo>-<slug>.md` — **never** in the repo and **never** in a session
+- Keep the plan in `~/.config/ship-feature/plans/<repo>-<slug>.md` — `mkdir -p` it if missing —
+  **never** in the repo and **never** in a session
   scratchpad (`/tmp` is tmpfs on many setups: a reboot destroys it, and the plan has to outlive
   every review round).
 - Plan first; have it reviewed; then **stop for explicit human approval before writing to the source repo**.

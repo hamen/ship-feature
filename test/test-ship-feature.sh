@@ -1055,6 +1055,13 @@ for adapter in adapters/codex/AGENTS.snippet.md adapters/cursor/ship-feature.md 
   else
     echo "  FAIL $adapter does not name ~/.config/ship-feature/plans/"; FAIL=$((FAIL+1))
   fi
+  # Say so, because no CLI path can run before it: the agent writes the plan
+  # first, and an install updated by `git pull` alone never re-runs install.sh.
+  if grep -qF 'mkdir -p' "$HERE/../$adapter"; then
+    echo "  ok   [-] $adapter tells the agent to create the directory"; PASS=$((PASS+1))
+  else
+    echo "  FAIL $adapter does not say to create the plans directory"; FAIL=$((FAIL+1))
+  fi
   if grep -qE '<plan\.md>|`plan\.md`|\./plan\.md' "$HERE/../$adapter"; then
     echo "  FAIL $adapter still suggests a bare plan.md"; FAIL=$((FAIL+1))
   else
@@ -1087,7 +1094,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=195
+EXPECTED=198
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
