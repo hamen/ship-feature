@@ -55,7 +55,15 @@ done
 # readable. A plan describes an unreleased change in a private repository: file
 # names, approach, sometimes the reason a thing is broken. Under the common 022
 # umask every local user could read it.
-chmod 700 "$CFG/plans" 2>/dev/null || { echo "  ! could not secure $CFG/plans" >&2; fails=$((fails + 1)); }
+# NOT through a symlink. `chmod` follows one, so a `plans` link pointing at a
+# shared directory would have that directory tightened to 0700 — an installer
+# quietly changing something outside its own tree, which is never acceptable
+# however well meant. Left alone and reported, so whoever linked it decides.
+if [ -L "$CFG/plans" ]; then
+  echo "  ! $CFG/plans is a symlink — not changing its permissions; make sure its target is not world readable" >&2
+elif ! chmod 700 "$CFG/plans" 2>/dev/null; then
+  echo "  ! could not secure $CFG/plans" >&2; fails=$((fails + 1))
+fi
 
 # 1) WORKFLOW.md — the path every adapter references.
 if [ "$COPY_WORKFLOW" = 1 ]; then

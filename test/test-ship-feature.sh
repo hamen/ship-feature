@@ -215,6 +215,14 @@ FAKEHOME3="$WORK/home3"; mkdir -p "$FAKEHOME3/.config/ship-feature"
 : > "$FAKEHOME3/.config/ship-feature/plans"
 ( cd "$HERE/.." && HOME="$FAKEHOME3" bash install.sh >/dev/null 2>&1 )
 check "install.sh fails when the plans path is a file" $? 1
+# A `plans` SYMLINK must not have its target tightened: chmod follows the link,
+# and an installer silently changing permissions outside its own tree is not
+# acceptable however well meant.
+FAKEHOME4="$WORK/home4"; mkdir -p "$FAKEHOME4/.config/ship-feature" "$WORK/shared-plans"
+chmod 775 "$WORK/shared-plans"
+ln -s "$WORK/shared-plans" "$FAKEHOME4/.config/ship-feature/plans"
+( cd "$HERE/.." && HOME="$FAKEHOME4" bash install.sh >/dev/null 2>&1 )
+check "install.sh leaves a symlinked plans target alone" "$(dir_mode "$WORK/shared-plans")" "drwxrwxr-x"
 ( cd "$HERE/.." && HOME="$FAKEHOME" bash install.sh >/dev/null 2>&1 )
 # grep -c prints "0" and exits 1 on no match; capture stdout, don't append via `|| echo 0`.
 n=$(grep -cF '# >>> ship-feature >>>' "$FAKEHOME/.codex/AGENTS.md" 2>/dev/null); [ -n "$n" ] || n=0
@@ -231,22 +239,34 @@ chmod +x "$BIN/codex"
 # depending on it would tie these assertions to the order of unrelated blocks.
 PLANCFG="$WORK/plancfg"; mkdir -p "$PLANCFG"
 printf 'SHIP_FEATURE_REVIEWERS=codex\n' > "$PLANCFG/config"
+# The plans directory is overridden EXPLICITLY. Deriving it from
+# SHIP_FEATURE_CONFIG looked tidier and was wrong: that variable is routinely
+# `/dev/null` to mean "no config", which would put plans in `/dev`.
+PLANDIR="$WORK/plancfg/plans"
 PLANWORK="$WORK/planmsg"; mkdir -p "$PLANWORK"; printf 'a plan\n' > "$PLANWORK/plan.md"
-err=$( cd "$PLANWORK" && PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$PLANCFG/config" \
+err=$( cd "$PLANWORK" && PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$PLANCFG/config" SHIP_FEATURE_PLANS_DIR="$PLANDIR" \
        bash "$CLI" plan-review --reviewers codex 2>&1 >/dev/null )
 case "$err" in
-  *"keep plans in $PLANCFG/plans"*)
+  *"keep plans in $PLANDIR"*)
     echo "  ok   [-] reading ./plan.md warns, naming the configured plans directory"; PASS=$((PASS+1));;
   *) echo "  FAIL ./plan.md warning missing or names the wrong directory: $err"; FAIL=$((FAIL+1));;
 esac
 PLANEMPTY="$WORK/planempty"; mkdir -p "$PLANEMPTY"
-err=$( cd "$PLANEMPTY" && PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$PLANCFG/config" \
+err=$( cd "$PLANEMPTY" && PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$PLANCFG/config" SHIP_FEATURE_PLANS_DIR="$PLANDIR" \
        bash "$CLI" plan-review --reviewers codex </dev/null 2>&1 >/dev/null )
 case "$err" in
-  *"no plan given"*"$PLANCFG/plans"*)
+  *"no plan given"*"$PLANDIR"*)
     echo "  ok   [-] the no-plan error names the configured plans directory"; PASS=$((PASS+1));;
   *) echo "  FAIL no-plan error missing or names the wrong directory: $err"; FAIL=$((FAIL+1));;
 esac
+# Upgrade-safe: an existing install that pulls the new workflow has no plans
+# directory until install.sh runs again, and the first plan write would fail.
+# The CLI creates it on demand.
+rmdir "$PLANDIR" 2>/dev/null
+( cd "$PLANEMPTY" && PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$PLANCFG/config" SHIP_FEATURE_PLANS_DIR="$PLANDIR" \
+  bash "$CLI" plan-review --reviewers codex </dev/null >/dev/null 2>&1 )
+check "the CLI creates the plans directory on demand" "$([ -d "$PLANDIR" ] && echo yes || echo no)" yes
+check "and creates it owner-only" "$(dir_mode "$PLANDIR")" "drwx------"
 rm -f "$BIN/codex"
 # The old wording gone, not merely the new wording present: an added line and a
 # surviving one look identical to a grep for the new text, and very different to
@@ -1067,7 +1087,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=192
+EXPECTED=195
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
