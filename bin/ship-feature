@@ -41,6 +41,26 @@ kill_tree() {
   kill -TERM "$pid" 2>/dev/null || true
 }
 
+# Where WORKFLOW.md §1 says plans live. One canonical path, matching install.sh
+# by construction — a reviewer found the alternative: deriving it from
+# SHIP_FEATURE_CONFIG made the two disagree for anyone with a custom config, and
+# `SHIP_FEATURE_CONFIG=/dev/null` (the ordinary way to say "no config") resolved
+# the plans directory to `/dev`. That variable names a config FILE to read, not a
+# relocation of the install. `SHIP_FEATURE_PLANS_DIR` is the explicit override.
+SF_PLANS_DIR="${SHIP_FEATURE_PLANS_DIR:-$HOME/.config/ship-feature/plans}"
+
+# Created on demand, not only by the installer. An existing install that updates
+# the repository gets the new workflow — which tells its agent to write a plan
+# here — while the directory still does not exist, and the first plan write
+# fails. Best effort: this is a diagnostic path, not a reason to refuse a
+# command. Mode 0700 for the same reason the installer sets it: a plan describes
+# an unreleased change in a private repository. A symlink is left alone.
+sf_ensure_plans_dir() {
+  [ -e "$SF_PLANS_DIR" ] && return 0
+  mkdir -p "$SF_PLANS_DIR" 2>/dev/null || return 0
+  chmod 700 "$SF_PLANS_DIR" 2>/dev/null || true
+}
+
 # Load ~/.config/ship-feature/config as plain KEY=value lines — NEVER shell-`source`d, and only known
 # SHIP_FEATURE_* keys are honored. Environment variables win over the file.
 load_config() {
@@ -243,8 +263,20 @@ cmd_plan_review() {
     [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "plan file is empty: $file"
   else
     if [ ! -t 0 ]; then plan="$(cat)"; [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && src="(stdin)"; fi
-    if [ -z "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && [ -f plan.md ]; then plan="$(cat plan.md)"; src="plan.md"; fi
-    [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "no plan given — pass a file, pipe it on stdin, or create a non-empty ./plan.md."
+    # `./plan.md` is still read when it is there — breaking existing setups to
+    # make a point would be worse than the point. But it is no longer SUGGESTED:
+    # the message names the durable directory instead, because a plan in the cwd
+    # is usually a plan in the repository, and always a plan a `rm -rf` of a
+    # worktree takes with it.
+    if [ -z "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && [ -f plan.md ]; then
+      plan="$(cat plan.md)"; src="plan.md"
+      sf_ensure_plans_dir
+      printf '  ! reading ./plan.md — keep plans in %s instead (see WORKFLOW.md §1)\n' "$SF_PLANS_DIR" >&2
+    fi
+    if [ -z "$(printf '%s' "$plan" | tr -d '[:space:]')" ]; then
+      sf_ensure_plans_dir
+      die "no plan given — pass a file (keep it in $SF_PLANS_DIR) or pipe it on stdin."
+    fi
   fi
 
   # Panel: --reviewers > SHIP_FEATURE_REVIEWERS > refuse. The resolved panel is your

@@ -192,10 +192,90 @@ if [ -f "$FAKEHOME/.config/ship-feature/WORKFLOW.md" ] && [ -f "$FAKEHOME/.local
    && grep -qF '# >>> ship-feature >>>' "$FAKEHOME/.codex/AGENTS.md" 2>/dev/null; then
   echo "  ok   [-] install wired WORKFLOW + CLI + skill + Codex block"; PASS=$((PASS+1))
 else echo "  FAIL install did not wire everything"; FAIL=$((FAIL+1)); fi
+# The plans directory is step 1 of the pipeline, so it must exist before the
+# first plan is written — not be created by some later command that happens to
+# run first.
+check "install.sh creates the plans directory" "$([ -d "$FAKEHOME/.config/ship-feature/plans" ] && echo yes || echo no)" yes
+# `stat -c` is GNU; macOS ships BSD stat and would return an empty string, so the
+# assertion below would compare "" against 700 and fail the required macOS job.
+# `ls -ld` is in POSIX and prints the same permission string on both.
+dir_mode() { ls -ld "$1" 2>/dev/null | cut -c1-10; }
+# Owner-only: a plan describes an unreleased change in a private repo, and the
+# common 022 umask would leave it readable by every local user.
+check "install.sh makes the plans directory owner-only" "$(dir_mode "$FAKEHOME/.config/ship-feature/plans")" "drwx------"
+# Set on EVERY run, not only at creation — a directory made before this rule
+# existed is precisely the one that is still world readable.
+chmod 755 "$FAKEHOME/.config/ship-feature/plans"
+( cd "$HERE/.." && HOME="$FAKEHOME" bash install.sh >/dev/null 2>&1 )
+check "install.sh re-secures an existing loose plans directory" "$(dir_mode "$FAKEHOME/.config/ship-feature/plans")" "drwx------"
+# Fail-closed: a FILE where the plans directory belongs must make the install
+# fail loudly. Reporting success without it is the dangerous outcome — the next
+# plan goes somewhere volatile and nobody is told.
+FAKEHOME3="$WORK/home3"; mkdir -p "$FAKEHOME3/.config/ship-feature"
+: > "$FAKEHOME3/.config/ship-feature/plans"
+( cd "$HERE/.." && HOME="$FAKEHOME3" bash install.sh >/dev/null 2>&1 )
+check "install.sh fails when the plans path is a file" $? 1
+# A `plans` SYMLINK must not have its target tightened: chmod follows the link,
+# and an installer silently changing permissions outside its own tree is not
+# acceptable however well meant.
+FAKEHOME4="$WORK/home4"; mkdir -p "$FAKEHOME4/.config/ship-feature" "$WORK/shared-plans"
+chmod 775 "$WORK/shared-plans"
+ln -s "$WORK/shared-plans" "$FAKEHOME4/.config/ship-feature/plans"
+( cd "$HERE/.." && HOME="$FAKEHOME4" bash install.sh >/dev/null 2>&1 )
+check "install.sh leaves a symlinked plans target alone" "$(dir_mode "$WORK/shared-plans")" "drwxrwxr-x"
 ( cd "$HERE/.." && HOME="$FAKEHOME" bash install.sh >/dev/null 2>&1 )
 # grep -c prints "0" and exits 1 on no match; capture stdout, don't append via `|| echo 0`.
 n=$(grep -cF '# >>> ship-feature >>>' "$FAKEHOME/.codex/AGENTS.md" 2>/dev/null); [ -n "$n" ] || n=0
 check "install.sh is idempotent (exactly one Codex block)" "$n" 1
+
+# The two messages that steer a user away from the volatile path — run for real
+# against a stubbed reviewer, not grepped out of the source. A source match can
+# pass while the line is unreachable, or while the path it prints is wrong; this
+# asserts the message a user actually sees AND that the directory in it follows
+# SHIP_FEATURE_CONFIG rather than being hard-coded to $HOME.
+printf '#!/usr/bin/env bash\ncat >/dev/null 2>&1\necho "stub review"\n' > "$BIN/codex"
+chmod +x "$BIN/codex"
+# Its own config dir: the shared $CFGDIR is created further down this file, and
+# depending on it would tie these assertions to the order of unrelated blocks.
+PLANCFG="$WORK/plancfg"; mkdir -p "$PLANCFG"
+printf 'SHIP_FEATURE_REVIEWERS=codex\n' > "$PLANCFG/config"
+# The plans directory is overridden EXPLICITLY. Deriving it from
+# SHIP_FEATURE_CONFIG looked tidier and was wrong: that variable is routinely
+# `/dev/null` to mean "no config", which would put plans in `/dev`.
+PLANDIR="$WORK/plancfg/plans"
+PLANWORK="$WORK/planmsg"; mkdir -p "$PLANWORK"; printf 'a plan\n' > "$PLANWORK/plan.md"
+err=$( cd "$PLANWORK" && PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$PLANCFG/config" SHIP_FEATURE_PLANS_DIR="$PLANDIR" \
+       bash "$CLI" plan-review --reviewers codex 2>&1 >/dev/null )
+case "$err" in
+  *"keep plans in $PLANDIR"*)
+    echo "  ok   [-] reading ./plan.md warns, naming the configured plans directory"; PASS=$((PASS+1));;
+  *) echo "  FAIL ./plan.md warning missing or names the wrong directory: $err"; FAIL=$((FAIL+1));;
+esac
+PLANEMPTY="$WORK/planempty"; mkdir -p "$PLANEMPTY"
+err=$( cd "$PLANEMPTY" && PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$PLANCFG/config" SHIP_FEATURE_PLANS_DIR="$PLANDIR" \
+       bash "$CLI" plan-review --reviewers codex </dev/null 2>&1 >/dev/null )
+case "$err" in
+  *"no plan given"*"$PLANDIR"*)
+    echo "  ok   [-] the no-plan error names the configured plans directory"; PASS=$((PASS+1));;
+  *) echo "  FAIL no-plan error missing or names the wrong directory: $err"; FAIL=$((FAIL+1));;
+esac
+# Upgrade-safe: an existing install that pulls the new workflow has no plans
+# directory until install.sh runs again, and the first plan write would fail.
+# The CLI creates it on demand.
+rmdir "$PLANDIR" 2>/dev/null
+( cd "$PLANEMPTY" && PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$PLANCFG/config" SHIP_FEATURE_PLANS_DIR="$PLANDIR" \
+  bash "$CLI" plan-review --reviewers codex </dev/null >/dev/null 2>&1 )
+check "the CLI creates the plans directory on demand" "$([ -d "$PLANDIR" ] && echo yes || echo no)" yes
+check "and creates it owner-only" "$(dir_mode "$PLANDIR")" "drwx------"
+rm -f "$BIN/codex"
+# The old wording gone, not merely the new wording present: an added line and a
+# surviving one look identical to a grep for the new text, and very different to
+# somebody reading the error.
+if grep -q 'create a non-empty ./plan.md' "$CLI"; then
+  echo "  FAIL bin/ship-feature still tells users to create ./plan.md"; FAIL=$((FAIL+1))
+else
+  echo "  ok   [-] bin/ship-feature no longer tells users to create ./plan.md"; PASS=$((PASS+1))
+fi
 
 # --- generic scanner: proves it catches each claimed category ----------------
 bash "$HERE/../scripts/scan-generic.sh" "$HERE/fixtures/leaky.sample" >/dev/null 2>&1; check "generic scan flags the leaky fixture (email + home path)" $? 1
@@ -965,6 +1045,30 @@ sf_plan_tool_clause() {  # sf_plan_tool_clause <label> <extended-regex>
     && { echo "  ok   [-] bin/ship-feature's plan-review exit-0 message states: $label"; PASS=$((PASS+1)); } \
     || { echo "  FAIL adapter consistency: '$label' missing from bin/ship-feature's plan-review exit-0 message"; FAIL=$((FAIL+1)); }
 }
+# Every adapter must name the durable plans directory, and none may still suggest a
+# bare `plan.md`. The adapters are what an agent actually loads — WORKFLOW.md is
+# canonical, but nobody reads it first — so a rule that lives only there reaches
+# nobody, and the plan goes back to the scratchpad that a reboot wipes.
+for adapter in adapters/codex/AGENTS.snippet.md adapters/cursor/ship-feature.md adapters/skill/SKILL.md; do
+  if grep -qF '~/.config/ship-feature/plans/' "$HERE/../$adapter"; then
+    echo "  ok   [-] $adapter names the durable plans directory"; PASS=$((PASS+1))
+  else
+    echo "  FAIL $adapter does not name ~/.config/ship-feature/plans/"; FAIL=$((FAIL+1))
+  fi
+  # Say so, because no CLI path can run before it: the agent writes the plan
+  # first, and an install updated by `git pull` alone never re-runs install.sh.
+  if grep -qF 'mkdir -p' "$HERE/../$adapter"; then
+    echo "  ok   [-] $adapter tells the agent to create the directory"; PASS=$((PASS+1))
+  else
+    echo "  FAIL $adapter does not say to create the plans directory"; FAIL=$((FAIL+1))
+  fi
+  if grep -qE '<plan\.md>|`plan\.md`|\./plan\.md' "$HERE/../$adapter"; then
+    echo "  FAIL $adapter still suggests a bare plan.md"; FAIL=$((FAIL+1))
+  else
+    echo "  ok   [-] $adapter no longer suggests a bare plan.md"; PASS=$((PASS+1))
+  fi
+done
+
 sf_plan_tool_clause "clean round goes straight to Gate 1"     'straight to gate 1'
 sf_plan_tool_clause "cap is 2 rounds"                         'cap.{0,10}(2|two) rounds'
 sf_plan_tool_clause "do not run a round 3 on your own"        'do not run a round 3'
@@ -990,7 +1094,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=179
+EXPECTED=198
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

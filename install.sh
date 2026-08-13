@@ -36,7 +36,34 @@ link() {
   if ln -sfn "$src" "$dst"; then say "linked  $dst -> $src"; else echo "  ! failed to link $dst" >&2; fails=$((fails + 1)); fi
 }
 
-mkdir -p "$CFG" "$BIN" "$AGENTS_SKILLS/ship-feature" "$HOME/.claude/skills" "$HOME/.cursor/rules"
+# `$CFG/plans` is where WORKFLOW.md §1 tells every agent to keep its plans, and a
+# plan is written before anything else in the pipeline runs — so on a fresh
+# install the directory has to exist already. Missing, the first plan of a new
+# setup has nowhere to go, and the agent falls back to the session scratchpad,
+# which is exactly the tmpfs a reboot wipes.
+# Fails CLOSED, one directory at a time. `mkdir -p` returns non-zero when the
+# path exists as a FILE, and a single combined call would let the installer walk
+# on and report success with a directory missing — the worst outcome here, since
+# the thing that then goes wrong is a plan silently written somewhere volatile.
+for dir in "$CFG" "$CFG/plans" "$BIN" "$AGENTS_SKILLS/ship-feature" \
+           "$HOME/.claude/skills" "$HOME/.cursor/rules"; do
+  mkdir -p "$dir" || { echo "  ! could not create $dir" >&2; fails=$((fails + 1)); }
+done
+
+# Owner-only, and set on every run rather than only at creation — an existing
+# directory from before this line was added is exactly the one that is world
+# readable. A plan describes an unreleased change in a private repository: file
+# names, approach, sometimes the reason a thing is broken. Under the common 022
+# umask every local user could read it.
+# NOT through a symlink. `chmod` follows one, so a `plans` link pointing at a
+# shared directory would have that directory tightened to 0700 — an installer
+# quietly changing something outside its own tree, which is never acceptable
+# however well meant. Left alone and reported, so whoever linked it decides.
+if [ -L "$CFG/plans" ]; then
+  echo "  ! $CFG/plans is a symlink — not changing its permissions; make sure its target is not world readable" >&2
+elif ! chmod 700 "$CFG/plans" 2>/dev/null; then
+  echo "  ! could not secure $CFG/plans" >&2; fails=$((fails + 1))
+fi
 
 # 1) WORKFLOW.md — the path every adapter references.
 if [ "$COPY_WORKFLOW" = 1 ]; then
@@ -114,6 +141,7 @@ echo "--- smoke test ---"
 smoke() { if eval "$1"; then echo "  ✓ $2"; else echo "  ! $2 — FAILED" >&2; fails=$((fails + 1)); fi; }
 smoke '"$BIN/ship-feature" help >/dev/null 2>&1'            "ship-feature runs"
 smoke '[ -f "$CFG/WORKFLOW.md" ]'                           "WORKFLOW.md resolves at $CFG/WORKFLOW.md"
+smoke '[ -d "$CFG/plans" ]'                                 "plans directory resolves at $CFG/plans"
 smoke '[ -f "$HOME/.claude/skills/ship-feature/SKILL.md" ]' "Claude skill resolves"
 smoke '[ -f "$HOME/.cursor/rules/ship-feature.md" ]'        "Cursor rule resolves"
 smoke 'grep -qF "# >>> ship-feature >>>" "$AGENTS" 2>/dev/null' "Codex AGENTS.md block present"

@@ -10,6 +10,10 @@ like diagnosis, review, or a question), follow the ship-feature workflow rather 
 away. The canonical process is `~/.config/ship-feature/WORKFLOW.md` — read it and follow it.
 
 Non-negotiable points:
+- Keep the plan in `~/.config/ship-feature/plans/<repo>-<slug>.md` — `mkdir -p` it if missing —
+  **never** in the repo and **never** in a session
+  scratchpad (`/tmp` is tmpfs on many setups: a reboot destroys it, and the plan has to outlive
+  every review round).
 - Plan first; have the plan reviewed; then **stop for explicit human approval before writing to the
   source repo**.
 - **Plan-review has its own 2-round cap** (distinct from the PR cross-review loop below — its
@@ -29,7 +33,7 @@ Non-negotiable points:
   human-authorized extra round is not a third autonomous round: it either resolves cleanly, or produces
   an updated disagreement summary and returns to Gate 1 again.
 - Implement in a **git worktree**, stage explicit paths, open a PR.
-- Cross-review with `ship-feature relay --author cursor --reviewers <your agents> --context-file <plan.md>`
+- Cross-review with `ship-feature relay --author cursor --reviewers <your agents> --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md`
   (explicit list = the agents you have, e.g. claude,codex,cursor). **Always pass the plan** with
   `--context-file`: a reviewer that cannot see the intent can find bugs but not "this is not what we
   agreed to build". The **plan file is the source** the PR body is generated from, and is **immutable once approved** —
