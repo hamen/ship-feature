@@ -196,6 +196,13 @@ else echo "  FAIL install did not wire everything"; FAIL=$((FAIL+1)); fi
 # first plan is written — not be created by some later command that happens to
 # run first.
 check "install.sh creates the plans directory" "$([ -d "$FAKEHOME/.config/ship-feature/plans" ] && echo yes || echo no)" yes
+# Fail-closed: a FILE where the plans directory belongs must make the install
+# fail loudly. Reporting success without it is the dangerous outcome — the next
+# plan goes somewhere volatile and nobody is told.
+FAKEHOME3="$WORK/home3"; mkdir -p "$FAKEHOME3/.config/ship-feature"
+: > "$FAKEHOME3/.config/ship-feature/plans"
+( cd "$HERE/.." && HOME="$FAKEHOME3" bash install.sh >/dev/null 2>&1 )
+check "install.sh fails when the plans path is a file" $? 1
 ( cd "$HERE/.." && HOME="$FAKEHOME" bash install.sh >/dev/null 2>&1 )
 # grep -c prints "0" and exits 1 on no match; capture stdout, don't append via `|| echo 0`.
 n=$(grep -cF '# >>> ship-feature >>>' "$FAKEHOME/.codex/AGENTS.md" 2>/dev/null); [ -n "$n" ] || n=0
@@ -994,7 +1001,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=180
+EXPECTED=181
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

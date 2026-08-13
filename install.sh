@@ -41,7 +41,14 @@ link() {
 # install the directory has to exist already. Missing, the first plan of a new
 # setup has nowhere to go, and the agent falls back to the session scratchpad,
 # which is exactly the tmpfs a reboot wipes.
-mkdir -p "$CFG" "$CFG/plans" "$BIN" "$AGENTS_SKILLS/ship-feature" "$HOME/.claude/skills" "$HOME/.cursor/rules"
+# Fails CLOSED, one directory at a time. `mkdir -p` returns non-zero when the
+# path exists as a FILE, and a single combined call would let the installer walk
+# on and report success with a directory missing — the worst outcome here, since
+# the thing that then goes wrong is a plan silently written somewhere volatile.
+for dir in "$CFG" "$CFG/plans" "$BIN" "$AGENTS_SKILLS/ship-feature" \
+           "$HOME/.claude/skills" "$HOME/.cursor/rules"; do
+  mkdir -p "$dir" || { echo "  ! could not create $dir" >&2; fails=$((fails + 1)); }
+done
 
 # 1) WORKFLOW.md — the path every adapter references.
 if [ "$COPY_WORKFLOW" = 1 ]; then
@@ -119,6 +126,7 @@ echo "--- smoke test ---"
 smoke() { if eval "$1"; then echo "  ✓ $2"; else echo "  ! $2 — FAILED" >&2; fails=$((fails + 1)); fi; }
 smoke '"$BIN/ship-feature" help >/dev/null 2>&1'            "ship-feature runs"
 smoke '[ -f "$CFG/WORKFLOW.md" ]'                           "WORKFLOW.md resolves at $CFG/WORKFLOW.md"
+smoke '[ -d "$CFG/plans" ]'                                 "plans directory resolves at $CFG/plans"
 smoke '[ -f "$HOME/.claude/skills/ship-feature/SKILL.md" ]' "Claude skill resolves"
 smoke '[ -f "$HOME/.cursor/rules/ship-feature.md" ]'        "Cursor rule resolves"
 smoke 'grep -qF "# >>> ship-feature >>>" "$AGENTS" 2>/dev/null' "Codex AGENTS.md block present"
