@@ -15,7 +15,10 @@ It is the single source of truth — do not restate or fork it here.
 
 The essentials you must honor:
 
-1. **Plan** it, then **review the plan** with a panel: `ship-feature plan-review <file> --reviewers <your agents>`
+1. **Plan** it into `~/.config/ship-feature/plans/<repo>-<slug>.md` — **never** the repo, **never** a session
+   scratchpad (`/tmp` is tmpfs on many setups: a reboot destroys it, and the plan has to outlive every
+   review round) — then **review the plan** with a panel:
+   `ship-feature plan-review <that file> --reviewers <your agents>`
    (defaults to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; read-only; exit `0` means every
    reviewer responded — not that the reviews are clean, `3` re-run). A single reviewer via
    `codex exec --sandbox read-only` still works.
@@ -41,7 +44,7 @@ The essentials you must honor:
    to the source repository before that.
 3. Implement in a **git worktree** (never the main tree), stage explicit paths, open a **PR**. Run
    `ship-feature preflight` first.
-4. Run the **cross-review**: `ship-feature relay --author <self> --reviewers <your agents> --context-file <plan.md>`
+4. Run the **cross-review**: `ship-feature relay --author <self> --reviewers <your agents> --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md`
    (name the reviewers you have — the quorum — so a missing one fails rather than thinning the panel;
    e.g. `claude,codex,cursor`). **Always pass the plan** with `--context-file`: a reviewer that cannot
    see the intent can find bugs but not *"this is not what we agreed to build"*.

@@ -976,6 +976,23 @@ sf_plan_tool_clause() {  # sf_plan_tool_clause <label> <extended-regex>
     && { echo "  ok   [-] bin/ship-feature's plan-review exit-0 message states: $label"; PASS=$((PASS+1)); } \
     || { echo "  FAIL adapter consistency: '$label' missing from bin/ship-feature's plan-review exit-0 message"; FAIL=$((FAIL+1)); }
 }
+# Every adapter must name the durable plans directory, and none may still suggest a
+# bare `plan.md`. The adapters are what an agent actually loads — WORKFLOW.md is
+# canonical, but nobody reads it first — so a rule that lives only there reaches
+# nobody, and the plan goes back to the scratchpad that a reboot wipes.
+for adapter in adapters/codex/AGENTS.snippet.md adapters/cursor/ship-feature.md adapters/skill/SKILL.md; do
+  if grep -qF '~/.config/ship-feature/plans/' "$HERE/../$adapter"; then
+    echo "  ok   [-] $adapter names the durable plans directory"; PASS=$((PASS+1))
+  else
+    echo "  FAIL $adapter does not name ~/.config/ship-feature/plans/"; FAIL=$((FAIL+1))
+  fi
+  if grep -qE '<plan\.md>|`plan\.md`|\./plan\.md' "$HERE/../$adapter"; then
+    echo "  FAIL $adapter still suggests a bare plan.md"; FAIL=$((FAIL+1))
+  else
+    echo "  ok   [-] $adapter no longer suggests a bare plan.md"; PASS=$((PASS+1))
+  fi
+done
+
 sf_plan_tool_clause "clean round goes straight to Gate 1"     'straight to gate 1'
 sf_plan_tool_clause "cap is 2 rounds"                         'cap.{0,10}(2|two) rounds'
 sf_plan_tool_clause "do not run a round 3 on your own"        'do not run a round 3'
@@ -1001,7 +1018,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=181
+EXPECTED=187
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
