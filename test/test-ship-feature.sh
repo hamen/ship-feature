@@ -196,14 +196,18 @@ else echo "  FAIL install did not wire everything"; FAIL=$((FAIL+1)); fi
 # first plan is written — not be created by some later command that happens to
 # run first.
 check "install.sh creates the plans directory" "$([ -d "$FAKEHOME/.config/ship-feature/plans" ] && echo yes || echo no)" yes
+# `stat -c` is GNU; macOS ships BSD stat and would return an empty string, so the
+# assertion below would compare "" against 700 and fail the required macOS job.
+# `ls -ld` is in POSIX and prints the same permission string on both.
+dir_mode() { ls -ld "$1" 2>/dev/null | cut -c1-10; }
 # Owner-only: a plan describes an unreleased change in a private repo, and the
 # common 022 umask would leave it readable by every local user.
-check "install.sh makes the plans directory owner-only" "$(stat -c '%a' "$FAKEHOME/.config/ship-feature/plans" 2>/dev/null)" 700
+check "install.sh makes the plans directory owner-only" "$(dir_mode "$FAKEHOME/.config/ship-feature/plans")" "drwx------"
 # Set on EVERY run, not only at creation — a directory made before this rule
 # existed is precisely the one that is still world readable.
 chmod 755 "$FAKEHOME/.config/ship-feature/plans"
 ( cd "$HERE/.." && HOME="$FAKEHOME" bash install.sh >/dev/null 2>&1 )
-check "install.sh re-secures an existing loose plans directory" "$(stat -c '%a' "$FAKEHOME/.config/ship-feature/plans" 2>/dev/null)" 700
+check "install.sh re-secures an existing loose plans directory" "$(dir_mode "$FAKEHOME/.config/ship-feature/plans")" "drwx------"
 # Fail-closed: a FILE where the plans directory belongs must make the install
 # fail loudly. Reporting success without it is the dangerous outcome — the next
 # plan goes somewhere volatile and nobody is told.
@@ -215,6 +219,26 @@ check "install.sh fails when the plans path is a file" $? 1
 # grep -c prints "0" and exits 1 on no match; capture stdout, don't append via `|| echo 0`.
 n=$(grep -cF '# >>> ship-feature >>>' "$FAKEHOME/.codex/AGENTS.md" 2>/dev/null); [ -n "$n" ] || n=0
 check "install.sh is idempotent (exactly one Codex block)" "$n" 1
+
+# The two messages that steer a user away from the volatile path. Asserted
+# against the source, the same way the plan-review exit messages above are: the
+# alternative is invoking a real reviewer, which these tests must never do. A
+# silent regression here is the whole vulnerability coming back.
+if grep -Eq 'reading \./plan\.md.*keep plans in' "$CLI"; then
+  echo "  ok   [-] reading ./plan.md warns and names the plans directory"; PASS=$((PASS+1))
+else
+  echo "  FAIL reading ./plan.md does not warn about the plans directory"; FAIL=$((FAIL+1))
+fi
+if grep -Eq 'no plan given.*\$SF_PLANS_DIR' "$CLI"; then
+  echo "  ok   [-] the no-plan error names the plans directory"; PASS=$((PASS+1))
+else
+  echo "  FAIL the no-plan error does not name the plans directory"; FAIL=$((FAIL+1))
+fi
+if grep -q 'create a non-empty ./plan.md' "$CLI"; then
+  echo "  FAIL bin/ship-feature still tells users to create ./plan.md"; FAIL=$((FAIL+1))
+else
+  echo "  ok   [-] bin/ship-feature no longer tells users to create ./plan.md"; PASS=$((PASS+1))
+fi
 
 # --- generic scanner: proves it catches each claimed category ----------------
 bash "$HERE/../scripts/scan-generic.sh" "$HERE/fixtures/leaky.sample" >/dev/null 2>&1; check "generic scan flags the leaky fixture (email + home path)" $? 1
@@ -1026,7 +1050,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=189
+EXPECTED=192
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
