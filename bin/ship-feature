@@ -595,7 +595,10 @@ main() {
     preflight)   cmd_preflight "$@" ;;
     relay)       cmd_relay "$@" ;;
     plan-review) cmd_plan_review "$@" ;;
-    help|-h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+    # Print the whole header comment block — from line 2 to the first line that is not a
+    # comment. A hardcoded end line silently truncates help the moment anyone documents a new
+    # flag up there, which is exactly how this broke once; the shebang is the only line skipped.
+    help|-h|--help) awk 'NR>1 { if ($0 !~ /^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//' ;;
     *) die "unknown command: $sub (try: ship-feature help)" ;;
   esac
 }

@@ -558,6 +558,43 @@ printf '%s' "$out" | grep -q "REVIEW-codex" && { echo "  ok   [-] plan-review re
 GDIR="$WORK/globdir"; mkdir -p "$GDIR"; : > "$GDIR/aaa"; : > "$GDIR/abb"
 ( cd "$GDIR" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers 'a*' >/dev/null 2>&1 ); check "plan-review does not glob-expand the reviewer list" $? 3
 
+# `help` prints the header comment block, and it must name every command. It used to print a
+# hardcoded line range, so documenting a new flag in the header silently truncated help mid-
+# sentence and dropped the last command — invisible unless someone reads the output. There was no
+# test at all; this is it.
+help_out=$(bash "$CLI" help 2>&1); check "help exits 0" $? 0
+for _c in preflight relay plan-review help; do
+  printf '%s' "$help_out" | grep -q "ship-feature $_c"; check "help documents the '$_c' command" $? 0
+done
+
+# The default really is CONCURRENT, not merely "produces the same output as parallel would".
+# Counting reviews cannot tell the two apart — a sequential run prints the same three. Three
+# reviewers that each sleep 1s take ~1s together and ~3s one after another, so the wall clock is
+# the only honest witness. Generous bounds: this must not go flaky on a loaded machine.
+# NB: the `kimi3` reviewer runs the `opencode` binary — stub the tool names, not the seat names.
+for _slow in claude codex opencode; do
+  cat > "$PBIN/$_slow" <<SLOWSTUB
+#!/usr/bin/env bash
+sleep 1
+echo "REVIEW-$_slow"
+SLOWSTUB
+  chmod +x "$PBIN/$_slow"
+done
+_t0=$(date +%s)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 2>/dev/null)
+_elapsed=$(( $(date +%s) - _t0 ))
+n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review (default) still ran all three slow reviewers" "$n" 3
+[ "$_elapsed" -lt 3 ]; check "plan-review (default) runs reviewers concurrently (3x1s in <3s, took ${_elapsed}s)" $? 0
+
+# …and --sequential really does serialize them: the same three stubs must now take at least 3s.
+_t0=$(date +%s)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 --sequential 2>/dev/null)
+_elapsed=$(( $(date +%s) - _t0 ))
+n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review --sequential ran all three slow reviewers" "$n" 3
+[ "$_elapsed" -ge 3 ]; check "plan-review --sequential runs them one at a time (3x1s in >=3s, took ${_elapsed}s)" $? 0
+
+make_reviewer claude 0 claude; make_reviewer codex 0 codex; make_reviewer kimi3 0 opencode   # restore
+
 # Parallel is the DEFAULT, so the flagless run must behave like the --parallel one: reviews are
 # buffered and emitted in panel order after the barrier, and the banner does not say "sequential".
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 2>&1); rc=$?
@@ -930,7 +967,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=168
+EXPECTED=177
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
