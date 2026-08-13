@@ -50,6 +50,13 @@ for dir in "$CFG" "$CFG/plans" "$BIN" "$AGENTS_SKILLS/ship-feature" \
   mkdir -p "$dir" || { echo "  ! could not create $dir" >&2; fails=$((fails + 1)); }
 done
 
+# Owner-only, and set on every run rather than only at creation — an existing
+# directory from before this line was added is exactly the one that is world
+# readable. A plan describes an unreleased change in a private repository: file
+# names, approach, sometimes the reason a thing is broken. Under the common 022
+# umask every local user could read it.
+chmod 700 "$CFG/plans" 2>/dev/null || { echo "  ! could not secure $CFG/plans" >&2; fails=$((fails + 1)); }
+
 # 1) WORKFLOW.md — the path every adapter references.
 if [ "$COPY_WORKFLOW" = 1 ]; then
   wf_ok=1

@@ -110,7 +110,8 @@ ship-feature skill for any feature/fix.
 - `ship-feature preflight` — assert you're in a feature worktree branched off the default branch, with
   the worktree marker git-excluded (run before you start implementing).
 - `ship-feature plan-review [<file>] [--reviewers a,b,c] [--sequential]` — step 2: fan an implementation
-  plan (a file, stdin, or `./plan.md`) out to a panel of agents for a **read-only** review and print each
+  plan (a file — keep it in `~/.config/ship-feature/plans/`, see WORKFLOW.md §1 — or stdin) out to a panel
+  of agents for a **read-only** review and print each
   one. The panel runs **in parallel by default** — the reviewers are independent, so running them one
   after another only serializes their timeouts, and a four-seat panel at 300s each can sit for twenty
   minutes before it prints a verdict. Pass `--sequential` to run them one at a time and stream each

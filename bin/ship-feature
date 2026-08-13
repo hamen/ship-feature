@@ -41,6 +41,11 @@ kill_tree() {
   kill -TERM "$pid" 2>/dev/null || true
 }
 
+# Where WORKFLOW.md §1 says plans live. Derived from the same base as the config
+# so an overridden SHIP_FEATURE_CONFIG keeps the two together, which is what a
+# test harness under a throwaway HOME needs.
+SF_PLANS_DIR="$(dirname "${SHIP_FEATURE_CONFIG:-$HOME/.config/ship-feature/config}")/plans"
+
 # Load ~/.config/ship-feature/config as plain KEY=value lines — NEVER shell-`source`d, and only known
 # SHIP_FEATURE_* keys are honored. Environment variables win over the file.
 load_config() {
@@ -243,8 +248,16 @@ cmd_plan_review() {
     [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "plan file is empty: $file"
   else
     if [ ! -t 0 ]; then plan="$(cat)"; [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && src="(stdin)"; fi
-    if [ -z "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && [ -f plan.md ]; then plan="$(cat plan.md)"; src="plan.md"; fi
-    [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "no plan given — pass a file, pipe it on stdin, or create a non-empty ./plan.md."
+    # `./plan.md` is still read when it is there — breaking existing setups to
+    # make a point would be worse than the point. But it is no longer SUGGESTED:
+    # the message names the durable directory instead, because a plan in the cwd
+    # is usually a plan in the repository, and always a plan a `rm -rf` of a
+    # worktree takes with it.
+    if [ -z "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && [ -f plan.md ]; then
+      plan="$(cat plan.md)"; src="plan.md"
+      printf '  ! reading ./plan.md — keep plans in %s instead (see WORKFLOW.md §1)\n' "$SF_PLANS_DIR" >&2
+    fi
+    [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "no plan given — pass a file (keep it in $SF_PLANS_DIR) or pipe it on stdin."
   fi
 
   # Panel: --reviewers > SHIP_FEATURE_REVIEWERS > refuse. The resolved panel is your
