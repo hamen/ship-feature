@@ -24,7 +24,20 @@ the **source repository**.
 
 ### 1. Plan
 Write a short, concrete plan: the problem, the approach, the files you expect to touch, and how success is
-verified. Keep it in a plan file (not the repo).
+verified.
+
+**Keep it in `~/.config/ship-feature/plans/<repo>-<slug>.md`** — not in the repository, and **not in an
+agent's session scratchpad.** The scratchpad is `/tmp` on most setups and `/tmp` is tmpfs on many of
+them, so a plan kept there is held in RAM: a reboot destroys it, silently and completely.
+
+That matters more than it looks, because the plan is not a session artifact. It has to live as long as
+the pull request does — §4 passes it to **every** relay round, and a review loop routinely spans days.
+And what a lost plan costs is not the typing: it is the agreement. A plan that has been through §2 and
+§3 carries review rounds and a human approval, and none of that can be reconstructed from memory. A
+reviewer who corrected a sequence in §2 will not correct it again in a file you rewrote afterwards.
+
+`~/.config/ship-feature/plans/` survives reboots, worktree removal and session ends, and sits beside
+the config the workflow already reads.
 
 ### 2. Plan review
 Have a second agent — or a panel — review the plan before writing code. Use the `plan-review` command,
@@ -133,7 +146,12 @@ ship-feature relay --author <self> --reviewers <your reviewer set> --context-fil
 ```
 
 **Always pass the plan with `--context-file`.** The plan already exists — §2 wrote it for the plan
-review — and the flag prepends it as a document every reviewer must verify the PR *against*. Without
+review — and the flag prepends it as a document every reviewer must verify the PR *against*.
+
+This is also why §1 insists the plan lives in `~/.config/ship-feature/plans/`: this flag is needed on
+every round, so the file has to outlive the session that wrote it. A relay that cannot find its context
+file refuses to start, and rewriting the plan at that point is worse than running without one — a plan
+authored *after* the code, to check the code against, only ever agrees with it. Without
 it a reviewer can find bugs but cannot find **"this is not what we agreed to build"**: the plan
 conformance check, the stale count, the rule the implementation quietly skipped. Measured on
 `pr-review-relay` #23: same number of findings, different kind, and the first review to open with
