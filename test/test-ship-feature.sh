@@ -192,6 +192,10 @@ if [ -f "$FAKEHOME/.config/ship-feature/WORKFLOW.md" ] && [ -f "$FAKEHOME/.local
    && grep -qF '# >>> ship-feature >>>' "$FAKEHOME/.codex/AGENTS.md" 2>/dev/null; then
   echo "  ok   [-] install wired WORKFLOW + CLI + skill + Codex block"; PASS=$((PASS+1))
 else echo "  FAIL install did not wire everything"; FAIL=$((FAIL+1)); fi
+# The plans directory is step 1 of the pipeline, so it must exist before the
+# first plan is written — not be created by some later command that happens to
+# run first.
+check "install.sh creates the plans directory" "$([ -d "$FAKEHOME/.config/ship-feature/plans" ] && echo yes || echo no)" yes
 ( cd "$HERE/.." && HOME="$FAKEHOME" bash install.sh >/dev/null 2>&1 )
 # grep -c prints "0" and exits 1 on no match; capture stdout, don't append via `|| echo 0`.
 n=$(grep -cF '# >>> ship-feature >>>' "$FAKEHOME/.codex/AGENTS.md" 2>/dev/null); [ -n "$n" ] || n=0
@@ -990,7 +994,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=179
+EXPECTED=180
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

@@ -36,7 +36,12 @@ link() {
   if ln -sfn "$src" "$dst"; then say "linked  $dst -> $src"; else echo "  ! failed to link $dst" >&2; fails=$((fails + 1)); fi
 }
 
-mkdir -p "$CFG" "$BIN" "$AGENTS_SKILLS/ship-feature" "$HOME/.claude/skills" "$HOME/.cursor/rules"
+# `$CFG/plans` is where WORKFLOW.md §1 tells every agent to keep its plans, and a
+# plan is written before anything else in the pipeline runs — so on a fresh
+# install the directory has to exist already. Missing, the first plan of a new
+# setup has nowhere to go, and the agent falls back to the session scratchpad,
+# which is exactly the tmpfs a reboot wipes.
+mkdir -p "$CFG" "$CFG/plans" "$BIN" "$AGENTS_SKILLS/ship-feature" "$HOME/.claude/skills" "$HOME/.cursor/rules"
 
 # 1) WORKFLOW.md — the path every adapter references.
 if [ "$COPY_WORKFLOW" = 1 ]; then

@@ -44,12 +44,13 @@ Have a second agent — or a panel — review the plan before writing code. Use 
 which fans the plan out to your reviewer panel read-only and prints each review:
 
 ```
-ship-feature plan-review plan.md --reviewers codex,kimi3    # or pipe it: cat plan.md | ship-feature plan-review
+ship-feature plan-review ~/.config/ship-feature/plans/<repo>-<slug>.md --reviewers codex,kimi3
+# or pipe it: cat ~/.config/ship-feature/plans/<repo>-<slug>.md | ship-feature plan-review
 ```
 
 With no `--reviewers` it uses `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS` (your quorum);
 with no file and no stdin it reads
-`./plan.md`. Reviewers run **read-only** and nothing is written or posted — supported: `claude`
+`./plan.md` when nothing is named — convenient, and NOT where a plan should live: see §1. Reviewers run **read-only** and nothing is written or posted — supported: `claude`
 (`--permission-mode plan --safe-mode`), `codex` (`--sandbox read-only`), `cursor` (ask mode, pinned to
 `$CURSOR_REVIEW_MODEL` — default `composer-2.5`, Cursor's own model — so Cursor's `Auto` cannot
 quietly route the review to a Claude model and have Claude grade a plan Claude wrote, and so the
@@ -77,7 +78,8 @@ extend by opening the repo in that agent. Review a plan for a repository you do 
 or not at all.
 Exit `0` = every reviewer responded, `3` = a
 reviewer failed/timed out/returned empty (re-run — see the two-consecutive-failure rule below), `1` =
-usage error. The single-reviewer default still works too: `cat plan.md | codex exec --sandbox read-only`.
+usage error. The single-reviewer default still works too:
+`cat ~/.config/ship-feature/plans/<repo>-<slug>.md | codex exec --sandbox read-only`.
 
 Read the feedback and revise — but only within the cap below, not without limit. The reviewers catch
 wrong assumptions and stale facts before they become code.
@@ -142,7 +144,8 @@ head.
 ```
 # Name the reviewers YOU actually run — adjust the list to the agents you have installed.
 # ALWAYS pass the plan: reviewers that cannot see the intent can only find bugs.
-ship-feature relay --author <self> --reviewers <your reviewer set> --context-file <plan.md>
+ship-feature relay --author <self> --reviewers <your reviewer set> \
+  --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md
 ```
 
 **Always pass the plan with `--context-file`.** The plan already exists — §2 wrote it for the plan
@@ -159,7 +162,7 @@ conformance check, the stale count, the rule the implementation quietly skipped.
 
 **The plan file is the source, and it is immutable once approved.** Write and revise it freely before
 Gate 1 — that is what step 1 and step 2 are for — and not after. The PR body is generated from it
-(`gh pr edit --body-file <plan.md>`), never hand-edited, so the two cannot drift. When later rounds
+(`gh pr edit --body-file <the plan>`), never hand-edited, so the two cannot drift. When later rounds
 need dispositions (below), build a **derived** per-round file — the plan verbatim, plus a
 Dispositions section — and point `--context-file` at that. Never hand-edit either one.
 
