@@ -558,6 +558,79 @@ printf '%s' "$out" | grep -q "REVIEW-codex" && { echo "  ok   [-] plan-review re
 GDIR="$WORK/globdir"; mkdir -p "$GDIR"; : > "$GDIR/aaa"; : > "$GDIR/abb"
 ( cd "$GDIR" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers 'a*' >/dev/null 2>&1 ); check "plan-review does not glob-expand the reviewer list" $? 3
 
+# `help` prints the header comment block, and it must name every command. It used to print a
+# hardcoded line range, so documenting a new flag in the header silently truncated help mid-
+# sentence and dropped the last command — invisible unless someone reads the output. There was no
+# test at all; this is it.
+help_out=$(bash "$CLI" help 2>&1); check "help exits 0" $? 0
+for _c in preflight relay plan-review help; do
+  printf '%s' "$help_out" | grep -q "ship-feature $_c"; check "help documents the '$_c' command" $? 0
+done
+
+# The default really is CONCURRENT, not merely "produces the same output as parallel would".
+# Counting reviews cannot tell the two apart — a sequential run prints the same three. Three
+# reviewers that each sleep 1s take ~1s together and ~3s one after another, so the wall clock is
+# the only honest witness. Generous bounds: this must not go flaky on a loaded machine.
+# NB: the `kimi3` reviewer runs the `opencode` binary — stub the tool names, not the seat names.
+OVERLAP_LOG="$WORK/overlap.log"
+for _slow in claude codex opencode; do
+  cat > "$PBIN/$_slow" <<SLOWSTUB
+#!/usr/bin/env bash
+echo "start" >> "$OVERLAP_LOG"
+sleep 1
+echo "end" >> "$OVERLAP_LOG"
+echo "REVIEW-$_slow"
+SLOWSTUB
+  chmod +x "$PBIN/$_slow"
+done
+
+# Each stub brackets its sleep with a start and an end marker in one shared log, so the log
+# SHAPE — not the clock — says which mode ran. Concurrent: all three start before any ends
+# (start start start end end end). Serialized: each one ends before the next starts
+# (start end start end …). A wall-clock bound was the first attempt and it was wrong: on a
+# loaded machine a genuinely parallel run can exceed any threshold you pick, so the test would
+# fail for being slow rather than for being sequential. This shape holds however slow the box
+# is; it only needs the dispatch loop to start three processes within one stub's sleep.
+overlap_run() {   # $1 = extra args; echoes the run's stdout, leaves the log in $OVERLAP_LOG
+  : > "$OVERLAP_LOG"
+  printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 $1 2>/dev/null
+}
+
+out=$(overlap_run "")
+n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review (default) still ran all three slow reviewers" "$n" 3
+shape=$(tr '\n' ' ' < "$OVERLAP_LOG")
+check "plan-review (default) overlaps the reviewers" "$shape" "start start start end end end "
+
+out=$(overlap_run "--sequential")
+n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review --sequential ran all three slow reviewers" "$n" 3
+shape=$(tr '\n' ' ' < "$OVERLAP_LOG")
+check "plan-review --sequential never overlaps them" "$shape" "start end start end start end "
+
+# "The last flag wins" is a documented promise, so it gets a test in both orders — using the
+# same overlap shape, which is what the promise is actually about.
+out=$(overlap_run "--sequential --parallel")
+shape=$(tr '\n' ' ' < "$OVERLAP_LOG")
+check "plan-review --sequential --parallel ends up parallel" "$shape" "start start start end end end "
+
+out=$(overlap_run "--parallel --sequential")
+shape=$(tr '\n' ' ' < "$OVERLAP_LOG")
+check "plan-review --parallel --sequential ends up sequential" "$shape" "start end start end start end "
+
+make_reviewer claude 0 claude; make_reviewer codex 0 codex; make_reviewer kimi3 0 opencode   # restore
+
+# Parallel is the DEFAULT, so the flagless run must behave like the --parallel one: reviews are
+# buffered and emitted in panel order after the barrier, and the banner does not say "sequential".
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 2>&1); rc=$?
+check "plan-review runs the panel in parallel with no flag (0)" "$rc" 0
+n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review (default) ran all three reviewers" "$n" 3
+n=$(printf '%s' "$out" | grep -c -- "— sequential"); check "plan-review (default) does not announce sequential" "$n" 0
+
+# --sequential is the opt-out: still clean, still every reviewer, and it says so on the banner.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 --sequential 2>&1); rc=$?
+check "plan-review --sequential clean run exits 0" "$rc" 0
+n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review --sequential ran all three reviewers" "$n" 3
+n=$(printf '%s' "$out" | grep -c -- "— sequential"); check "plan-review --sequential announces the mode" "$n" 1
+
 # --parallel: clean run exits 0 and prints every reviewer (order-independent)
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 --parallel 2>/dev/null); rc=$?
 check "plan-review --parallel clean run exits 0" "$rc" 0
@@ -917,7 +990,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=162
+EXPECTED=179
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
