@@ -219,7 +219,8 @@ cmd_plan_review() {
       --reviewers=*) die "pass reviewers as two tokens: --reviewers <list> (the --reviewers=... form isn't supported)." ;;
       --parallel)    parallel=1; shift;;   # already the default; accepted so old callers don't break
       --sequential)  parallel=0; shift;;
-      -h|--help)     echo "usage: ship-feature plan-review [<plan-file>] [--reviewers a,b,c] [--sequential]"; return 0;;
+      -h|--help)     echo "usage: ship-feature plan-review [<plan-file>] [--reviewers a,b,c] [--sequential]"
+                     echo "       the panel runs in parallel by default (--parallel still accepted; last flag wins)"; return 0;;
       # Everything after `--` is positional — collect the plan file from there too, don't drop it.
       --)            shift; while [ $# -gt 0 ]; do [ "$have_file" = 0 ] || die "only one plan file may be given."; file="$1"; have_file=1; shift; done; break;;
       -)             [ "$have_file" = 0 ] || die "only one plan file may be given (got '$file' and '-')."; file="-"; have_file=1; shift;;   # '-' = read stdin
