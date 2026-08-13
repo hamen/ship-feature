@@ -220,20 +220,37 @@ check "install.sh fails when the plans path is a file" $? 1
 n=$(grep -cF '# >>> ship-feature >>>' "$FAKEHOME/.codex/AGENTS.md" 2>/dev/null); [ -n "$n" ] || n=0
 check "install.sh is idempotent (exactly one Codex block)" "$n" 1
 
-# The two messages that steer a user away from the volatile path. Asserted
-# against the source, the same way the plan-review exit messages above are: the
-# alternative is invoking a real reviewer, which these tests must never do. A
-# silent regression here is the whole vulnerability coming back.
-if grep -Eq 'reading \./plan\.md.*keep plans in' "$CLI"; then
-  echo "  ok   [-] reading ./plan.md warns and names the plans directory"; PASS=$((PASS+1))
-else
-  echo "  FAIL reading ./plan.md does not warn about the plans directory"; FAIL=$((FAIL+1))
-fi
-if grep -Eq 'no plan given.*\$SF_PLANS_DIR' "$CLI"; then
-  echo "  ok   [-] the no-plan error names the plans directory"; PASS=$((PASS+1))
-else
-  echo "  FAIL the no-plan error does not name the plans directory"; FAIL=$((FAIL+1))
-fi
+# The two messages that steer a user away from the volatile path — run for real
+# against a stubbed reviewer, not grepped out of the source. A source match can
+# pass while the line is unreachable, or while the path it prints is wrong; this
+# asserts the message a user actually sees AND that the directory in it follows
+# SHIP_FEATURE_CONFIG rather than being hard-coded to $HOME.
+printf '#!/usr/bin/env bash\ncat >/dev/null 2>&1\necho "stub review"\n' > "$BIN/codex"
+chmod +x "$BIN/codex"
+# Its own config dir: the shared $CFGDIR is created further down this file, and
+# depending on it would tie these assertions to the order of unrelated blocks.
+PLANCFG="$WORK/plancfg"; mkdir -p "$PLANCFG"
+printf 'SHIP_FEATURE_REVIEWERS=codex\n' > "$PLANCFG/config"
+PLANWORK="$WORK/planmsg"; mkdir -p "$PLANWORK"; printf 'a plan\n' > "$PLANWORK/plan.md"
+err=$( cd "$PLANWORK" && PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$PLANCFG/config" \
+       bash "$CLI" plan-review --reviewers codex 2>&1 >/dev/null )
+case "$err" in
+  *"keep plans in $PLANCFG/plans"*)
+    echo "  ok   [-] reading ./plan.md warns, naming the configured plans directory"; PASS=$((PASS+1));;
+  *) echo "  FAIL ./plan.md warning missing or names the wrong directory: $err"; FAIL=$((FAIL+1));;
+esac
+PLANEMPTY="$WORK/planempty"; mkdir -p "$PLANEMPTY"
+err=$( cd "$PLANEMPTY" && PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$PLANCFG/config" \
+       bash "$CLI" plan-review --reviewers codex </dev/null 2>&1 >/dev/null )
+case "$err" in
+  *"no plan given"*"$PLANCFG/plans"*)
+    echo "  ok   [-] the no-plan error names the configured plans directory"; PASS=$((PASS+1));;
+  *) echo "  FAIL no-plan error missing or names the wrong directory: $err"; FAIL=$((FAIL+1));;
+esac
+rm -f "$BIN/codex"
+# The old wording gone, not merely the new wording present: an added line and a
+# surviving one look identical to a grep for the new text, and very different to
+# somebody reading the error.
 if grep -q 'create a non-empty ./plan.md' "$CLI"; then
   echo "  FAIL bin/ship-feature still tells users to create ./plan.md"; FAIL=$((FAIL+1))
 else
