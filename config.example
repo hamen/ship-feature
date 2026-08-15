@@ -1,8 +1,9 @@
 # ship-feature — example configuration.
 #
 # Copy to ~/.config/ship-feature/config and edit. The `ship-feature` CLI reads this file as plain
-# `KEY=value` lines and honors the SHIP_FEATURE_* keys below — it is NEVER shell-`source`d, so nothing
-# here is executed. Environment variables of the same name take precedence over this file.
+# `KEY=value` lines and honors the keys below — the SHIP_FEATURE_* ones plus the four model pins,
+# which keep their vendor-shaped names because pr-review-relay reads them too. It is NEVER
+# shell-`source`d, so nothing here is executed. Environment variables of the same name take precedence over this file.
 #
 # The values below are the built-in defaults. This example file is TRACKED and public; put your real
 # values only in the copy at ~/.config/ship-feature/config, which is gitignored.
