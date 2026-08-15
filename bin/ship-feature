@@ -111,9 +111,14 @@ load_config() {
 #
 # Both tools review with the same seats on the same accounts, so which model a seat runs is a
 # property of the machine, not of the tool that happens to be invoking it. pr-review-relay
-# already keeps that in one place, keyed by seat name — `MODEL_grok=grok-4.6`,
-# `MODEL_opencode=…` — and it has carried `MODEL_kimi3` since 2026-08-14 with a comment saying
-# it would take effect once ship-feature learned to read this file. This is that.
+# already keeps that in one place, keyed by SEAT name, and it has carried `MODEL_kimi3` since
+# 2026-08-14 with a comment saying it would take effect once ship-feature learned to read this
+# file. This is that.
+#
+# Keyed by seat means keyed by seat: the relay's `grok` seat and plan-review's `grok45high` seat
+# are DIFFERENT seats — same vendor, different effort — so `MODEL_grok` is not read here and
+# `MODEL_grok45high` is the key for this one. Mapping the relay's key onto this seat would
+# silently give a high-effort plan review the relay's medium-effort pin.
 #
 # Without it the pin lives in two files at once and they drift: whichever one you edit, the
 # other keeps its old value and nothing complains, because both are valid config.
@@ -126,7 +131,7 @@ load_config() {
 # this file itself; exporting PR_RELAY_OPENCODE_MODEL from here would push an environment value
 # on top of the relay's own config and beat it, which is the opposite of consolidating.
 load_shared_model_pins() {
-  local cfg="${PR_REVIEW_RELAY_CONFIG:-$HOME/.config/pr-review-relay/config}" key val
+  local cfg="${PR_RELAY_CONFIG:-$HOME/.config/pr-review-relay/config}" key val
   [ -f "$cfg" ] || return 0
   while IFS='=' read -r key val; do
     case "$key" in ''|\#*) continue;; esac

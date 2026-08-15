@@ -38,7 +38,7 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 
 # ---------------------------------------------------------------------------------------------
 # The model pins. Three sources, highest first: the environment, THIS file, and finally
-# pr-review-relay's own config (~/.config/pr-review-relay/config, or $PR_REVIEW_RELAY_CONFIG),
+# pr-review-relay's own config (~/.config/pr-review-relay/config, or $PR_RELAY_CONFIG),
 # whose seat-named keys MODEL_kimi3 / MODEL_cursor / MODEL_grok45high are read as the last
 # fallback.
 #

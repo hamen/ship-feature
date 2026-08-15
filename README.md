@@ -176,8 +176,9 @@ your panel, all collapse two nominally independent seats onto one model family �
 exists for retired model ids, not for going back to Auto.
 The variable has no `SHIP_FEATURE_` prefix on purpose: it describes your Cursor account rather than
 this tool, [`pr-review-relay`](https://github.com/hamen/pr-review-relay) reads the same one, and a
-single setting should configure both. It **is** read from `~/.config/ship-feature/config` (and
-exported when read, so the relay child process sees it); an environment value still wins.
+single setting should configure both. It **is** read from config (and exported when read, so the
+relay child process sees it). Three sources, highest first: the environment,
+`~/.config/ship-feature/config`, and finally `pr-review-relay`'s own config as `MODEL_cursor`.
 
 ## Overriding the kimi3 model
 
@@ -188,7 +189,9 @@ OpenRouter id (`openrouter/z-ai/glm-5.2`) if you want kimi3 off the bundled subs
 without waiting on its quota reset. `opencode models` lists what your account can reach.
 
 Same convention as `CURSOR_REVIEW_MODEL`: no `SHIP_FEATURE_` prefix, read from
-`~/.config/ship-feature/config` with the environment winning. Unlike `CURSOR_REVIEW_MODEL`, it is not shared with
+`~/.config/ship-feature/config` with the environment winning, and from `pr-review-relay`'s own
+config as `MODEL_kimi3` below that — which is normally where a pin belongs, since both tools drive
+the same seats on the same accounts. Unlike `CURSOR_REVIEW_MODEL`, it is not shared with
 `pr-review-relay` — that tool's opencode reviewer has its own separate override,
 `PR_RELAY_OPENCODE_MODEL`, for a different code path (the relay's `opencode` seat, not
 plan-review's `kimi3` seat).
