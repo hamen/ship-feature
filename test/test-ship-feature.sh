@@ -403,6 +403,19 @@ km=$(printf '%s' "$out" | grep 'REVIEW-kimi3')
 printf '%s' "$km" | grep -q -- "--agent plan" && printf '%s' "$km" | grep -q -- "kimi-k3" && { echo "  ok   [-] kimi3 runs opencode plan agent (kimi-k3)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not on opencode plan agent"; FAIL=$((FAIL+1)); }
 printf '%s' "$km" | grep -q -- "--pure" && { echo "  ok   [-] kimi3 runs --pure (no checkout plugins)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 missing --pure"; FAIL=$((FAIL+1)); }
 printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && { echo "  ok   [-] kimi3 read-only via OPENCODE_CONFIG_CONTENT (edit+bash denied)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not hard read-only (OPENCODE_CONFIG_CONTENT must deny edit AND bash)"; FAIL=$((FAIL+1)); }
+# The other three denials are load-bearing now that the seat reads a tree, and each of them is
+# one JSON edit away from being dropped in silence:
+#   external_directory  a rejected external read KILLS the run — this is what produced the
+#                       empty reviews the checkout change exists to fix
+#   task                the plan agent fans out to explore subagents and spends the whole
+#                       timeout doing it
+#   webfetch            read-the-tree + fetch-any-URL is an exfiltration path; these repos
+#                       carry committed keystores
+for k in external_directory task webfetch; do
+  printf '%s' "$km" | grep -q "\"$k\":\"deny\"" \
+    && { echo "  ok   [-] kimi3 denies $k"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL kimi3 does not deny $k"; FAIL=$((FAIL+1)); }
+done
 printf '%s' "$km" | grep -q 'OPENCODE_CONFIG=\[\]' && { echo "  ok   [-] kimi3 unsets inherited OPENCODE_CONFIG"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 left OPENCODE_CONFIG set (could weaken perms)"; FAIL=$((FAIL+1)); }
 kcwd=$(printf '%s' "$km" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p'); case "$kcwd" in "") echo "  FAIL kimi3 cwd not captured"; FAIL=$((FAIL+1));; "$PWD") echo "  ok   [-] kimi3 reads the checkout"; PASS=$((PASS+1));; *) echo "  FAIL kimi3 ran outside the checkout ($kcwd) — it can only review prose from there"; FAIL=$((FAIL+1));; esac
 printf '%s' "$km" | grep -q -- "--agent build"         && { echo "  FAIL kimi3 uses the all-allow build agent"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] kimi3 never uses the all-allow build agent"; PASS=$((PASS+1)); }
@@ -420,9 +433,21 @@ case "$ocfg_cwd" in
   "") echo "  FAIL kimi3 cwd not captured in the repo-config case"; FAIL=$((FAIL+1));;
   *) echo "  ok   [-] kimi3 falls back to an isolated cwd when the checkout has an opencode config"; PASS=$((PASS+1));;
 esac
-printf '%s' "$ocfg_out" | grep -q 'opencode.json in the checkout' \
+printf '%s' "$ocfg_out" | grep -q 'opencode.json would configure the reviewer' \
   && { echo "  ok   [-] kimi3 announces the degraded review"; PASS=$((PASS+1)); } \
   || { echo "  FAIL kimi3 degraded silently — a prose-only review must say so"; FAIL=$((FAIL+1)); }
+# From a SUBDIRECTORY the config is still found: opencode discovers config by walking up, so a
+# check that only looked at $PWD would miss it and hand the reviewer a config we refused. This
+# is the case the walk-up exists for, and it is also this workflow's normal shape — plan-review
+# usually runs inside .claude/worktrees/<name>.
+mkdir -p "$ocfg_repo/sub/deeper"
+sub_out=$(cd "$ocfg_repo/sub/deeper" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
+sub_cwd=$(printf '%s' "$sub_out" | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$sub_cwd" in
+  "$ocfg_repo"|"$ocfg_repo"/*) echo "  FAIL kimi3 missed an opencode config in a parent directory ($sub_cwd)"; FAIL=$((FAIL+1));;
+  "") echo "  FAIL kimi3 cwd not captured in the subdirectory case"; FAIL=$((FAIL+1));;
+  *) echo "  ok   [-] kimi3 finds an opencode config above the cwd"; PASS=$((PASS+1));;
+esac
 
 # REGRESSION (Codex round 3): a HOSTILE inherited OPENCODE_CONFIG_CONTENT that re-enables
 # edit/bash must be overridden by our deny (we own the highest-precedence layer).
@@ -1118,7 +1143,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=200
+EXPECTED=204
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

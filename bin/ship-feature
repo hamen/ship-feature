@@ -393,16 +393,29 @@ have found something serious, write it down before you go looking for the next t
   # permission key for "ignore this repo's config". So when one of these exists the seat
   # degrades to an isolated empty dir instead.
   #
-  # Prints the name of the first file found and returns 0; returns 1 when the checkout is clean.
-  # Checked against the repo root, not $PWD: plan-review is often run from a worktree
-  # subdirectory, and a config one level up is just as discoverable by opencode.
+  # Prints the path of the first config found and returns 0; returns 1 when nothing is found.
+  #
+  # WALKS UP from $PWD, rather than checking one directory: plan-review is often run from a
+  # subdirectory and opencode discovers config by walking up, so a $PWD-only check would miss a
+  # config that opencode still loads. Stopping at the GIT ROOT is not enough either — this
+  # workflow's own worktrees live at <repo>/.claude/worktrees/<name>, which is its own git
+  # toplevel, so the main repo's opencode.json sits three levels up and outside that root.
+  #
+  # It STOPS AT $HOME, exclusive, and that bound is not a detail. `~/.opencode` exists on any
+  # machine that has run opencode, so walking to / matches the user's own data directory for
+  # every checkout under $HOME and degrades every review to prose. The distinction is whose
+  # config it is: the user's own configuration is how the seat gets a model at all and is
+  # trusted by construction; what must not configure the reviewer is the tree being REVIEWED.
   kimi3_repo_config() {
-    local root f
-    root="$(git rev-parse --show-toplevel 2>/dev/null)" || root="$PWD"
-    for f in opencode.json opencode.jsonc .opencode; do
-      if [ -e "$root/$f" ]; then printf '%s' "$f"; return 0; fi
+    local dir="$PWD" f home="${HOME:-}"
+    while :; do
+      [ -n "$home" ] && [ "$dir" = "$home" ] && return 1
+      for f in opencode.json opencode.jsonc .opencode; do
+        if [ -e "$dir/$f" ]; then printf '%s' "${dir}/${f}"; return 0; fi
+      done
+      [ "$dir" = "/" ] && return 1
+      dir="$(dirname "$dir")"
     done
-    return 1
   }
 
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
@@ -415,7 +428,7 @@ have found something serious, write it down before you go looking for the next t
   # carries its own opencode config, in which case it degrades to an isolated empty dir. Note: like every reviewer here, opencode still writes its own session data under
   # its data dir — the guarantee is "your checkout is untouched", not "nothing touches disk".
   plan_review_with() {
-    local name="$1" out rc=0 errf key Name why ro_cwd="" prompt_file expected_bytes actual_bytes body sandbox_hint="" sandbox_unenforced="" degraded_note=""
+    local name="$1" out rc=0 errf key Name why ro_cwd="" prompt_file expected_bytes actual_bytes body sandbox_hint="" sandbox_unenforced="" degraded_note="" repo_opencode_config=""
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
     Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
     case "$name" in
@@ -460,6 +473,11 @@ have found something serious, write it down before you go looking for the next t
               #     is how a review that was verifying real claims against real files still
               #     produced nothing: it spent the 300s budget in delegation and got cut off
               #     mid-sweep. The cap is not negotiable, so the fan-out has to go.
+              #   webfetch — was "allow", and that was safe only while the seat had nothing to
+              #     read. A reviewer that can read the tree AND fetch arbitrary URLs is an
+              #     exfiltration path the moment a file in that tree contains an instruction:
+              #     these repos carry committed keystores and cached secrets. The prompt now
+              #     tells reviewers not to chase external claims anyway, so this costs nothing.
               #
               # Both keys are in opencode's PermissionConfig schema (bash, doom_loop, edit,
               # external_directory, glob, grep, list, lsp, question, read, skill, task,
@@ -467,15 +485,24 @@ have found something serious, write it down before you go looking for the next t
               # here would be ignored silently and the seat would keep failing the same way.
               ro_cwd=""
               if repo_opencode_config="$(kimi3_repo_config)"; then
-                ro_cwd="$(TMPDIR=/tmp mktemp -d 2>/dev/null || mktemp -d)"
-                degraded_note="! $repo_opencode_config in the checkout — this review saw the plan text ONLY, not the code"
+                # FAIL CLOSED. If the isolated dir cannot be created, the alternative is running
+                # in the very checkout whose config we just refused to load — while the note
+                # below tells the reader it was isolated. Skip the seat instead: a missing
+                # reviewer is visible, a lying one is not.
+                if ! ro_cwd="$(TMPDIR=/tmp mktemp -d 2>/dev/null || mktemp -d)" || [ -z "$ro_cwd" ]; then
+                  printf '  ! %s: %s found and no isolated cwd could be created — seat skipped\n' \
+                    "$name" "$repo_opencode_config" > "$STATUS_DIR/diag_$key"
+                  echo fail > "$STATUS_DIR/$key"; return 0
+                fi
+                degraded_note="! $repo_opencode_config would configure the reviewer — this review saw the plan text ONLY, not the code"
               fi
               out=$(cd "${ro_cwd:-$PWD}" \
                     && unset OPENCODE_CONFIG \
-                    && export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"allow","external_directory":"deny","task":"deny"}}' \
+                    && export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"deny","external_directory":"deny","task":"deny"}}' \
                     && printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" \
                        | run_reviewer opencode run --pure --agent plan -m "$KIMI3_REVIEW_MODEL" 2>"$errf"); rc=$?
-              [ -n "$ro_cwd" ] && rm -rf "$ro_cwd";;
+              [ -n "$ro_cwd" ] && rm -rf "$ro_cwd"
+              true;;
       grok45high)
               # Grok headless ignores stdin: plan goes in --prompt-file (kept in STATUS_DIR, never
               # in the checkout, so it can't show up in anyone's `git status`).
