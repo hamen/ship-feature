@@ -612,6 +612,18 @@ sh7=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared5" bas
 printf '%s' "$sh7" | grep 'REVIEW-kimi3' | grep -q -- "-m openrouter/moonshotai/kimi-k3" \
   && { echo "  ok   [-] a config file with no final newline keeps its last line"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the last line was dropped when the file had no final newline"; FAIL=$((FAIL+1)); }
+# Parser parity with pr-review-relay on a BOM'd file: it strips the BOM, so without this the
+# first key reads as "\ufeffMODEL_kimi3" here and "MODEL_kimi3" there — one file, two models.
+printf '\xef\xbb\xbfMODEL_kimi3=openrouter/moonshotai/kimi-k3\n' > "$CFGDIR/shared6"
+sh8=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared6" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
+printf '%s' "$sh8" | grep 'REVIEW-kimi3' | grep -q -- "-m openrouter/moonshotai/kimi-k3" \
+  && { echo "  ok   [-] a UTF-8 BOM does not hide the first key"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a BOM'd shared config was not parsed like the relay parses it"; FAIL=$((FAIL+1)); }
+# HOME unset must not abort the command under `set -u`. A caller that passes both paths
+# explicitly has every right not to have one.
+env -u HOME PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG=/dev/null PR_RELAY_CONFIG="$CFGDIR/shared1" SHIP_FEATURE_PLANS_DIR="$WORK/plans" \
+  bash "$CLI" plan-review --reviewers kimi3 </dev/null >/dev/null 2>&1
+[ $? -ne 2 ] && { echo "  ok   [-] an unset HOME does not abort the run"; PASS=$((PASS+1)); } || { echo "  FAIL unset HOME aborted (unbound variable)"; FAIL=$((FAIL+1)); }
 printf 'MODEL_grok=grok-0.0\n' > "$CFGDIR/shared4"
 sh5=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared4" bash "$CLI" plan-review --reviewers grok45high 2>/dev/null)
 printf '%s' "$sh5" | grep 'REVIEW-grok45high' | grep -q -- "-m grok-0.0" \
@@ -1335,7 +1347,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=229
+EXPECTED=231
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

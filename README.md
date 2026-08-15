@@ -191,7 +191,7 @@ without waiting on its quota reset. `opencode models` lists what your account ca
 Same convention as `CURSOR_REVIEW_MODEL`: no `SHIP_FEATURE_` prefix, read from
 `~/.config/ship-feature/config` with the environment winning, and from `pr-review-relay`'s own
 config as `MODEL_kimi3` below that — which is normally where a pin belongs, since both tools drive
-the same seats on the same accounts. Unlike `CURSOR_REVIEW_MODEL`, it is not shared with
+the same seats on the same accounts. The config SOURCE is shared; the SEAT is not — unlike `CURSOR_REVIEW_MODEL`, this reviewer has no counterpart in
 `pr-review-relay` — that tool's opencode reviewer has its own separate override,
 `PR_RELAY_OPENCODE_MODEL`, for a different code path (the relay's `opencode` seat, not
 plan-review's `kimi3` seat).
