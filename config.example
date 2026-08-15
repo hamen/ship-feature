@@ -14,6 +14,10 @@ SHIP_FEATURE_WORKTREE_ROOT=.claude/worktrees
 # Marker directory that must be git-excluded so it never shows up in `git status`.
 SHIP_FEATURE_EXCLUDE_MARKER=.claude/
 
+# NOTE: REVIEWERS / PLAN_REVIEWERS in ~/.config/pr-review-relay/config are read as a fallback for
+# the two keys below, so the panel can be defined ONCE for both tools. Set them here only to make
+# ship-feature differ from the relay on purpose.
+
 # The cross-review quorum: the agents you actually have installed. When set, `ship-feature relay`
 # injects it as --reviewers (so a missing agent fails the round instead of silently thinning the panel).
 # LEFT UNSET by default on purpose — uncomment and list ONLY the agents you have, or a fresh install

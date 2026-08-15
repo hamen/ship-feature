@@ -117,7 +117,8 @@ load_config() {
   load_shared_model_pins
 }
 
-# The SHARED panel config: pr-review-relay's own file, read here as the LAST fallback.
+# The SHARED PANEL config: pr-review-relay's own file, read here as the LAST fallback — both who
+# sits on the panel (REVIEWERS, PLAN_REVIEWERS) and what each seat runs (MODEL_*).
 #
 # Both tools review with the same seats on the same accounts, so which model a seat runs is a
 # property of the machine, not of the tool that happens to be invoking it. pr-review-relay
@@ -163,6 +164,15 @@ load_shared_model_pins() {
       MODEL_kimi3)      [ -n "${KIMI3_REVIEW_MODEL:-}" ] || export KIMI3_REVIEW_MODEL="$val" ;;
       MODEL_cursor)     [ -n "${CURSOR_REVIEW_MODEL:-}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
       MODEL_grok45high) [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
+      # WHO sits on the panel, from the same file for the same reason the models are. These two
+      # were already duplicated across the two configs — identical today, free to drift tomorrow,
+      # with nothing to notice it because both files are valid. A panel that differs between the
+      # plan gate and the PR gate is the kind of difference you discover from a verdict.
+      #
+      # ${VAR+x} here, unlike the model pins above: an explicitly empty SHIP_FEATURE_REVIEWERS
+      # means "no injected quorum" on purpose, and that has to survive a value in this file.
+      REVIEWERS)        [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || SHIP_FEATURE_REVIEWERS="$val" ;;
+      PLAN_REVIEWERS)   [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || SHIP_FEATURE_PLAN_REVIEWERS="$val" ;;
     esac
   done < "$cfg"
 }
