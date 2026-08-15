@@ -37,7 +37,18 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # falls back to PR_RELAY_AGENT_TIMEOUT, then 300. e.g. export SHIP_FEATURE_PLAN_TIMEOUT=480
 
 # ---------------------------------------------------------------------------------------------
-# The model pins. READ FROM THIS FILE (the environment still wins, as everywhere else).
+# The model pins. Three sources, highest first: the environment, THIS file, and finally
+# pr-review-relay's own config (~/.config/pr-review-relay/config, or $PR_REVIEW_RELAY_CONFIG),
+# whose seat-named keys MODEL_kimi3 / MODEL_cursor / MODEL_grok45high are read as the last
+# fallback.
+#
+# That last source is where a pin normally belongs: both tools drive the same seats on the same
+# accounts, so which model a seat runs is a property of the machine, not of whichever tool is
+# invoking it. Set one here only when ship-feature should differ from the relay ON PURPOSE —
+# otherwise the two files drift, and nothing complains, because both are valid config.
+#
+# MODEL_opencode is NOT read here: that seat is pr-review-relay's own, and the relay reads it
+# from its own file.
 #
 # These four are the only keys here without a SHIP_FEATURE_ prefix, and the names are not this
 # tool's to choose: pr-review-relay reads CURSOR_REVIEW_MODEL and PR_RELAY_OPENCODE_MODEL too,

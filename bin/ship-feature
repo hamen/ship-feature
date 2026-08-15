@@ -65,7 +65,11 @@ sf_ensure_plans_dir() {
 # SHIP_FEATURE_* keys are honored. Environment variables win over the file.
 load_config() {
   local cfg="${SHIP_FEATURE_CONFIG:-$HOME/.config/ship-feature/config}" key val
-  [ -f "$cfg" ] || return 0
+  # The shared pins are read whether or not THIS file exists — a machine can perfectly well have
+  # pr-review-relay configured and no ship-feature config at all, and the early return below
+  # would otherwise skip the fallback entirely. Found by the test that asserts the shared file is
+  # read, running with SHIP_FEATURE_CONFIG=/dev/null.
+  [ -f "$cfg" ] || { load_shared_model_pins; return 0; }
   while IFS='=' read -r key val; do
     case "$key" in ''|\#*) continue;; esac
     key="$(printf '%s' "$key" | tr -d '[:space:]')"
@@ -97,6 +101,42 @@ load_config() {
       CURSOR_REVIEW_MODEL) [ -n "${CURSOR_REVIEW_MODEL+x}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
       GROK45HIGH_REVIEW_MODEL) [ -n "${GROK45HIGH_REVIEW_MODEL+x}" ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
       PR_RELAY_OPENCODE_MODEL) [ -n "${PR_RELAY_OPENCODE_MODEL+x}" ] || export PR_RELAY_OPENCODE_MODEL="$val" ;;
+    esac
+  done < "$cfg"
+
+  load_shared_model_pins
+}
+
+# The SHARED panel config: pr-review-relay's own file, read here as the LAST fallback.
+#
+# Both tools review with the same seats on the same accounts, so which model a seat runs is a
+# property of the machine, not of the tool that happens to be invoking it. pr-review-relay
+# already keeps that in one place, keyed by seat name — `MODEL_grok=grok-4.6`,
+# `MODEL_opencode=…` — and it has carried `MODEL_kimi3` since 2026-08-14 with a comment saying
+# it would take effect once ship-feature learned to read this file. This is that.
+#
+# Without it the pin lives in two files at once and they drift: whichever one you edit, the
+# other keeps its old value and nothing complains, because both are valid config.
+#
+# Precedence, lowest last: environment > ship-feature's own config > this file. It is called at
+# the END of load_config for exactly that reason — by the time it runs, every key it touches is
+# already set if either higher source provided one.
+#
+# `MODEL_opencode` is deliberately NOT mapped. That seat belongs to pr-review-relay, which reads
+# this file itself; exporting PR_RELAY_OPENCODE_MODEL from here would push an environment value
+# on top of the relay's own config and beat it, which is the opposite of consolidating.
+load_shared_model_pins() {
+  local cfg="${PR_REVIEW_RELAY_CONFIG:-$HOME/.config/pr-review-relay/config}" key val
+  [ -f "$cfg" ] || return 0
+  while IFS='=' read -r key val; do
+    case "$key" in ''|\#*) continue;; esac
+    key="$(printf '%s' "$key" | tr -d '[:space:]')"
+    val="${val%%[[:space:]]#*}"                                                   # strip an inline "# comment"
+    val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"     # trim surrounding space
+    case "$key" in
+      MODEL_kimi3)      [ -n "${KIMI3_REVIEW_MODEL+x}" ] || export KIMI3_REVIEW_MODEL="$val" ;;
+      MODEL_cursor)     [ -n "${CURSOR_REVIEW_MODEL+x}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
+      MODEL_grok45high) [ -n "${GROK45HIGH_REVIEW_MODEL+x}" ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
     esac
   done < "$cfg"
 }

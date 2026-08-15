@@ -8,6 +8,12 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Changed
 
+- **ship-feature reads pr-review-relay's config as the shared source for model pins.** Its
+  seat-named keys (`MODEL_kimi3`, `MODEL_cursor`, `MODEL_grok45high`) are the last fallback, below
+  the environment and below ship-feature's own config. Both tools drive the same seats on the same
+  accounts, so which model a seat runs belongs to the machine rather than to whichever tool is
+  invoking it — and a pin kept in two files drifts silently, because both are valid config.
+  `MODEL_opencode` is deliberately not mapped: that seat is the relay's own.
 - **The config file now carries the model pins**, not just the seats. `KIMI3_REVIEW_MODEL`,
   `CURSOR_REVIEW_MODEL`, `GROK45HIGH_REVIEW_MODEL` and `PR_RELAY_OPENCODE_MODEL` are read from
   `~/.config/ship-feature/config` with the usual precedence — the environment still wins, the file

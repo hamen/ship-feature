@@ -103,6 +103,10 @@ sf_isolate_git
 
 # Isolate from the user's real config/env so the suite is deterministic outside CI.
 export SHIP_FEATURE_CONFIG=/dev/null
+# The SHARED panel config (pr-review-relay's file) is read as the last fallback, so the
+# suite must not see the developer's real one — its MODEL_* keys would satisfy the
+# default-pin assertions and the tests would pass on this machine only.
+export PR_REVIEW_RELAY_CONFIG=/dev/null
 # The model pins are not SHIP_FEATURE_* keys (the names are shared with pr-review-relay), so they
 # would not be caught by the namespace above — but they are knobs people really do export once
 # ship-feature/pr-review-relay are in use, and an exported value would quietly satisfy the
@@ -575,6 +579,40 @@ printf '%s' "$pout2" | grep 'REVIEW-cursor' | grep -q -- "--model composer-2.5]"
   && printf '%s' "$pout2" | grep 'REVIEW-grok45high' | grep -q -- "-m grok-4.6" \
   && { echo "  ok   [-] the environment overrides the cursor and grok45high pins"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the config file overrode an explicit environment model"; FAIL=$((FAIL+1)); }
+
+# --- the SHARED panel config (pr-review-relay's file) is the last fallback ---------------------
+# Both tools drive the same seats on the same accounts, so the model a seat runs belongs to the
+# machine, not to whichever tool is invoking it. The relay's file has carried MODEL_kimi3 since
+# 2026-08-14; reading it here is what makes one file the answer instead of two that drift.
+printf 'MODEL_kimi3=openrouter/moonshotai/kimi-k3\nMODEL_grok45high=grok-9.9\n' > "$CFGDIR/shared1"
+sh1=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_REVIEW_RELAY_CONFIG="$CFGDIR/shared1" bash "$CLI" plan-review --reviewers kimi3,grok45high 2>/dev/null)
+printf '%s' "$sh1" | grep 'REVIEW-kimi3' | grep -q -- "-m openrouter/moonshotai/kimi-k3" \
+  && printf '%s' "$sh1" | grep 'REVIEW-grok45high' | grep -q -- "-m grok-9.9" \
+  && { echo "  ok   [-] the shared relay config pins the models"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the shared relay config was not read"; FAIL=$((FAIL+1)); }
+# ship-feature's OWN config wins over the shared one — a per-tool override has to be possible,
+# or consolidating would mean losing the ability to differ on purpose.
+printf 'KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/shared2"
+sh2=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/shared2" PR_REVIEW_RELAY_CONFIG="$CFGDIR/shared1" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
+printf '%s' "$sh2" | grep 'REVIEW-kimi3' | grep -q -- "-m openrouter/z-ai/glm-5.2" \
+  && { echo "  ok   [-] ship-feature's own config beats the shared one"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the shared config overrode ship-feature's own"; FAIL=$((FAIL+1)); }
+# And the environment still beats both.
+sh3=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/shared2" PR_REVIEW_RELAY_CONFIG="$CFGDIR/shared1" KIMI3_REVIEW_MODEL=opencode-go/kimi-k3 bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
+printf '%s' "$sh3" | grep 'REVIEW-kimi3' | grep -q -- "-m opencode-go/kimi-k3" \
+  && { echo "  ok   [-] the environment beats both config files"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a config file overrode an explicit environment model"; FAIL=$((FAIL+1)); }
+# MODEL_opencode is NOT mapped: that seat is pr-review-relay's own, and it reads this same file.
+# Exporting PR_RELAY_OPENCODE_MODEL from here would beat the relay's own config, which is the
+# opposite of consolidating.
+printf 'MODEL_opencode=openrouter/should-not-be-used\n' > "$CFGDIR/shared3"
+printf '#!/usr/bin/env bash\necho "RELAYENV PR_RELAY_OPENCODE_MODEL=${PR_RELAY_OPENCODE_MODEL:-unset}"\nexit 0\n' > "$BIN/pr-review-relay.shared"; chmod +x "$BIN/pr-review-relay.shared"
+cp "$BIN/pr-review-relay" "$WORK/relay-stub-backup2"; cp "$BIN/pr-review-relay.shared" "$BIN/pr-review-relay"
+sh4=$(PATH="$BIN:$PATH" PR_REVIEW_RELAY_CONFIG="$CFGDIR/shared3" bash "$CLI" relay --author claude 2>/dev/null)
+cp "$WORK/relay-stub-backup2" "$BIN/pr-review-relay"; chmod +x "$BIN/pr-review-relay"
+printf '%s' "$sh4" | grep -q 'PR_RELAY_OPENCODE_MODEL=unset' \
+  && { echo "  ok   [-] MODEL_opencode is left to pr-review-relay itself"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL ship-feature exported the relay's own seat model over its config"; FAIL=$((FAIL+1)); }
 
 # REGRESSION (Codex round 3): a HOSTILE inherited OPENCODE_CONFIG_CONTENT that re-enables
 # edit/bash must be overridden by our deny (we own the highest-precedence layer).
@@ -1270,7 +1308,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=221
+EXPECTED=225
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
