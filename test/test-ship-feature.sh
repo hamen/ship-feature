@@ -597,6 +597,21 @@ printf '%s' "$sh1" | grep 'REVIEW-cursor' | grep -q -- "--model composer-9.9" \
   || { echo "  FAIL MODEL_cursor was not mapped"; FAIL=$((FAIL+1)); }
 # MODEL_grok is the RELAY's seat, at medium effort. plan-review's grok45high is a different seat,
 # so reading MODEL_grok here would hand a high-effort plan review the relay's pin.
+# An EMPTY environment value must not block the shared file. Empty means "no pin", not
+# "disable" — the SHIP_FEATURE_* keys use the other rule on purpose. With the wrong one,
+# CURSOR_REVIEW_MODEL= left ship-feature on its built-in default while pr-review-relay used the
+# shared value: same inputs, two different models.
+sh6=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared1" CURSOR_REVIEW_MODEL= bash "$CLI" plan-review --reviewers cursor 2>/dev/null)
+printf '%s' "$sh6" | grep 'REVIEW-cursor' | grep -q -- "--model composer-9.9" \
+  && { echo "  ok   [-] an empty environment pin does not block the shared file"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL an empty env pin blocked the shared config"; FAIL=$((FAIL+1)); }
+# A file with NO FINAL NEWLINE keeps its last line. pr-review-relay's parser reads it, so
+# dropping it here would make the same file select different models in the two tools.
+printf 'MODEL_kimi3=openrouter/moonshotai/kimi-k3' > "$CFGDIR/shared5"
+sh7=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared5" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
+printf '%s' "$sh7" | grep 'REVIEW-kimi3' | grep -q -- "-m openrouter/moonshotai/kimi-k3" \
+  && { echo "  ok   [-] a config file with no final newline keeps its last line"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the last line was dropped when the file had no final newline"; FAIL=$((FAIL+1)); }
 printf 'MODEL_grok=grok-0.0\n' > "$CFGDIR/shared4"
 sh5=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared4" bash "$CLI" plan-review --reviewers grok45high 2>/dev/null)
 printf '%s' "$sh5" | grep 'REVIEW-grok45high' | grep -q -- "-m grok-0.0" \
@@ -1320,7 +1335,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=227
+EXPECTED=229
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
