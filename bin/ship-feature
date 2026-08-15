@@ -411,17 +411,35 @@ have found something serious, write it down before you go looking for the next t
   # missing is not a warning, it is `~/.opencode` matching and every review silently degrading
   # to prose, which is the failure this bound exists to prevent.
   kimi3_repo_config() {
-    local dir f home=""
+    local dir f home="" stop="" main=""
     dir="$(cd "$PWD" 2>/dev/null && pwd -P)" || dir="$PWD"
     [ -n "${HOME:-}" ] && home="$(cd "$HOME" 2>/dev/null && pwd -P)"
+    # opencode stops project-config discovery at the worktree root (1.18.18), so walking past it
+    # would degrade reviews over a config opencode never loads — and a needless prose-only review
+    # is the very failure this change exists to end. Bound the walk there.
+    stop="$(git rev-parse --show-toplevel 2>/dev/null && :)" || stop=""
+    [ -n "$stop" ] && stop="$(cd "$stop" 2>/dev/null && pwd -P)"
     while :; do
       { [ -n "$home" ] && [ "$dir" = "$home" ]; } && return 1
-      [ "$dir" = "/" ] && return 1
       for f in opencode.json opencode.jsonc .opencode; do
         if [ -e "$dir/$f" ]; then printf '%s' "${dir}/${f}"; return 0; fi
       done
+      [ -n "$stop" ] && [ "$dir" = "$stop" ] && break
+      [ "$dir" = "/" ] && return 1
       dir="$(dirname "$dir")"
     done
+    # A LINKED worktree is its own toplevel, so the loop above never sees the main checkout —
+    # and this workflow puts every worktree at <repo>/.claude/worktrees/<name>, i.e. inside the
+    # repo whose config we are guarding against. Check that root explicitly rather than by
+    # walking, so the bound above stays honest.
+    main="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+    [ -n "$main" ] || return 1
+    main="$(cd "$(dirname "$main")" 2>/dev/null && pwd -P)" || return 1
+    [ "$main" = "$dir" ] && return 1
+    for f in opencode.json opencode.jsonc .opencode; do
+      if [ -e "$main/$f" ]; then printf '%s' "${main}/${f}"; return 0; fi
+    done
+    return 1
   }
 
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
@@ -480,6 +498,10 @@ have found something serious, write it down before you go looking for the next t
               #     is how a review that was verifying real claims against real files still
               #     produced nothing: it spent the 300s budget in delegation and got cut off
               #     mid-sweep. The cap is not negotiable, so the fan-out has to go.
+              #   lsp — a language server is a PROCESS the project starts, configured by the
+              #     project. Denying bash and edit while leaving this on means the checkout can
+              #     still run code; the seat's guarantee is that the reviewed tree executes
+              #     nothing, so it goes too.
               #   webfetch + websearch — webfetch was "allow", and that was safe only while the
               #     seat had nothing to read. A reviewer that can read the tree AND reach the
               #     network is an exfiltration path the moment a file in that tree contains an
@@ -507,8 +529,8 @@ have found something serious, write it down before you go looking for the next t
                 degraded_note="! $repo_opencode_config would configure the reviewer — this review saw the plan text ONLY, not the code"
               fi
               out=$(cd "${ro_cwd:-$PWD}" \
-                    && unset OPENCODE_CONFIG \
-                    && export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","task":"deny"}}' \
+                    && unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR \
+                    && export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","task":"deny","lsp":"deny"}}' \
                     && printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" \
                        | run_reviewer opencode run --pure --agent plan -m "$KIMI3_REVIEW_MODEL" 2>"$errf"); rc=$?
               [ -n "$ro_cwd" ] && rm -rf "$ro_cwd"

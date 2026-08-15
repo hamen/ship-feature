@@ -336,7 +336,7 @@ make_reviewer() {
   # $1 = review tag, $2 = exit code, $3 = binary name on PATH
   cat > "$PBIN/$3" <<STUB
 #!/usr/bin/env bash
-echo "REVIEW-$1 argv=[\$*] OPENCODE_CONFIG_CONTENT=[\${OPENCODE_CONFIG_CONTENT:-}] OPENCODE_CONFIG=[\${OPENCODE_CONFIG:-}] CWD=[\${PWD}]"
+echo "REVIEW-$1 argv=[\$*] OPENCODE_CONFIG_CONTENT=[\${OPENCODE_CONFIG_CONTENT:-}] OPENCODE_CONFIG=[\${OPENCODE_CONFIG:-}] OPENCODE_CONFIG_DIR=[\${OPENCODE_CONFIG_DIR:-}] CWD=[\${PWD}]"
 _args=("\$@")
 for ((_i=0; _i<\${#_args[@]}; _i++)); do
   if [ "\${_args[\$_i]}" = "--prompt-file" ]; then
@@ -412,12 +412,18 @@ printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"
 #   webfetch, websearch  read-the-tree plus any network reach is an exfiltration path; these
 #                        repos carry committed keystores, and a search query carries content
 #                        outward exactly as well as a URL
-for k in external_directory task webfetch websearch; do
+#   lsp                  a language server is a process the PROJECT starts and configures —
+#                        denying bash while leaving this on still lets the reviewed tree run code
+for k in external_directory task webfetch websearch lsp; do
   printf '%s' "$km" | grep -q "\"$k\":\"deny\"" \
     && { echo "  ok   [-] kimi3 denies $k"; PASS=$((PASS+1)); } \
     || { echo "  FAIL kimi3 does not deny $k"; FAIL=$((FAIL+1)); }
 done
 printf '%s' "$km" | grep -q 'OPENCODE_CONFIG=\[\]' && { echo "  ok   [-] kimi3 unsets inherited OPENCODE_CONFIG"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 left OPENCODE_CONFIG set (could weaken perms)"; FAIL=$((FAIL+1)); }
+# OPENCODE_CONFIG_DIR is the other half of "unsets any inherited OPENCODE_CONFIG*", and it was
+# only the comment that said so: the code unset one variable. A config DIR carries agents, MCP
+# servers and model settings just as a config file does.
+printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_DIR=\[\]' && { echo "  ok   [-] kimi3 unsets inherited OPENCODE_CONFIG_DIR"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 left OPENCODE_CONFIG_DIR set (agents/MCP could load)"; FAIL=$((FAIL+1)); }
 kcwd=$(printf '%s' "$km" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p'); case "$kcwd" in "") echo "  FAIL kimi3 cwd not captured"; FAIL=$((FAIL+1));; "$PWD") echo "  ok   [-] kimi3 reads the checkout"; PASS=$((PASS+1));; *) echo "  FAIL kimi3 ran outside the checkout ($kcwd) — it can only review prose from there"; FAIL=$((FAIL+1));; esac
 printf '%s' "$km" | grep -q -- "--agent build"         && { echo "  FAIL kimi3 uses the all-allow build agent"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] kimi3 never uses the all-allow build agent"; PASS=$((PASS+1)); }
 # The other half of the cwd contract: a checkout that ships its OWN opencode config must push
@@ -466,6 +472,21 @@ for cfgname in opencode.jsonc .opencode; do
   esac
 done
 rm -rf "${ocfg_repo:?}/.opencode"; printf '{}\n' > "$ocfg_repo/opencode.json"
+
+# A LINKED WORKTREE at <repo>/.claude/worktrees/<name> is its own git toplevel, so a walk that
+# stops at the toplevel never sees the main checkout's config — while opencode, running in the
+# worktree, is inside that repo. This is the exact layout ship-feature creates, so it is checked
+# explicitly rather than by walking past the root (which would degrade reviews over configs
+# opencode never loads).
+wt_main="$WORK/wtmain"; mkdir -p "$wt_main"
+( cd "$wt_main" && git init -q . && git commit -q --allow-empty -m init && printf '{}\n' > opencode.json \
+  && git worktree add -q ".claude/worktrees/w" -b wtprobe >/dev/null 2>&1 )
+wt_cwd=$(cd "$wt_main/.claude/worktrees/w" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null \
+         | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$wt_cwd" in
+  "$wt_main"/*|"") echo "  FAIL kimi3 missed the MAIN repo's opencode.json from a linked worktree ($wt_cwd)"; FAIL=$((FAIL+1));;
+  *) echo "  ok   [-] kimi3 finds the main checkout's opencode config from a linked worktree"; PASS=$((PASS+1));;
+esac
 
 # The $HOME bound, which the code comment calls load-bearing: `~/.opencode` exists on any
 # machine that has run opencode, so a walk that does not stop at $HOME matches it for EVERY
@@ -1198,7 +1219,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=211
+EXPECTED=214
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
