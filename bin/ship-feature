@@ -208,7 +208,8 @@ cmd_relay() {
 # kimi3 (Kimi K3 via opencode, model pinned away from the bundled default via
 # KIMI3_REVIEW_MODEL — see below — and pinned read-only by OPENCODE_CONFIG_CONTENT — opencode's
 # highest-precedence config layer — denying `edit`+`bash` so nothing can be written even via
-# shell, run in an isolated cwd, plus `--pure` and `--agent plan`). agy, bare `opencode`, and bare `grok`
+# shell, reading the checkout unless it carries its own opencode config, plus `--pure` and
+# `--agent plan`). agy, bare `opencode`, and bare `grok`
 # name are RELAY-ONLY here — agy has no read-only mode (its relay flag disables ALL permissions)
 # and a bare `opencode run` uses the all-allow build agent — so if listed they are skipped
 # with a warning, never run. That keeps the "read-only, nothing is written" guarantee true
@@ -309,7 +310,15 @@ cmd_plan_review() {
 Judge it for: wrong assumptions, stale or incorrect facts about the codebase, missing edge
 cases, unhandled failure modes, risky or out-of-order steps, and anything it overlooks.
 You have read-only access — do NOT write code or modify anything. Be concise. Group findings
-by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one line.')"
+by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one line.
+You can read ONLY the current checkout. A plan that cites another repository, a dashboard or
+an external service is not an invitation to go looking: those claims cannot be checked here,
+so say the claim is unverified and move on. Do not spend the review trying to reach them —
+a run that ends hunting for a file outside the checkout produces no review at all.
+BUDGET YOUR TIME: you are cut off after a few minutes, and a run that is still reading files
+when the clock stops delivers NOTHING — which is worse than a review with two claims left
+unchecked. Verify only what could change your verdict, then stop reading and write. If you
+have found something serious, write it down before you go looking for the next thing.')"
 
   echo "▶ Plan review — reviewers: $reviewers${src:+ — plan: $src}$([ "$parallel" = 1 ] || printf ' — sequential')" >&2
 
@@ -376,14 +385,34 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # different one without editing this script.
   local GROK45HIGH_REVIEW_MODEL="${GROK45HIGH_REVIEW_MODEL:-grok-4.6}"
 
+  # Does the checkout carry its own opencode configuration?
+  #
+  # kimi3 reads the tree it reviews, which means the tree could otherwise reconfigure the
+  # reviewer — MCP servers, agents, model routing. Permissions are already pinned by
+  # OPENCODE_CONFIG_CONTENT and cannot be overridden, but nothing else is, and there is no
+  # permission key for "ignore this repo's config". So when one of these exists the seat
+  # degrades to an isolated empty dir instead.
+  #
+  # Prints the name of the first file found and returns 0; returns 1 when the checkout is clean.
+  # Checked against the repo root, not $PWD: plan-review is often run from a worktree
+  # subdirectory, and a config one level up is just as discoverable by opencode.
+  kimi3_repo_config() {
+    local root f
+    root="$(git rev-parse --show-toplevel 2>/dev/null)" || root="$PWD"
+    for f in opencode.json opencode.jsonc .opencode; do
+      if [ -e "$root/$f" ]; then printf '%s' "$f"; return 0; fi
+    done
+    return 1
+  }
+
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
   # under --parallel neither the reviews nor the failure messages interleave; the caller
   # emits them in panel order after the barrier. kimi3 cannot modify your working tree: it pins
   # read-only through OPENCODE_CONFIG_CONTENT (opencode's highest-precedence config layer, applied
   # last so it wins over any merged global/project config) denying `edit`+`bash`, unsets any
-  # inherited OPENCODE_CONFIG* so a hostile env can't pre-seed "allow", runs in an empty dir made
-  # outside any checkout (so the repo's opencode.json is never discovered), and adds --pure +
-  # --agent plan. Note: like every reviewer here, opencode still writes its own session data under
+  # inherited OPENCODE_CONFIG* so a hostile env can't pre-seed "allow", and adds --pure +
+  # --agent plan. It reads the checkout (that is the point of a reviewer) unless the checkout
+  # carries its own opencode config, in which case it degrades to an isolated empty dir. Note: like every reviewer here, opencode still writes its own session data under
   # its data dir — the guarantee is "your checkout is untouched", not "nothing touches disk".
   plan_review_with() {
     local name="$1" out rc=0 errf key Name why ro_cwd="" prompt_file expected_bytes actual_bytes body sandbox_hint="" sandbox_unenforced="" degraded_note=""
@@ -398,13 +427,52 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
               # verified: it overrides even a project opencode.json that sets edit/bash "allow").
               # Denying `edit`+`bash` removes those tools entirely, so nothing can be written — not
               # via a file edit, not via shell. We also unset any INHERITED OPENCODE_CONFIG* so a
-              # hostile environment can't pre-seed an "allow", and run in an empty dir made OUTSIDE
-              # any checkout (TMPDIR forced to /tmp) so the repo's own opencode.json is never even
-              # discovered. `--pure` skips external plugins; `--agent plan` is defense in depth.
-              ro_cwd="$(TMPDIR=/tmp mktemp -d 2>/dev/null || mktemp -d)"
-              out=$(cd "$ro_cwd" \
+              # hostile environment can't pre-seed an "allow". `--pure` skips external plugins;
+              # `--agent plan` is defense in depth.
+              #
+              # RUNS IN THE CHECKOUT, like claude, codex, cursor and grok45high — and that is a
+              # change. It used to run in an empty dir outside any checkout, which made the seat
+              # useless in practice: with no tree to read, the model spends its turn hunting for
+              # the repo, hits `permission requested: external_directory (…); auto-rejecting`, and
+              # returns an empty review. Observed twice on 2026-08-14. A reviewer that cannot read
+              # the code cannot catch a stale line number or a claim the source contradicts, which
+              # is the entire reason for a panel.
+              #
+              # The isolation existed for one concrete reason: a repo's own opencode.json would be
+              # discovered from the cwd. That reason is kept, not dropped — when the checkout ships
+              # its own opencode config we fall back to the isolated empty dir and SAY SO in the
+              # panel output, exactly as grok45high degrades when its sandbox cannot be enforced.
+              # So the tree being reviewed can never reconfigure the reviewer reading it.
+              #
+              # Note the denial is belt and braces even in the checkout: the hostile-env test
+              # proves OPENCODE_CONFIG_CONTENT wins over a project config that sets edit/bash
+              # "allow". The fallback is about everything ELSE a repo config can carry (MCP
+              # servers, agents, model routing), which no permission key covers.
+              #
+              # Two more denials, both learned by watching the seat fail with a tree to read:
+              #
+              #   external_directory — a rejected external read is FATAL to the run, not a tool
+              #     that quietly returns nothing. Reviewing a plan that mentions another repo,
+              #     the model reached for it, got auto-rejected, and the whole review ended
+              #     there. Denying it up front (plus the prompt line telling reviewers that
+              #     cross-repo claims are simply unverifiable here) keeps the turn alive.
+              #   task — the plan agent can spawn parallel explore subagents, and it does. That
+              #     is how a review that was verifying real claims against real files still
+              #     produced nothing: it spent the 300s budget in delegation and got cut off
+              #     mid-sweep. The cap is not negotiable, so the fan-out has to go.
+              #
+              # Both keys are in opencode's PermissionConfig schema (bash, doom_loop, edit,
+              # external_directory, glob, grep, list, lsp, question, read, skill, task,
+              # todowrite, webfetch, websearch) — checked, not guessed, because an unknown key
+              # here would be ignored silently and the seat would keep failing the same way.
+              ro_cwd=""
+              if repo_opencode_config="$(kimi3_repo_config)"; then
+                ro_cwd="$(TMPDIR=/tmp mktemp -d 2>/dev/null || mktemp -d)"
+                degraded_note="! $repo_opencode_config in the checkout — this review saw the plan text ONLY, not the code"
+              fi
+              out=$(cd "${ro_cwd:-$PWD}" \
                     && unset OPENCODE_CONFIG \
-                    && export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"allow"}}' \
+                    && export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"allow","external_directory":"deny","task":"deny"}}' \
                     && printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" \
                        | run_reviewer opencode run --pure --agent plan -m "$KIMI3_REVIEW_MODEL" 2>"$errf"); rc=$?
               [ -n "$ro_cwd" ] && rm -rf "$ro_cwd";;
