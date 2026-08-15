@@ -103,13 +103,12 @@ sf_isolate_git
 
 # Isolate from the user's real config/env so the suite is deterministic outside CI.
 export SHIP_FEATURE_CONFIG=/dev/null
-# CURSOR_REVIEW_MODEL, KIMI3_REVIEW_MODEL and GROK45HIGH_REVIEW_MODEL are not SHIP_FEATURE_* keys
-# (env-only, shared with pr-review-relay in CURSOR_REVIEW_MODEL's case), so they would not be
-# caught by the namespace above — but they are knobs people really do export once
+# The model pins are not SHIP_FEATURE_* keys (the names are shared with pr-review-relay), so they
+# would not be caught by the namespace above — but they are knobs people really do export once
 # ship-feature/pr-review-relay are in use, and an exported value would quietly satisfy the
-# default-pin assertions below. Clear all three here so the suite stays hermetic no matter who
-# runs it.
-unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL KIMI3_REVIEW_MODEL GROK45HIGH_REVIEW_MODEL
+# default-pin assertions below. Clear them here so the suite stays hermetic no matter who runs it.
+# PR_RELAY_OPENCODE_MODEL joined the list when the config file learned to carry it.
+unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL KIMI3_REVIEW_MODEL GROK45HIGH_REVIEW_MODEL PR_RELAY_OPENCODE_MODEL
 
 # Assert the isolation is actually in force HERE, before a single fixture runs. This check used to
 # sit at the very end with the others, which meant that if the sf_isolate_git call were deleted the
@@ -321,6 +320,7 @@ printf 'SHIP_FEATURE_REVIEWERS=codex,cursor  # my quorum\n' > "$CFGDIR/config2"
 out=$(PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config2" bash "$CLI" relay --author claude 2>/dev/null)
 if printf '%s' "$out" | grep -q -- "--reviewers codex,cursor" && ! printf '%s' "$out" | grep -q "quorum"; then echo "  ok   [-] config value inline comment is stripped"; PASS=$((PASS+1)); else echo "  FAIL inline comment not stripped"; FAIL=$((FAIL+1)); fi
 
+
 # --- preflight fails on a DIVERGED branch (own commit + default advanced) ---------------------
 ( cd "$MAIN/.claude/worktrees/feat" && git commit -q --allow-empty -m "feature work" && bash "$CLI" preflight >/dev/null 2>&1 ); check "preflight fails on a diverged branch" $? 1
 
@@ -524,6 +524,29 @@ fi
 printf '%s' "$fc_out" | grep -q 'no isolated cwd could be created' \
   && { echo "  ok   [-] the skipped seat says why"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the seat was skipped silently"; FAIL=$((FAIL+1)); }
+
+# --- the config file carries the MODEL PINS too -----------------------------------------------
+# The panel used to be described in two places: who sits on it in this file, what they actually
+# run in the shell profile. A seat and its model could then drift apart, and a run with no shell
+# profile (cron, a fresh machine) silently got the bundled default instead of the pinned model.
+printf 'KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/config3"
+mout=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config3" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
+printf '%s' "$mout" | grep -q -- "-m openrouter/z-ai/glm-5.2" \
+  && { echo "  ok   [-] the config file pins the kimi3 model"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the config file's model pin was ignored (seat fell back to the bundled default)"; FAIL=$((FAIL+1)); }
+# Environment still wins over the file, exactly like the SHIP_FEATURE_* keys.
+eout=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config3" KIMI3_REVIEW_MODEL=openrouter/moonshotai/kimi-k3 bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
+printf '%s' "$eout" | grep -q -- "-m openrouter/moonshotai/kimi-k3" \
+  && { echo "  ok   [-] the environment still overrides the config file's model pin"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the config file overrode an explicit environment model"; FAIL=$((FAIL+1)); }
+# pr-review-relay is a CHILD PROCESS, so its variable has to be EXPORTED, not merely assigned —
+# a plain shell variable does not cross that boundary and the relay would keep its own default.
+printf '#!/usr/bin/env bash\necho "RELAYENV PR_RELAY_OPENCODE_MODEL=${PR_RELAY_OPENCODE_MODEL:-}"\nexit 0\n' > "$BIN/pr-review-relay"; chmod +x "$BIN/pr-review-relay"
+printf 'PR_RELAY_OPENCODE_MODEL=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/config4"
+rout=$(PATH="$BIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config4" bash "$CLI" relay --author claude 2>/dev/null)
+printf '%s' "$rout" | grep -q 'PR_RELAY_OPENCODE_MODEL=openrouter/z-ai/glm-5.2' \
+  && { echo "  ok   [-] the relay's model pin reaches the child process"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL PR_RELAY_OPENCODE_MODEL did not reach pr-review-relay (not exported?)"; FAIL=$((FAIL+1)); }
 
 # REGRESSION (Codex round 3): a HOSTILE inherited OPENCODE_CONFIG_CONTENT that re-enables
 # edit/bash must be overridden by our deny (we own the highest-precedence layer).
@@ -1219,7 +1242,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=214
+EXPECTED=217
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
