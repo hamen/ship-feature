@@ -336,7 +336,7 @@ make_reviewer() {
   # $1 = review tag, $2 = exit code, $3 = binary name on PATH
   cat > "$PBIN/$3" <<STUB
 #!/usr/bin/env bash
-echo "REVIEW-$1 argv=[\$*] OPENCODE_CONFIG_CONTENT=[\${OPENCODE_CONFIG_CONTENT:-}] OPENCODE_CONFIG=[\${OPENCODE_CONFIG:-}] CWD=[\${PWD}]"
+echo "REVIEW-$1 argv=[\$*] OPENCODE_CONFIG_CONTENT=[\${OPENCODE_CONFIG_CONTENT:-}] OPENCODE_CONFIG=[\${OPENCODE_CONFIG:-}] OPENCODE_CONFIG_DIR=[\${OPENCODE_CONFIG_DIR:-}] CWD=[\${PWD}]"
 _args=("\$@")
 for ((_i=0; _i<\${#_args[@]}; _i++)); do
   if [ "\${_args[\$_i]}" = "--prompt-file" ]; then
@@ -390,16 +390,141 @@ printf '%s' "$cu" | grep -q -- "--mode=ask"                    && { echo "  ok  
 printf '%s' "$cu" | grep -q -- "--model composer-2.5"  && { echo "  ok   [-] cursor model is pinned (not Auto)"; PASS=$((PASS+1)); } || { echo "  FAIL cursor model not pinned: $cu"; FAIL=$((FAIL+1)); }
 # kimi3's read-only guarantee: OPENCODE_CONFIG_CONTENT (highest-precedence config layer)
 # DENIES `edit` AND `bash` (removing both tools — no write, no shell), OPENCODE_CONFIG is
-# unset (empty), it runs --pure and in an isolated cwd OUTSIDE the checkout, and never the
-# all-allow build agent. The `plan` agent alone denies edit but leaves bash allowed — not
-# enough — so the CONTENT denial is what makes it real. Assert all of it on kimi3's line.
+# unset (empty), it runs --pure, and never the all-allow build agent. The `plan` agent alone
+# denies edit but leaves bash allowed — not enough — so the CONTENT denial is what makes it
+# real. Assert all of it on kimi3's line.
+#
+# The cwd is asserted by the PAIR below, not by one line: kimi3 READS THE CHECKOUT, because a
+# reviewer that cannot open the code can only review prose — it used to run in an empty dir and
+# returned empty reviews twice on 2026-08-14, having spent its turn looking for the repo. It
+# falls back to an isolated dir only when the checkout carries its own opencode config, which is
+# the one thing the permission denial above cannot pin down.
 km=$(printf '%s' "$out" | grep 'REVIEW-kimi3')
 printf '%s' "$km" | grep -q -- "--agent plan" && printf '%s' "$km" | grep -q -- "kimi-k3" && { echo "  ok   [-] kimi3 runs opencode plan agent (kimi-k3)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not on opencode plan agent"; FAIL=$((FAIL+1)); }
 printf '%s' "$km" | grep -q -- "--pure" && { echo "  ok   [-] kimi3 runs --pure (no checkout plugins)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 missing --pure"; FAIL=$((FAIL+1)); }
 printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && { echo "  ok   [-] kimi3 read-only via OPENCODE_CONFIG_CONTENT (edit+bash denied)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not hard read-only (OPENCODE_CONFIG_CONTENT must deny edit AND bash)"; FAIL=$((FAIL+1)); }
+# The other denials are load-bearing now that the seat reads a tree, and each is one JSON edit
+# away from being dropped in silence:
+#   external_directory   a rejected external read KILLS the run — this is what produced the
+#                        empty reviews the checkout change exists to fix
+#   task                 the plan agent fans out to explore subagents and spends the whole
+#                        timeout doing it
+#   webfetch, websearch  read-the-tree plus any network reach is an exfiltration path; these
+#                        repos carry committed keystores, and a search query carries content
+#                        outward exactly as well as a URL
+#   lsp                  a language server is a process the PROJECT starts and configures —
+#                        denying bash while leaving this on still lets the reviewed tree run code
+for k in external_directory task webfetch websearch lsp; do
+  printf '%s' "$km" | grep -q "\"$k\":\"deny\"" \
+    && { echo "  ok   [-] kimi3 denies $k"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL kimi3 does not deny $k"; FAIL=$((FAIL+1)); }
+done
 printf '%s' "$km" | grep -q 'OPENCODE_CONFIG=\[\]' && { echo "  ok   [-] kimi3 unsets inherited OPENCODE_CONFIG"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 left OPENCODE_CONFIG set (could weaken perms)"; FAIL=$((FAIL+1)); }
-kcwd=$(printf '%s' "$km" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p'); case "$kcwd" in "$WORK"*|"$PWD"*) echo "  FAIL kimi3 cwd is inside the checkout ($kcwd) — repo opencode.json could load"; FAIL=$((FAIL+1));; "") echo "  FAIL kimi3 cwd not captured"; FAIL=$((FAIL+1));; *) echo "  ok   [-] kimi3 runs in an isolated cwd outside the checkout"; PASS=$((PASS+1));; esac
+# OPENCODE_CONFIG_DIR is the other half of "unsets any inherited OPENCODE_CONFIG*", and it was
+# only the comment that said so: the code unset one variable. A config DIR carries agents, MCP
+# servers and model settings just as a config file does.
+printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_DIR=\[\]' && { echo "  ok   [-] kimi3 unsets inherited OPENCODE_CONFIG_DIR"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 left OPENCODE_CONFIG_DIR set (agents/MCP could load)"; FAIL=$((FAIL+1)); }
+kcwd=$(printf '%s' "$km" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p'); case "$kcwd" in "") echo "  FAIL kimi3 cwd not captured"; FAIL=$((FAIL+1));; "$PWD") echo "  ok   [-] kimi3 reads the checkout"; PASS=$((PASS+1));; *) echo "  FAIL kimi3 ran outside the checkout ($kcwd) — it can only review prose from there"; FAIL=$((FAIL+1));; esac
 printf '%s' "$km" | grep -q -- "--agent build"         && { echo "  FAIL kimi3 uses the all-allow build agent"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] kimi3 never uses the all-allow build agent"; PASS=$((PASS+1)); }
+# The other half of the cwd contract: a checkout that ships its OWN opencode config must push
+# the seat back into an isolated dir, and must SAY so. Permissions are pinned by the deny above
+# and cannot be overridden, but a repo config also carries MCP servers, agents and model
+# routing, and no permission key covers those — so the tree being reviewed would otherwise get
+# to reconfigure the reviewer reading it.
+ocfg_repo="$WORK/ocfg"; mkdir -p "$ocfg_repo"
+( cd "$ocfg_repo" && git init -q . && printf '{}\n' > opencode.json )
+ocfg_out=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
+ocfg_cwd=$(printf '%s' "$ocfg_out" | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$ocfg_cwd" in
+  "$ocfg_repo"|"$ocfg_repo"/*) echo "  FAIL kimi3 read a checkout carrying its own opencode.json ($ocfg_cwd)"; FAIL=$((FAIL+1));;
+  "") echo "  FAIL kimi3 cwd not captured in the repo-config case"; FAIL=$((FAIL+1));;
+  *) echo "  ok   [-] kimi3 falls back to an isolated cwd when the checkout has an opencode config"; PASS=$((PASS+1));;
+esac
+printf '%s' "$ocfg_out" | grep -q 'opencode.json would configure the reviewer' \
+  && { echo "  ok   [-] kimi3 announces the degraded review"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL kimi3 degraded silently — a prose-only review must say so"; FAIL=$((FAIL+1)); }
+# From a SUBDIRECTORY the config is still found: opencode discovers config by walking up, so a
+# check that only looked at $PWD would miss it and hand the reviewer a config we refused. This
+# is the case the walk-up exists for, and it is also this workflow's normal shape — plan-review
+# usually runs inside .claude/worktrees/<name>.
+mkdir -p "$ocfg_repo/sub/deeper"
+sub_out=$(cd "$ocfg_repo/sub/deeper" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
+sub_cwd=$(printf '%s' "$sub_out" | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$sub_cwd" in
+  "$ocfg_repo"|"$ocfg_repo"/*) echo "  FAIL kimi3 missed an opencode config in a parent directory ($sub_cwd)"; FAIL=$((FAIL+1));;
+  "") echo "  FAIL kimi3 cwd not captured in the subdirectory case"; FAIL=$((FAIL+1));;
+  *) echo "  ok   [-] kimi3 finds an opencode config above the cwd"; PASS=$((PASS+1));;
+esac
+printf '%s' "$sub_out" | grep -q 'would configure the reviewer' \
+  && { echo "  ok   [-] kimi3 announces the degraded review from a subdirectory too"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL kimi3 degraded silently from a subdirectory"; FAIL=$((FAIL+1)); }
+
+# All THREE config names trigger the fallback. The function checks opencode.json, opencode.jsonc
+# and .opencode; only the first was exercised, so a typo in either of the others was free.
+for cfgname in opencode.jsonc .opencode; do
+  rm -rf "${ocfg_repo:?}/opencode.json" "${ocfg_repo:?}/opencode.jsonc" "${ocfg_repo:?}/.opencode"
+  if [ "$cfgname" = .opencode ]; then mkdir -p "$ocfg_repo/.opencode"; else printf '{}\n' > "$ocfg_repo/$cfgname"; fi
+  n_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null \
+          | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+  case "$n_cwd" in
+    "$ocfg_repo"|"$ocfg_repo"/*|"") echo "  FAIL $cfgname did not trigger the isolated fallback ($n_cwd)"; FAIL=$((FAIL+1));;
+    *) echo "  ok   [-] $cfgname triggers the isolated fallback"; PASS=$((PASS+1));;
+  esac
+done
+rm -rf "${ocfg_repo:?}/.opencode"; printf '{}\n' > "$ocfg_repo/opencode.json"
+
+# A LINKED WORKTREE at <repo>/.claude/worktrees/<name> is its own git toplevel, so a walk that
+# stops at the toplevel never sees the main checkout's config — while opencode, running in the
+# worktree, is inside that repo. This is the exact layout ship-feature creates, so it is checked
+# explicitly rather than by walking past the root (which would degrade reviews over configs
+# opencode never loads).
+wt_main="$WORK/wtmain"; mkdir -p "$wt_main"
+( cd "$wt_main" && git init -q . && git commit -q --allow-empty -m init && printf '{}\n' > opencode.json \
+  && git worktree add -q ".claude/worktrees/w" -b wtprobe >/dev/null 2>&1 )
+wt_cwd=$(cd "$wt_main/.claude/worktrees/w" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null \
+         | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$wt_cwd" in
+  "$wt_main"/*|"") echo "  FAIL kimi3 missed the MAIN repo's opencode.json from a linked worktree ($wt_cwd)"; FAIL=$((FAIL+1));;
+  *) echo "  ok   [-] kimi3 finds the main checkout's opencode config from a linked worktree"; PASS=$((PASS+1));;
+esac
+
+# The $HOME bound, which the code comment calls load-bearing: `~/.opencode` exists on any
+# machine that has run opencode, so a walk that does not stop at $HOME matches it for EVERY
+# checkout under $HOME and degrades every review to prose. Point HOME at a temp dir that has
+# one, put the checkout beneath it, and the seat must still read the checkout.
+home_probe="$WORK/homeprobe"; mkdir -p "$home_probe/.opencode" "$home_probe/repo"
+( cd "$home_probe/repo" && git init -q . )
+hp_cwd=$(cd "$home_probe/repo" && printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$home_probe" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null \
+         | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$hp_cwd" in
+  "$home_probe/repo") echo "  ok   [-] kimi3 ignores ~/.opencode and still reads the checkout"; PASS=$((PASS+1));;
+  "") echo "  FAIL kimi3 cwd not captured in the HOME-bound case"; FAIL=$((FAIL+1));;
+  *) echo "  FAIL a config at \$HOME degraded the review ($hp_cwd) — every checkout under \$HOME would go prose-only"; FAIL=$((FAIL+1));;
+esac
+
+# FAIL CLOSED: config present and no isolated dir available → the seat is SKIPPED, never run in
+# the checkout whose config we just refused. The old code left ro_cwd empty and fell through to
+# $PWD while still announcing an isolated review — a reviewer that lies about what it read.
+mkfail="$WORK/mkfail"; mkdir -p "$mkfail"
+# The stub lets the FIRST mktemp through: that one creates STATUS_DIR, and failing it aborts
+# plan-review before the seat is ever reached — the test would then pass without exercising the
+# branch at all. Everything after it fails, which is the seat's own isolated dir.
+cat > "$mkfail/mktemp" <<STUB
+#!/usr/bin/env bash
+if [ ! -e "$mkfail/used" ]; then : > "$mkfail/used"; exec /usr/bin/mktemp "\$@"; fi
+exit 1
+STUB
+chmod +x "$mkfail/mktemp"
+fc_out=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$mkfail:$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>&1); fc_rc=$?
+if printf '%s' "$fc_out" | grep -q 'REVIEW-kimi3'; then
+  echo "  FAIL the seat ran with no isolated cwd — in the checkout it was supposed to avoid"; FAIL=$((FAIL+1))
+else
+  echo "  ok   [-] kimi3 is skipped rather than run in a checkout it must not read"; PASS=$((PASS+1))
+fi
+printf '%s' "$fc_out" | grep -q 'no isolated cwd could be created' \
+  && { echo "  ok   [-] the skipped seat says why"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the seat was skipped silently"; FAIL=$((FAIL+1)); }
+
 # REGRESSION (Codex round 3): a HOSTILE inherited OPENCODE_CONFIG_CONTENT that re-enables
 # edit/bash must be overridden by our deny (we own the highest-precedence layer).
 hostile=$(printf 'plan\n' | PATH="$PBIN:$PATH" OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"allow","bash":"allow"}}' bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
@@ -1094,7 +1219,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=198
+EXPECTED=214
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
