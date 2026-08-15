@@ -6,6 +6,29 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
+### Changed
+
+- **The config file now carries the model pins**, not just the seats. `KIMI3_REVIEW_MODEL`,
+  `CURSOR_REVIEW_MODEL`, `GROK45HIGH_REVIEW_MODEL` and `PR_RELAY_OPENCODE_MODEL` are read from
+  `~/.config/ship-feature/config` with the usual precedence — the environment still wins, the file
+  fills in. They keep their vendor-shaped names because `pr-review-relay` reads two of them as well,
+  and they are **exported** when read, so that child process actually sees them.
+
+  Previously the panel was split across two files: who sits on it in the config, what each seat
+  actually ran in the shell profile. A seat and its model could drift apart, and a run with no
+  profile loaded (cron, a fresh machine, a container) silently fell back to the bundled default
+  while the panel looked unchanged.
+
+### Fixed
+
+- **The `kimi3` plan-review seat reads the checkout it reviews.** It ran in an empty directory
+  outside any checkout, so it had nothing to read: the model spent its turn hunting for the repo,
+  hit an auto-rejected `external_directory` request, and returned an empty review. It now runs in
+  the checkout like the other reviewers, and falls back to the isolated directory — announcing it —
+  only when the checkout carries its own opencode config, so the tree being reviewed can never
+  reconfigure the reviewer reading it. `external_directory`, `task`, `webfetch`, `websearch` and
+  `lsp` are denied, and `OPENCODE_CONFIG_DIR` is unset alongside `OPENCODE_CONFIG`.
+
 ## [0.4.0] — 2026-08-13
 
 ### Added

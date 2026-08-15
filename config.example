@@ -1,8 +1,9 @@
 # ship-feature — example configuration.
 #
 # Copy to ~/.config/ship-feature/config and edit. The `ship-feature` CLI reads this file as plain
-# `KEY=value` lines and honors the SHIP_FEATURE_* keys below — it is NEVER shell-`source`d, so nothing
-# here is executed. Environment variables of the same name take precedence over this file.
+# `KEY=value` lines and honors the keys below — the SHIP_FEATURE_* ones plus the four model pins,
+# which keep their vendor-shaped names because pr-review-relay reads them too. It is NEVER
+# shell-`source`d, so nothing here is executed. Environment variables of the same name take precedence over this file.
 #
 # The values below are the built-in defaults. This example file is TRACKED and public; put your real
 # values only in the copy at ~/.config/ship-feature/config, which is gitignored.
@@ -35,12 +36,21 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # Per-reviewer timeout for `ship-feature plan-review`, in seconds. ENV-ONLY (not read from this file);
 # falls back to PR_RELAY_AGENT_TIMEOUT, then 300. e.g. export SHIP_FEATURE_PLAN_TIMEOUT=480
 
+# ---------------------------------------------------------------------------------------------
+# The model pins. READ FROM THIS FILE (the environment still wins, as everywhere else).
+#
+# These four are the only keys here without a SHIP_FEATURE_ prefix, and the names are not this
+# tool's to choose: pr-review-relay reads CURSOR_REVIEW_MODEL and PR_RELAY_OPENCODE_MODEL too,
+# because they describe your ACCOUNTS rather than either tool, and one setting should configure
+# both. They are exported when read, so the relay — a child process — actually sees them.
+#
+# They used to be environment-only, which split the panel across two files: who sits on it here,
+# what they actually run in your shell profile. A seat and its model could drift apart, and a run
+# with no profile loaded (cron, a fresh machine) silently got the bundled default.
+
 # Model for the `cursor` plan reviewer. Default: composer-2.5, Cursor's own model -- Cursor-branded
 # quota pool, and not Claude, GPT, Codex or Grok, so every reviewer on the panel stays on the model
-# its own vendor built. ENV-ONLY (not read from this
-# file — it is outside the SHIP_FEATURE_* namespace, so load_config never sees it). The name has no
-# SHIP_FEATURE_ prefix on purpose: pr-review-relay reads the SAME variable, because it describes your
-# Cursor account rather than either tool, and one export should configure both.
+# its own vendor built.
 # It is pinned rather than left on cursor-agent's own "Auto" default, which routes to the frontier
 # models and may pick a Claude one — plan-review would then have Claude grading a plan Claude wrote,
 # while the panel reports an independent "Cursor" reviewer. (Auto also bills Cursor's small "Other
@@ -49,4 +59,25 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # already on your panel: setting this back to `auto`, to a claude-* id while Claude writes your
 # plans, or to a cursor-grok-* id while grok45high reviews alongside it, all collapse two nominally
 # independent seats onto one model family. The override is for a retired model id.
-# e.g. export CURSOR_REVIEW_MODEL=composer-2.5-fast
+# e.g. CURSOR_REVIEW_MODEL=composer-2.5-fast
+
+# Model for the `kimi3` plan reviewer, which runs through opencode. Default: opencode-go/kimi-k3,
+# the bundled tier. Set an `openrouter/<vendor>/<model>` id to route through OpenRouter instead.
+#
+# This is the seat where Kimi K3 and GLM sit, and which of them is better is a property of the
+# CODE UNDER REVIEW, not of the seat: a measured bake-off on a 75 KB Kotlin diff went to GLM 5.2,
+# while Rails' own AI evals put Kimi K3 twenty-four points ahead on Rails tasks. Changing it is a
+# line in this file, which is the point of it being here.
+#
+# Check the id before pinning it — a bad slug does not error, it returns a broken fragment:
+#   opencode models | grep <vendor>
+#   curl -s https://openrouter.ai/api/v1/models/<id>/endpoints   # which providers actually serve it
+# e.g. KIMI3_REVIEW_MODEL=openrouter/moonshotai/kimi-k3
+
+# Model for the `grok45high` plan reviewer. Default: grok-4.6.
+# e.g. GROK45HIGH_REVIEW_MODEL=grok-4.6
+
+# Model for pr-review-relay's `opencode` seat. Same seat family as KIMI3_REVIEW_MODEL above but a
+# DIFFERENT TOOL and a different code path, so the two are set independently — and they are worth
+# setting differently when the relay reviews code while plan-review reads prose.
+# e.g. PR_RELAY_OPENCODE_MODEL=openrouter/z-ai/glm-5.2

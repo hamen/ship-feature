@@ -125,8 +125,8 @@ ship-feature skill for any feature/fix.
   — opencode's highest-precedence config layer — denies the `edit`+`bash` permissions so it can't write
   even via shell and can't be overridden by a merged global/checkout config; inherited `OPENCODE_CONFIG*`
   are unset, it runs in an isolated cwd outside the checkout, plus `--pure` and `--agent plan`),
-  `grok45high` (Grok 4.6 high effort — pin with `GROK45HIGH_REVIEW_MODEL`, env-only, same contract as
-  `CURSOR_REVIEW_MODEL` below: `grok --prompt-file` — headless Grok ignores stdin — running in
+  `grok45high` (Grok 4.6 high effort — pin with `GROK45HIGH_REVIEW_MODEL`, from the config file or the
+  environment, same contract as `CURSOR_REVIEW_MODEL` below: `grok --prompt-file` — headless Grok ignores stdin — running in
   your checkout like `claude`/`codex`/`cursor`, held read-only by a tool **allowlist**
   `--tools read_file,list_dir,grep`, with the MCP bridge removed explicitly
   (`--disallowed-tools search_tool,use_tool` — it survives the built-in allowlist), plus
@@ -176,8 +176,8 @@ your panel, all collapse two nominally independent seats onto one model family �
 exists for retired model ids, not for going back to Auto.
 The variable has no `SHIP_FEATURE_` prefix on purpose: it describes your Cursor account rather than
 this tool, [`pr-review-relay`](https://github.com/hamen/pr-review-relay) reads the same one, and a
-single export should configure both. Being outside that namespace it is **env-only** — it is never
-read from `~/.config/ship-feature/config`.
+single setting should configure both. It **is** read from `~/.config/ship-feature/config` (and
+exported when read, so the relay child process sees it); an environment value still wins.
 
 ## Overriding the kimi3 model
 
@@ -187,8 +187,8 @@ read from `~/.config/ship-feature/config`.
 OpenRouter id (`openrouter/z-ai/glm-5.2`) if you want kimi3 off the bundled subscription tier
 without waiting on its quota reset. `opencode models` lists what your account can reach.
 
-Same env-only convention as `CURSOR_REVIEW_MODEL`: no `SHIP_FEATURE_` prefix, never read from
-`~/.config/ship-feature/config`. Unlike `CURSOR_REVIEW_MODEL`, it is not shared with
+Same convention as `CURSOR_REVIEW_MODEL`: no `SHIP_FEATURE_` prefix, read from
+`~/.config/ship-feature/config` with the environment winning. Unlike `CURSOR_REVIEW_MODEL`, it is not shared with
 `pr-review-relay` — that tool's opencode reviewer has its own separate override,
 `PR_RELAY_OPENCODE_MODEL`, for a different code path (the relay's `opencode` seat, not
 plan-review's `kimi3` seat).

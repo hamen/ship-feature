@@ -79,6 +79,24 @@ load_config() {
       SHIP_FEATURE_DENYLIST) [ -n "${SHIP_FEATURE_DENYLIST+x}" ] || SHIP_FEATURE_DENYLIST="$val" ;;
       SHIP_FEATURE_REVIEWERS) [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || SHIP_FEATURE_REVIEWERS="$val" ;;
       SHIP_FEATURE_PLAN_REVIEWERS) [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || SHIP_FEATURE_PLAN_REVIEWERS="$val" ;;
+      # The model pins. Same precedence as the keys above — the environment wins, the file
+      # fills in.
+      #
+      # These are the only keys here NOT named SHIP_FEATURE_*, and the names are not ours to
+      # change: CURSOR_REVIEW_MODEL and PR_RELAY_OPENCODE_MODEL are read by `pr-review-relay`
+      # as well, and one setting should configure both tools. That is also why they are
+      # EXPORTED rather than merely assigned — `relay` runs pr-review-relay as a CHILD process,
+      # and a plain shell variable does not cross that boundary.
+      #
+      # They were environment-only until now, which meant the panel was described in two
+      # places: who sits on it here, what they actually run in ~/.zshrc. One file says both
+      # now, so a seat and its model cannot drift apart — and a run with no shell profile (a
+      # cron job, a fresh machine) gets the same panel as an interactive one instead of
+      # silently falling back to a bundled default.
+      KIMI3_REVIEW_MODEL) [ -n "${KIMI3_REVIEW_MODEL+x}" ] || export KIMI3_REVIEW_MODEL="$val" ;;
+      CURSOR_REVIEW_MODEL) [ -n "${CURSOR_REVIEW_MODEL+x}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
+      GROK45HIGH_REVIEW_MODEL) [ -n "${GROK45HIGH_REVIEW_MODEL+x}" ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
+      PR_RELAY_OPENCODE_MODEL) [ -n "${PR_RELAY_OPENCODE_MODEL+x}" ] || export PR_RELAY_OPENCODE_MODEL="$val" ;;
     esac
   done < "$cfg"
 }
@@ -363,26 +381,30 @@ have found something serious, write it down before you go looking for the next t
   # Cursor-pool, and not Claude, GPT, Codex or Grok, so every reviewer on the panel stays on the
   # model its own vendor built and they keep failing differently from each other.
   # Deliberately NOT named SHIP_FEATURE_*: it describes the user's Cursor account rather than this
-  # tool, pr-review-relay reads the same variable, and one export should configure both. Being
-  # outside the SHIP_FEATURE_* namespace it is env-only — load_config never reads it.
+  # tool, pr-review-relay reads the same variable, and one setting should configure both. It is
+  # still read from the config file (load_config exports it there, so the child process sees it);
+  # the environment keeps winning over the file.
   # `local` still reads the inherited/exported value on the RHS before the shadow takes effect, so
   # the override survives and nothing leaks to global scope. It is safe here only because this
   # variable is read inside the function and nowhere else; anything a trap expands must NOT be
   # local, since traps fire once the function has already returned.
   local CURSOR_REVIEW_MODEL="${CURSOR_REVIEW_MODEL:-composer-2.5}"
 
-  # Pin the kimi3 reviewer's model. Same override pattern as CURSOR_REVIEW_MODEL above: env-only,
-  # outside SHIP_FEATURE_* (load_config never reads it), local so the override survives without
-  # leaking to global scope. Left unset, defaults to the bundled OpenCode Go tier; export
-  # KIMI3_REVIEW_MODEL=openrouter/<vendor>/<model> to route through a pay-as-you-go OpenRouter
-  # model instead (e.g. after dropping a different reviewer's subscription for billing reasons).
+  # Pin the kimi3 reviewer's model. Same override pattern as CURSOR_REVIEW_MODEL above: config
+  # file or environment, local so the override survives without leaking to global scope. Left
+  # unset in BOTH, it falls back to the bundled OpenCode Go tier — put
+  # KIMI3_REVIEW_MODEL=openrouter/<vendor>/<model> in the config file to route through a
+  # pay-as-you-go OpenRouter model instead. This seat is where Kimi K3 and GLM sit, and which
+  # one is better is a property of the code under review, not of the seat: GLM won a measured
+  # bake-off on a Kotlin diff, while Rails' own AI evals put Kimi K3 24 points ahead on Rails
+  # tasks. That is a line in a config file, which is the point of it being there.
   local KIMI3_REVIEW_MODEL="${KIMI3_REVIEW_MODEL:-opencode-go/kimi-k3}"
 
   # Pin the grok45high reviewer's model. Same override pattern as CURSOR_REVIEW_MODEL and
-  # KIMI3_REVIEW_MODEL above: env-only, outside SHIP_FEATURE_* (load_config never reads it),
-  # local so the override survives without leaking to global scope. Defaults to grok-4.6
-  # (xAI released it 2026-08-12); export GROK45HIGH_REVIEW_MODEL=grok-<version> to pin a
-  # different one without editing this script.
+  # KIMI3_REVIEW_MODEL above: config file or environment, local so the override survives without
+  # leaking to global scope. Defaults to grok-4.6 (xAI released it 2026-08-12); set
+  # GROK45HIGH_REVIEW_MODEL=grok-<version> in the config file to pin a different one without
+  # editing this script.
   local GROK45HIGH_REVIEW_MODEL="${GROK45HIGH_REVIEW_MODEL:-grok-4.6}"
 
   # Does the checkout carry its own opencode configuration?
