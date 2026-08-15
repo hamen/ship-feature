@@ -624,6 +624,54 @@ printf '%s' "$sh8" | grep 'REVIEW-kimi3' | grep -q -- "-m openrouter/moonshotai/
 env -u HOME PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG=/dev/null PR_RELAY_CONFIG="$CFGDIR/shared1" SHIP_FEATURE_PLANS_DIR="$WORK/plans" \
   bash "$CLI" plan-review --reviewers kimi3 </dev/null >/dev/null 2>&1
 [ $? -ne 2 ] && { echo "  ok   [-] an unset HOME does not abort the run"; PASS=$((PASS+1)); } || { echo "  FAIL unset HOME aborted (unbound variable)"; FAIL=$((FAIL+1)); }
+# WHO sits on the panel comes from the shared file too. It was duplicated in both configs —
+# identical today, free to drift tomorrow, and a panel that differs between the plan gate and the
+# PR gate is something you discover from a verdict.
+printf 'REVIEWERS=codex,grok\nPLAN_REVIEWERS=codex,kimi3\n' > "$CFGDIR/shared7"
+sh9=$(PATH="$BIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared7" bash "$CLI" relay --author claude 2>/dev/null)
+printf '%s' "$sh9" | grep -q -- "--reviewers codex,grok" \
+  && { echo "  ok   [-] the shared file names the relay panel"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL REVIEWERS was not read from the shared file"; FAIL=$((FAIL+1)); }
+sh10=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared7" bash "$CLI" plan-review 2>/dev/null)
+printf '%s' "$sh10" | grep -q 'REVIEW-kimi3' && printf '%s' "$sh10" | grep -q 'REVIEW-codex' \
+  && ! printf '%s' "$sh10" | grep -q 'REVIEW-grok45high' \
+  && { echo "  ok   [-] the shared file names the plan-review panel"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL PLAN_REVIEWERS was not read from the shared file"; FAIL=$((FAIL+1)); }
+# ship-feature's own config still wins, so one tool can differ on purpose.
+printf 'SHIP_FEATURE_PLAN_REVIEWERS=codex\n' > "$CFGDIR/shared8"
+sh11=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/shared8" PR_RELAY_CONFIG="$CFGDIR/shared7" bash "$CLI" plan-review 2>/dev/null)
+printf '%s' "$sh11" | grep -q 'REVIEW-codex' && ! printf '%s' "$sh11" | grep -q 'REVIEW-kimi3' \
+  && { echo "  ok   [-] ship-feature's own panel beats the shared one"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the shared panel overrode ship-feature's own"; FAIL=$((FAIL+1)); }
+# An explicitly EMPTY environment value still disables the injected quorum — that is what the
+# ${VAR+x} rule is for, and it must survive a value sitting in the shared file.
+sh12=$(PATH="$BIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared7" SHIP_FEATURE_REVIEWERS= bash "$CLI" relay --author claude 2>/dev/null)
+printf '%s' "$sh12" | grep -q -- "--reviewers" \
+  && { echo "  FAIL an empty SHIP_FEATURE_REVIEWERS no longer disables the injected quorum"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] an empty environment quorum still disables injection"; PASS=$((PASS+1)); }
+# LAST value wins within the shared file, as in pr-review-relay's own parser. Guarding only on
+# "is it set" kept the FIRST line here while the relay kept the last — a valid file handing the
+# two tools different panels, which is the thing reading one file is supposed to prevent.
+printf 'REVIEWERS=codex\nMODEL_kimi3=openrouter/z-ai/glm-5.2\nREVIEWERS=codex,grok\nMODEL_kimi3=openrouter/moonshotai/kimi-k3\n' > "$CFGDIR/shared9"
+sh13=$(PATH="$BIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared9" bash "$CLI" relay --author claude 2>/dev/null)
+printf '%s' "$sh13" | grep -q -- "--reviewers codex,grok" \
+  && { echo "  ok   [-] a repeated key takes the LAST value, like the relay"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a repeated key kept the first value (the relay would keep the last)"; FAIL=$((FAIL+1)); }
+sh14=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared9" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
+printf '%s' "$sh14" | grep 'REVIEW-kimi3' | grep -q -- "-m openrouter/moonshotai/kimi-k3" \
+  && { echo "  ok   [-] a repeated model pin takes the LAST value too"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a repeated model pin kept the first value"; FAIL=$((FAIL+1)); }
+# The empty-environment contract, on the OTHER key. PLAN_REVIEWERS is its own line of code, so a
+# typo there would pass every test above.
+sh15=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared7" SHIP_FEATURE_PLAN_REVIEWERS= SHIP_FEATURE_REVIEWERS=codex bash "$CLI" plan-review 2>/dev/null)
+printf '%s' "$sh15" | grep -q 'REVIEW-codex' && ! printf '%s' "$sh15" | grep -q 'REVIEW-kimi3' \
+  && { echo "  ok   [-] an empty plan panel falls back to the quorum, not to the shared file"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL an empty SHIP_FEATURE_PLAN_REVIEWERS did not survive the shared file"; FAIL=$((FAIL+1)); }
+# Closing the 2x2: a SET environment quorum must beat the shared file on the relay side too.
+sh16=$(PATH="$BIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared7" SHIP_FEATURE_REVIEWERS=claude,codex bash "$CLI" relay --author claude 2>/dev/null)
+printf '%s' "$sh16" | grep -q -- "--reviewers claude,codex" \
+  && { echo "  ok   [-] an environment quorum beats the shared file"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the shared file overrode an explicit environment quorum"; FAIL=$((FAIL+1)); }
 printf 'MODEL_grok=grok-0.0\n' > "$CFGDIR/shared4"
 sh5=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared4" bash "$CLI" plan-review --reviewers grok45high 2>/dev/null)
 printf '%s' "$sh5" | grep 'REVIEW-grok45high' | grep -q -- "-m grok-0.0" \
@@ -1347,7 +1395,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=231
+EXPECTED=239
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

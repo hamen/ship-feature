@@ -117,7 +117,8 @@ load_config() {
   load_shared_model_pins
 }
 
-# The SHARED panel config: pr-review-relay's own file, read here as the LAST fallback.
+# The SHARED PANEL config: pr-review-relay's own file, read here as the LAST fallback — both who
+# sits on the panel (REVIEWERS, PLAN_REVIEWERS) and what each seat runs (MODEL_*).
 #
 # Both tools review with the same seats on the same accounts, so which model a seat runs is a
 # property of the machine, not of the tool that happens to be invoking it. pr-review-relay
@@ -144,6 +145,17 @@ load_shared_model_pins() {
   # ${HOME:-}, not $HOME: under `set -u` an unset HOME aborts the whole command, and a caller
   # that sets both ship-feature paths explicitly has every right not to have one.
   local cfg="${PR_RELAY_CONFIG:-${HOME:-}/.config/pr-review-relay/config}" key val
+  # LAST VALUE WINS within this file, as in pr-review-relay's own parser. Guarding only on "is it
+  # set" would keep the FIRST of two `REVIEWERS=` lines here while the relay kept the last — a
+  # valid file handing the two tools different panels, which is exactly what reading one file is
+  # meant to prevent. These flags say "a HIGHER source already provided this", which is the thing
+  # that must not be overwritten; a later line of this same file may.
+  local from_env_kimi3=1 from_env_cursor=1 from_env_grok=1 from_env_rev=1 from_env_plan=1
+  [ -n "${KIMI3_REVIEW_MODEL:-}" ] || from_env_kimi3=0
+  [ -n "${CURSOR_REVIEW_MODEL:-}" ] || from_env_cursor=0
+  [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || from_env_grok=0
+  [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || from_env_rev=0
+  [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || from_env_plan=0
   [ -f "$cfg" ] || return 0
   while IFS='=' read -r key val || [ -n "$key$val" ]; do
     # Strip a leading UTF-8 BOM, as pr-review-relay's own parser does (lib-panel.sh). Without it
@@ -160,9 +172,22 @@ load_shared_model_pins() {
     # leave ship-feature on its built-in default while pr-review-relay used the shared value: the
     # same inputs, two different models.
     case "$key" in
-      MODEL_kimi3)      [ -n "${KIMI3_REVIEW_MODEL:-}" ] || export KIMI3_REVIEW_MODEL="$val" ;;
-      MODEL_cursor)     [ -n "${CURSOR_REVIEW_MODEL:-}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
-      MODEL_grok45high) [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
+      MODEL_kimi3)      [ "$from_env_kimi3" = 1 ] || export KIMI3_REVIEW_MODEL="$val" ;;
+      MODEL_cursor)     [ "$from_env_cursor" = 1 ] || export CURSOR_REVIEW_MODEL="$val" ;;
+      MODEL_grok45high) [ "$from_env_grok" = 1 ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
+      # WHO sits on the panel, from the same file for the same reason the models are. These two
+      # were already duplicated across the two configs — identical today, free to drift tomorrow,
+      # with nothing to notice it because both files are valid. A panel that differs between the
+      # plan gate and the PR gate is the kind of difference you discover from a verdict.
+      #
+      # ${VAR+x} semantics here, unlike the model pins above: an explicitly empty
+      # SHIP_FEATURE_REVIEWERS means "no injected quorum" on purpose, and that has to survive a
+      # value in this file. (Captured in the flags above, before the loop.)
+      #
+      # NOT exported, unlike the model pins: the panel is passed to pr-review-relay as
+      # `--reviewers` ARGUMENTS, in-process. The pins have to cross into the child, these do not.
+      REVIEWERS)        [ "$from_env_rev" = 1 ] || SHIP_FEATURE_REVIEWERS="$val" ;;
+      PLAN_REVIEWERS)   [ "$from_env_plan" = 1 ] || SHIP_FEATURE_PLAN_REVIEWERS="$val" ;;
     esac
   done < "$cfg"
 }

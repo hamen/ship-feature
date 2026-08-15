@@ -8,6 +8,12 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Changed
 
+- **The whole panel can live in one file.** On top of the model pins, `REVIEWERS` and
+  `PLAN_REVIEWERS` from `~/.config/pr-review-relay/config` are read as the fallback for
+  `SHIP_FEATURE_REVIEWERS` and `SHIP_FEATURE_PLAN_REVIEWERS`. They were duplicated across the two
+  configs — identical until the day they are not, with nothing to notice, because both files are
+  valid. A panel that differs between the plan gate and the PR gate is something you find out from
+  a verdict.
 - **ship-feature reads pr-review-relay's config as the shared source for model pins.** Its
   seat-named keys (`MODEL_kimi3`, `MODEL_cursor`, `MODEL_grok45high`) are the last fallback, below
   the environment and below ship-feature's own config. Both tools drive the same seats on the same
