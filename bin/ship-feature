@@ -406,14 +406,20 @@ have found something serious, write it down before you go looking for the next t
   # every checkout under $HOME and degrades every review to prose. The distinction is whose
   # config it is: the user's own configuration is how the seat gets a model at all and is
   # trusted by construction; what must not configure the reviewer is the tree being REVIEWED.
+  # Both paths are RESOLVED before comparing. A raw string compare misses a $HOME with a
+  # trailing slash, and misses a symlinked $HOME against a physical $PWD — and the cost of
+  # missing is not a warning, it is `~/.opencode` matching and every review silently degrading
+  # to prose, which is the failure this bound exists to prevent.
   kimi3_repo_config() {
-    local dir="$PWD" f home="${HOME:-}"
+    local dir f home=""
+    dir="$(cd "$PWD" 2>/dev/null && pwd -P)" || dir="$PWD"
+    [ -n "${HOME:-}" ] && home="$(cd "$HOME" 2>/dev/null && pwd -P)"
     while :; do
-      [ -n "$home" ] && [ "$dir" = "$home" ] && return 1
+      { [ -n "$home" ] && [ "$dir" = "$home" ]; } && return 1
+      [ "$dir" = "/" ] && return 1
       for f in opencode.json opencode.jsonc .opencode; do
         if [ -e "$dir/$f" ]; then printf '%s' "${dir}/${f}"; return 0; fi
       done
-      [ "$dir" = "/" ] && return 1
       dir="$(dirname "$dir")"
     done
   }
@@ -425,8 +431,9 @@ have found something serious, write it down before you go looking for the next t
   # last so it wins over any merged global/project config) denying `edit`+`bash`, unsets any
   # inherited OPENCODE_CONFIG* so a hostile env can't pre-seed "allow", and adds --pure +
   # --agent plan. It reads the checkout (that is the point of a reviewer) unless the checkout
-  # carries its own opencode config, in which case it degrades to an isolated empty dir. Note: like every reviewer here, opencode still writes its own session data under
-  # its data dir — the guarantee is "your checkout is untouched", not "nothing touches disk".
+  # carries its own opencode config, in which case it degrades to an isolated empty dir.
+  # Note: like every reviewer here, opencode still writes its own session data under its data
+  # dir — the guarantee is "your checkout is untouched", not "nothing touches disk".
   plan_review_with() {
     local name="$1" out rc=0 errf key Name why ro_cwd="" prompt_file expected_bytes actual_bytes body sandbox_hint="" sandbox_unenforced="" degraded_note="" repo_opencode_config=""
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
@@ -473,11 +480,14 @@ have found something serious, write it down before you go looking for the next t
               #     is how a review that was verifying real claims against real files still
               #     produced nothing: it spent the 300s budget in delegation and got cut off
               #     mid-sweep. The cap is not negotiable, so the fan-out has to go.
-              #   webfetch — was "allow", and that was safe only while the seat had nothing to
-              #     read. A reviewer that can read the tree AND fetch arbitrary URLs is an
-              #     exfiltration path the moment a file in that tree contains an instruction:
-              #     these repos carry committed keystores and cached secrets. The prompt now
-              #     tells reviewers not to chase external claims anyway, so this costs nothing.
+              #   webfetch + websearch — webfetch was "allow", and that was safe only while the
+              #     seat had nothing to read. A reviewer that can read the tree AND reach the
+              #     network is an exfiltration path the moment a file in that tree contains an
+              #     instruction: these repos carry committed keystores and cached secrets. Both
+              #     go, not just fetch — a search query carries content outward exactly as well
+              #     as a URL does, and the enforcement here lives in the permission layer, not
+              #     in the prompt asking nicely. The prompt tells reviewers not to chase
+              #     external claims anyway, so this costs nothing.
               #
               # Both keys are in opencode's PermissionConfig schema (bash, doom_loop, edit,
               # external_directory, glob, grep, list, lsp, question, read, skill, task,
@@ -498,7 +508,7 @@ have found something serious, write it down before you go looking for the next t
               fi
               out=$(cd "${ro_cwd:-$PWD}" \
                     && unset OPENCODE_CONFIG \
-                    && export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"deny","external_directory":"deny","task":"deny"}}' \
+                    && export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","task":"deny"}}' \
                     && printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" \
                        | run_reviewer opencode run --pure --agent plan -m "$KIMI3_REVIEW_MODEL" 2>"$errf"); rc=$?
               [ -n "$ro_cwd" ] && rm -rf "$ro_cwd"

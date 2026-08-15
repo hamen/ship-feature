@@ -403,15 +403,16 @@ km=$(printf '%s' "$out" | grep 'REVIEW-kimi3')
 printf '%s' "$km" | grep -q -- "--agent plan" && printf '%s' "$km" | grep -q -- "kimi-k3" && { echo "  ok   [-] kimi3 runs opencode plan agent (kimi-k3)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not on opencode plan agent"; FAIL=$((FAIL+1)); }
 printf '%s' "$km" | grep -q -- "--pure" && { echo "  ok   [-] kimi3 runs --pure (no checkout plugins)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 missing --pure"; FAIL=$((FAIL+1)); }
 printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && { echo "  ok   [-] kimi3 read-only via OPENCODE_CONFIG_CONTENT (edit+bash denied)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not hard read-only (OPENCODE_CONFIG_CONTENT must deny edit AND bash)"; FAIL=$((FAIL+1)); }
-# The other three denials are load-bearing now that the seat reads a tree, and each of them is
-# one JSON edit away from being dropped in silence:
-#   external_directory  a rejected external read KILLS the run — this is what produced the
-#                       empty reviews the checkout change exists to fix
-#   task                the plan agent fans out to explore subagents and spends the whole
-#                       timeout doing it
-#   webfetch            read-the-tree + fetch-any-URL is an exfiltration path; these repos
-#                       carry committed keystores
-for k in external_directory task webfetch; do
+# The other denials are load-bearing now that the seat reads a tree, and each is one JSON edit
+# away from being dropped in silence:
+#   external_directory   a rejected external read KILLS the run — this is what produced the
+#                        empty reviews the checkout change exists to fix
+#   task                 the plan agent fans out to explore subagents and spends the whole
+#                        timeout doing it
+#   webfetch, websearch  read-the-tree plus any network reach is an exfiltration path; these
+#                        repos carry committed keystores, and a search query carries content
+#                        outward exactly as well as a URL
+for k in external_directory task webfetch websearch; do
   printf '%s' "$km" | grep -q "\"$k\":\"deny\"" \
     && { echo "  ok   [-] kimi3 denies $k"; PASS=$((PASS+1)); } \
     || { echo "  FAIL kimi3 does not deny $k"; FAIL=$((FAIL+1)); }
@@ -448,6 +449,60 @@ case "$sub_cwd" in
   "") echo "  FAIL kimi3 cwd not captured in the subdirectory case"; FAIL=$((FAIL+1));;
   *) echo "  ok   [-] kimi3 finds an opencode config above the cwd"; PASS=$((PASS+1));;
 esac
+printf '%s' "$sub_out" | grep -q 'would configure the reviewer' \
+  && { echo "  ok   [-] kimi3 announces the degraded review from a subdirectory too"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL kimi3 degraded silently from a subdirectory"; FAIL=$((FAIL+1)); }
+
+# All THREE config names trigger the fallback. The function checks opencode.json, opencode.jsonc
+# and .opencode; only the first was exercised, so a typo in either of the others was free.
+for cfgname in opencode.jsonc .opencode; do
+  rm -rf "${ocfg_repo:?}/opencode.json" "${ocfg_repo:?}/opencode.jsonc" "${ocfg_repo:?}/.opencode"
+  if [ "$cfgname" = .opencode ]; then mkdir -p "$ocfg_repo/.opencode"; else printf '{}\n' > "$ocfg_repo/$cfgname"; fi
+  n_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null \
+          | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+  case "$n_cwd" in
+    "$ocfg_repo"|"$ocfg_repo"/*|"") echo "  FAIL $cfgname did not trigger the isolated fallback ($n_cwd)"; FAIL=$((FAIL+1));;
+    *) echo "  ok   [-] $cfgname triggers the isolated fallback"; PASS=$((PASS+1));;
+  esac
+done
+rm -rf "${ocfg_repo:?}/.opencode"; printf '{}\n' > "$ocfg_repo/opencode.json"
+
+# The $HOME bound, which the code comment calls load-bearing: `~/.opencode` exists on any
+# machine that has run opencode, so a walk that does not stop at $HOME matches it for EVERY
+# checkout under $HOME and degrades every review to prose. Point HOME at a temp dir that has
+# one, put the checkout beneath it, and the seat must still read the checkout.
+home_probe="$WORK/homeprobe"; mkdir -p "$home_probe/.opencode" "$home_probe/repo"
+( cd "$home_probe/repo" && git init -q . )
+hp_cwd=$(cd "$home_probe/repo" && printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$home_probe" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null \
+         | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$hp_cwd" in
+  "$home_probe/repo") echo "  ok   [-] kimi3 ignores ~/.opencode and still reads the checkout"; PASS=$((PASS+1));;
+  "") echo "  FAIL kimi3 cwd not captured in the HOME-bound case"; FAIL=$((FAIL+1));;
+  *) echo "  FAIL a config at \$HOME degraded the review ($hp_cwd) — every checkout under \$HOME would go prose-only"; FAIL=$((FAIL+1));;
+esac
+
+# FAIL CLOSED: config present and no isolated dir available → the seat is SKIPPED, never run in
+# the checkout whose config we just refused. The old code left ro_cwd empty and fell through to
+# $PWD while still announcing an isolated review — a reviewer that lies about what it read.
+mkfail="$WORK/mkfail"; mkdir -p "$mkfail"
+# The stub lets the FIRST mktemp through: that one creates STATUS_DIR, and failing it aborts
+# plan-review before the seat is ever reached — the test would then pass without exercising the
+# branch at all. Everything after it fails, which is the seat's own isolated dir.
+cat > "$mkfail/mktemp" <<STUB
+#!/usr/bin/env bash
+if [ ! -e "$mkfail/used" ]; then : > "$mkfail/used"; exec /usr/bin/mktemp "\$@"; fi
+exit 1
+STUB
+chmod +x "$mkfail/mktemp"
+fc_out=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$mkfail:$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>&1); fc_rc=$?
+if printf '%s' "$fc_out" | grep -q 'REVIEW-kimi3'; then
+  echo "  FAIL the seat ran with no isolated cwd — in the checkout it was supposed to avoid"; FAIL=$((FAIL+1))
+else
+  echo "  ok   [-] kimi3 is skipped rather than run in a checkout it must not read"; PASS=$((PASS+1))
+fi
+printf '%s' "$fc_out" | grep -q 'no isolated cwd could be created' \
+  && { echo "  ok   [-] the skipped seat says why"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the seat was skipped silently"; FAIL=$((FAIL+1)); }
 
 # REGRESSION (Codex round 3): a HOSTILE inherited OPENCODE_CONFIG_CONTENT that re-enables
 # edit/bash must be overridden by our deny (we own the highest-precedence layer).
@@ -1143,7 +1198,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=204
+EXPECTED=211
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
