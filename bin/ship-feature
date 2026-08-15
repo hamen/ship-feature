@@ -65,8 +65,16 @@ sf_ensure_plans_dir() {
 # SHIP_FEATURE_* keys are honored. Environment variables win over the file.
 load_config() {
   local cfg="${SHIP_FEATURE_CONFIG:-$HOME/.config/ship-feature/config}" key val
-  [ -f "$cfg" ] || return 0
-  while IFS='=' read -r key val; do
+  # The shared pins are read whether or not THIS file exists — a machine can perfectly well have
+  # pr-review-relay configured and no ship-feature config at all, and the early return below
+  # would otherwise skip the fallback entirely. Found by the test that asserts the shared file is
+  # read, running with SHIP_FEATURE_CONFIG=/dev/null.
+  [ -f "$cfg" ] || { load_shared_model_pins; return 0; }
+  # `|| [ -n "$key$val" ]` so a file with NO FINAL NEWLINE does not lose its last line. Without
+  # it, `read` returns non-zero on that line and the loop exits before the case runs —
+  # pr-review-relay's parser reads it, so the SAME file would select different models in the two
+  # tools, which is the drift this whole change exists to remove.
+  while IFS='=' read -r key val || [ -n "$key$val" ]; do
     case "$key" in ''|\#*) continue;; esac
     key="$(printf '%s' "$key" | tr -d '[:space:]')"
     val="${val%%[[:space:]]#*}"                                                   # strip an inline "# comment"
@@ -93,10 +101,68 @@ load_config() {
       # now, so a seat and its model cannot drift apart — and a run with no shell profile (a
       # cron job, a fresh machine) gets the same panel as an interactive one instead of
       # silently falling back to a bundled default.
-      KIMI3_REVIEW_MODEL) [ -n "${KIMI3_REVIEW_MODEL+x}" ] || export KIMI3_REVIEW_MODEL="$val" ;;
-      CURSOR_REVIEW_MODEL) [ -n "${CURSOR_REVIEW_MODEL+x}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
-      GROK45HIGH_REVIEW_MODEL) [ -n "${GROK45HIGH_REVIEW_MODEL+x}" ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
-      PR_RELAY_OPENCODE_MODEL) [ -n "${PR_RELAY_OPENCODE_MODEL+x}" ] || export PR_RELAY_OPENCODE_MODEL="$val" ;;
+      #
+      # NON-EMPTY (${VAR:-}), unlike the keys above: an explicitly empty SHIP_FEATURE_REVIEWERS
+      # means "disable", which is a real thing to want, but an empty model pin means nothing at
+      # all. Treating it as "defined" would let `CURSOR_REVIEW_MODEL=` block both this file and
+      # the shared one, leaving ship-feature on its built-in default while pr-review-relay used
+      # the configured value — the same inputs, two different models.
+      KIMI3_REVIEW_MODEL) [ -n "${KIMI3_REVIEW_MODEL:-}" ] || export KIMI3_REVIEW_MODEL="$val" ;;
+      CURSOR_REVIEW_MODEL) [ -n "${CURSOR_REVIEW_MODEL:-}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
+      GROK45HIGH_REVIEW_MODEL) [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
+      PR_RELAY_OPENCODE_MODEL) [ -n "${PR_RELAY_OPENCODE_MODEL:-}" ] || export PR_RELAY_OPENCODE_MODEL="$val" ;;
+    esac
+  done < "$cfg"
+
+  load_shared_model_pins
+}
+
+# The SHARED panel config: pr-review-relay's own file, read here as the LAST fallback.
+#
+# Both tools review with the same seats on the same accounts, so which model a seat runs is a
+# property of the machine, not of the tool that happens to be invoking it. pr-review-relay
+# already keeps that in one place, keyed by SEAT name, and it has carried `MODEL_kimi3` since
+# 2026-08-14 with a comment saying it would take effect once ship-feature learned to read this
+# file. This is that.
+#
+# Keyed by seat means keyed by seat: the relay's `grok` seat and plan-review's `grok45high` seat
+# are DIFFERENT seats — same vendor, different effort — so `MODEL_grok` is not read here and
+# `MODEL_grok45high` is the key for this one. Mapping the relay's key onto this seat would
+# silently give a high-effort plan review the relay's medium-effort pin.
+#
+# Without it the pin lives in two files at once and they drift: whichever one you edit, the
+# other keeps its old value and nothing complains, because both are valid config.
+#
+# Precedence, lowest last: environment > ship-feature's own config > this file. It is called at
+# the END of load_config for exactly that reason — by the time it runs, every key it touches is
+# already set if either higher source provided one.
+#
+# `MODEL_opencode` is deliberately NOT mapped. That seat belongs to pr-review-relay, which reads
+# this file itself; exporting PR_RELAY_OPENCODE_MODEL from here would push an environment value
+# on top of the relay's own config and beat it, which is the opposite of consolidating.
+load_shared_model_pins() {
+  # ${HOME:-}, not $HOME: under `set -u` an unset HOME aborts the whole command, and a caller
+  # that sets both ship-feature paths explicitly has every right not to have one.
+  local cfg="${PR_RELAY_CONFIG:-${HOME:-}/.config/pr-review-relay/config}" key val
+  [ -f "$cfg" ] || return 0
+  while IFS='=' read -r key val || [ -n "$key$val" ]; do
+    # Strip a leading UTF-8 BOM, as pr-review-relay's own parser does (lib-panel.sh). Without it
+    # the first key of a BOM'd file reads as "\ufeffMODEL_kimi3" here and as "MODEL_kimi3" there:
+    # one file, two different models, which is the whole failure this change removes.
+    key="${key#$'\xef\xbb\xbf'}"
+    case "$key" in ''|\#*) continue;; esac
+    key="$(printf '%s' "$key" | tr -d '[:space:]')"
+    val="${val%%[[:space:]]#*}"                                                   # strip an inline "# comment"
+    val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"     # trim surrounding space
+    # NON-EMPTY here, not merely DEFINED. The SHIP_FEATURE_* keys use ${VAR+x} so that an
+    # explicitly empty value can DISABLE a setting on purpose; a model pin has no such meaning —
+    # an empty one is just absent. With ${VAR+x}, `CURSOR_REVIEW_MODEL=` would block this file and
+    # leave ship-feature on its built-in default while pr-review-relay used the shared value: the
+    # same inputs, two different models.
+    case "$key" in
+      MODEL_kimi3)      [ -n "${KIMI3_REVIEW_MODEL:-}" ] || export KIMI3_REVIEW_MODEL="$val" ;;
+      MODEL_cursor)     [ -n "${CURSOR_REVIEW_MODEL:-}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
+      MODEL_grok45high) [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
     esac
   done < "$cfg"
 }
