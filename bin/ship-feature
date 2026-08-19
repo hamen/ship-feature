@@ -13,7 +13,8 @@
 #                            panel to SHIP_FEATURE_PLAN_REVIEWERS, then SHIP_FEATURE_REVIEWERS. The
 #                            panel runs in PARALLEL by default: reviewers are independent, and running
 #                            them one after another multiplies the per-reviewer timeout by the panel
-#                            size (a 4-seat panel at 300s each could sit for 20 minutes before
+#                            size (a 4-seat panel at the per-reviewer timeout each could sit for many
+#                            minutes before
 #                            printing a verdict). --sequential restores one-at-a-time, streaming each
 #                            review as it lands, for when you want to watch a single reviewer work or
 #                            to keep concurrent agent load down. Exit 0 clean, 3 not-clean, 1 usage
@@ -69,7 +70,7 @@ load_config() {
   # pr-review-relay configured and no ship-feature config at all, and the early return below
   # would otherwise skip the fallback entirely. Found by the test that asserts the shared file is
   # read, running with SHIP_FEATURE_CONFIG=/dev/null.
-  [ -f "$cfg" ] || { load_shared_model_pins; return 0; }
+  [ -f "$cfg" ] || { load_shared_panel_config; return 0; }
   # `|| [ -n "$key$val" ]` so a file with NO FINAL NEWLINE does not lose its last line. Without
   # it, `read` returns non-zero on that line and the loop exits before the case runs —
   # pr-review-relay's parser reads it, so the SAME file would select different models in the two
@@ -87,6 +88,16 @@ load_config() {
       SHIP_FEATURE_DENYLIST) [ -n "${SHIP_FEATURE_DENYLIST+x}" ] || SHIP_FEATURE_DENYLIST="$val" ;;
       SHIP_FEATURE_REVIEWERS) [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || SHIP_FEATURE_REVIEWERS="$val" ;;
       SHIP_FEATURE_PLAN_REVIEWERS) [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || SHIP_FEATURE_PLAN_REVIEWERS="$val" ;;
+      # NON-EMPTY (${VAR:-}), NOT ${VAR+x} like the keys above — and the difference matters.
+      # Those keys treat an explicitly empty value as a deliberate "disable"; a timeout has no such
+      # meaning, an empty one is just absent. With ${VAR+x} an exported `SHIP_FEATURE_PLAN_TIMEOUT=`
+      # would block THIS file while load_shared_panel_config, which tests non-empty, still filled
+      # from the shared AGENT_TIMEOUT — silently deleting this rung of the ladder.
+      #
+      # It was environment-only until now, alone among the SHIP_FEATURE_* keys, which is why writing
+      # it into this file did nothing at all. Demonstrated the hard way: the line was added here and
+      # the next plan review still ran on the old default.
+      SHIP_FEATURE_PLAN_TIMEOUT) [ -n "${SHIP_FEATURE_PLAN_TIMEOUT:-}" ] || SHIP_FEATURE_PLAN_TIMEOUT="$val" ;;
       # The model pins. Same precedence as the keys above — the environment wins, the file
       # fills in.
       #
@@ -114,11 +125,15 @@ load_config() {
     esac
   done < "$cfg"
 
-  load_shared_model_pins
+  load_shared_panel_config
 }
 
-# The SHARED PANEL config: pr-review-relay's own file, read here as the LAST fallback — both who
-# sits on the panel (REVIEWERS, PLAN_REVIEWERS) and what each seat runs (MODEL_*).
+# The SHARED PANEL config: pr-review-relay's own file, read here as the LAST fallback — who sits on
+# the panel (REVIEWERS, PLAN_REVIEWERS), what each seat runs (MODEL_*), and how long each gets
+# (AGENT_TIMEOUT).
+#
+# Renamed from load_shared_model_pins: it stopped being only about model pins when REVIEWERS and
+# PLAN_REVIEWERS moved here, and a name that lies is how the next key ends up in a fourth place.
 #
 # Both tools review with the same seats on the same accounts, so which model a seat runs is a
 # property of the machine, not of the tool that happens to be invoking it. pr-review-relay
@@ -141,7 +156,7 @@ load_config() {
 # `MODEL_opencode` is deliberately NOT mapped. That seat belongs to pr-review-relay, which reads
 # this file itself; exporting PR_RELAY_OPENCODE_MODEL from here would push an environment value
 # on top of the relay's own config and beat it, which is the opposite of consolidating.
-load_shared_model_pins() {
+load_shared_panel_config() {
   # ${HOME:-}, not $HOME: under `set -u` an unset HOME aborts the whole command, and a caller
   # that sets both ship-feature paths explicitly has every right not to have one.
   local cfg="${PR_RELAY_CONFIG:-${HOME:-}/.config/pr-review-relay/config}" key val
@@ -150,12 +165,18 @@ load_shared_model_pins() {
   # valid file handing the two tools different panels, which is exactly what reading one file is
   # meant to prevent. These flags say "a HIGHER source already provided this", which is the thing
   # that must not be overwritten; a later line of this same file may.
-  local from_env_kimi3=1 from_env_cursor=1 from_env_grok=1 from_env_rev=1 from_env_plan=1
+  local from_env_kimi3=1 from_env_cursor=1 from_env_grok=1 from_env_rev=1 from_env_plan=1 from_env_timeout=1
   [ -n "${KIMI3_REVIEW_MODEL:-}" ] || from_env_kimi3=0
   [ -n "${CURSOR_REVIEW_MODEL:-}" ] || from_env_cursor=0
   [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || from_env_grok=0
   [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || from_env_rev=0
   [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || from_env_plan=0
+  # BOTH names, because both sit ABOVE this file on the ladder: SHIP_FEATURE_PLAN_TIMEOUT (rungs 1-2)
+  # and PR_RELAY_AGENT_TIMEOUT (rung 3, the relay's own documented environment override). Guard on
+  # only the first and a machine exporting the second gets that value in pr-review-relay and this
+  # file's value here — the same inputs producing two different timeouts, which is the whole failure
+  # this mapping exists to remove.
+  [ -n "${SHIP_FEATURE_PLAN_TIMEOUT:-}" ] || [ -n "${PR_RELAY_AGENT_TIMEOUT:-}" ] || from_env_timeout=0
   [ -f "$cfg" ] || return 0
   while IFS='=' read -r key val || [ -n "$key$val" ]; do
     # Strip a leading UTF-8 BOM, as pr-review-relay's own parser does (lib-panel.sh). Without it
@@ -188,6 +209,29 @@ load_shared_model_pins() {
       # `--reviewers` ARGUMENTS, in-process. The pins have to cross into the child, these do not.
       REVIEWERS)        [ "$from_env_rev" = 1 ] || SHIP_FEATURE_REVIEWERS="$val" ;;
       PLAN_REVIEWERS)   [ "$from_env_plan" = 1 ] || SHIP_FEATURE_PLAN_REVIEWERS="$val" ;;
+      # HOW LONG a reviewer gets, from the same file for the same reason as WHO reviews and WHAT
+      # they run. pr-review-relay reads this key already; ship-feature did not, so `AGENT_TIMEOUT`
+      # in that file configured one tool of the two and every plan review silently kept the old
+      # default. That is not a loud failure — a timed-out reviewer exits 3 and says so — but the
+      # round returns no findings, and "no findings" reads exactly like a clean plan.
+      #
+      # Mapped onto SHIP_FEATURE_PLAN_TIMEOUT because that is the name the resolver at the top of
+      # cmd_plan_review actually reads; mapping it onto PR_RELAY_AGENT_TIMEOUT would put an
+      # environment value on top of the relay's own config, which MODEL_opencode below exists to
+      # warn against.
+      #
+      # A PLAIN ASSIGNMENT, never `export` — unlike the model pins, which have to cross into the
+      # pr-review-relay child. This must NOT: the relay reads this same file itself, and pushing a
+      # value at it would beat its own config.
+      #
+      # `export -n` first, because a plain assignment does NOT clear an inherited export attribute.
+      # A caller that exported the name (even empty) would otherwise have this resolved value cross
+      # into the child anyway, quietly defeating the line above.
+      AGENT_TIMEOUT)
+        if [ "$from_env_timeout" != 1 ]; then
+          export -n SHIP_FEATURE_PLAN_TIMEOUT 2>/dev/null || true
+          SHIP_FEATURE_PLAN_TIMEOUT="$val"
+        fi ;;
     esac
   done < "$cfg"
 }
@@ -406,7 +450,16 @@ cmd_plan_review() {
   # Portable timeout: GNU `timeout`, else Homebrew `gtimeout`, else run WITHOUT a limit
   # (stock macOS ships neither) — a missing timeout must never break the reviewer.
   local TIMEOUT_BIN; TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
-  local timeout_s="${SHIP_FEATURE_PLAN_TIMEOUT:-${PR_RELAY_AGENT_TIMEOUT:-300}}"
+  # 500, matching pr-review-relay's own default. The panel runs reasoning models at high
+  # effort; 300 was tuned when it did not, and an ordinary plan no longer fits — grok45high
+  # timed out three times in one session on a plan whose only fault was being thorough.
+  #
+  # The ladder, highest first: this variable (environment, then ~/.config/ship-feature/config),
+  # then PR_RELAY_AGENT_TIMEOUT from the environment, then AGENT_TIMEOUT from
+  # ~/.config/pr-review-relay/config (mapped onto this name by load_shared_panel_config), then
+  # this literal. Rung 3 has to stay: without it a machine that exports PR_RELAY_AGENT_TIMEOUT
+  # gets that value in the relay and the shared file's value here — two tools, two timeouts.
+  local timeout_s="${SHIP_FEATURE_PLAN_TIMEOUT:-${PR_RELAY_AGENT_TIMEOUT:-500}}"
   # Reject non-digits AND values that are numerically zero ("0", "00", …): GNU
   # `timeout 0` DISABLES the timeout, the opposite of the intent. 10# forces base-10 so
   # a leading zero isn't read as octal.

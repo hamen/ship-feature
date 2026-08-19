@@ -112,7 +112,11 @@ export PR_RELAY_CONFIG=/dev/null
 # ship-feature/pr-review-relay are in use, and an exported value would quietly satisfy the
 # default-pin assertions below. Clear them here so the suite stays hermetic no matter who runs it.
 # PR_RELAY_OPENCODE_MODEL joined the list when the config file learned to carry it.
-unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL KIMI3_REVIEW_MODEL GROK45HIGH_REVIEW_MODEL PR_RELAY_OPENCODE_MODEL
+# SHIP_FEATURE_PLAN_TIMEOUT and PR_RELAY_AGENT_TIMEOUT joined this list when the timeout learned to
+# come from the shared config. They are knobs people really do export, and an exported one would
+# satisfy the "no config at all -> the built-in default" assertion below: green on this machine,
+# red in CI, for a reason the assertion never mentions.
+unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL KIMI3_REVIEW_MODEL GROK45HIGH_REVIEW_MODEL PR_RELAY_OPENCODE_MODEL SHIP_FEATURE_PLAN_TIMEOUT PR_RELAY_AGENT_TIMEOUT
 
 # Assert the isolation is actually in force HERE, before a single fixture runs. This check used to
 # sit at the very end with the others, which meant that if the sf_isolate_git call were deleted the
@@ -722,6 +726,116 @@ printf '%s' "$kmo" | grep -q -- "-m openrouter/z-ai/glm-5.2" && { echo "  ok   [
 # overridden would be a dead end when xAI ships the next model.
 gmo=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok GROK45HIGH_REVIEW_MODEL=grok-4.7 bash "$CLI" plan-review --reviewers grok45high 2>/dev/null | grep 'REVIEW-grok45high')
 printf '%s' "$gmo" | grep -q -- "-m grok-4.7" && { echo "  ok   [-] GROK45HIGH_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL GROK45HIGH_REVIEW_MODEL ignored: $gmo"; FAIL=$((FAIL+1)); }
+
+# --- the per-reviewer TIMEOUT, and the ladder it resolves through -----------------------------
+# AGENT_TIMEOUT in pr-review-relay's config was the one panel key ship-feature did NOT read: the
+# resolver consulted the environment and stopped. So setting it in that file configured the relay
+# and left every plan review on the built-in default, and the failure was quiet in the way that
+# matters — a timed-out reviewer exits 3 and says so, but the round returns NO FINDINGS, which on
+# the page is indistinguishable from a clean plan.
+#
+# Nothing prints the resolved number, so these tests read it off the `timeout` invocation itself:
+# a stub FIRST on PATH that records $1 and then execs the rest. TBIN is its own directory, kept out
+# of PBIN on purpose — the hermetic-environment case further down links the REAL timeout into a bin
+# dir, and a leftover stub there would break it.
+TBIN="$WORK/tbin"; mkdir -p "$TBIN"
+cat > "$TBIN/timeout" <<'TSTUB'
+#!/usr/bin/env bash
+printf '%s\n' "$1" > "$TIMEOUT_SEEN"
+shift
+exec "$@"
+TSTUB
+chmod +x "$TBIN/timeout"
+
+# $1 = expected seconds, $2 = description, rest = env assignments
+timeout_case() {
+  local want="$1" desc="$2"; shift 2
+  local seen="$WORK/timeout_seen.$want.$$"
+  : > "$seen"
+  ( printf 'plan\n' | env "$@" TIMEOUT_SEEN="$seen" PATH="$TBIN:$PBIN:$PATH" \
+      bash "$CLI" plan-review --reviewers codex >/dev/null 2>&1 )
+  local got; got="$(cat "$seen" 2>/dev/null || true)"
+  if [ "$got" = "$want" ]; then echo "  ok   [-] $desc"; PASS=$((PASS+1))
+  else echo "  FAIL $desc — timeout ran with '$got', want '$want'"; FAIL=$((FAIL+1)); fi
+}
+
+# EVERY fixture below uses a value that appears nowhere else, so each assertion identifies WHICH
+# source won. Asserting 500 against a shared file that also says 500 would pass without proving
+# anything — the built-in default is 500 too.
+printf 'AGENT_TIMEOUT=470\n' > "$CFGDIR/shared-t1"
+
+# 1. The shared file reaches plan-review at all. This is the bug.
+timeout_case 470 "AGENT_TIMEOUT in the shared relay config reaches plan-review" \
+  PR_RELAY_CONFIG="$CFGDIR/shared-t1" SHIP_FEATURE_CONFIG=/dev/null
+
+# 2. Rung 1 beats the shared file.
+timeout_case 410 "SHIP_FEATURE_PLAN_TIMEOUT in the environment beats the shared file" \
+  PR_RELAY_CONFIG="$CFGDIR/shared-t1" SHIP_FEATURE_CONFIG=/dev/null SHIP_FEATURE_PLAN_TIMEOUT=410
+
+# 3. Rung 2: ship-feature's own file beats the shared one, and loses to the environment.
+printf 'SHIP_FEATURE_PLAN_TIMEOUT=420\n' > "$CFGDIR/own-t1"
+timeout_case 420 "SHIP_FEATURE_PLAN_TIMEOUT in ship-feature's config beats the shared file" \
+  PR_RELAY_CONFIG="$CFGDIR/shared-t1" SHIP_FEATURE_CONFIG="$CFGDIR/own-t1"
+timeout_case 410 "the environment still beats ship-feature's own config" \
+  PR_RELAY_CONFIG="$CFGDIR/shared-t1" SHIP_FEATURE_CONFIG="$CFGDIR/own-t1" SHIP_FEATURE_PLAN_TIMEOUT=410
+
+# 4. Rung 3 — the conflict that made this a Blocker in plan review. Drop PR_RELAY_AGENT_TIMEOUT
+# from the ladder and a machine exporting it gets that value in pr-review-relay and the shared
+# file's value here: same inputs, two timeouts, which is the whole failure being fixed.
+timeout_case 460 "PR_RELAY_AGENT_TIMEOUT in the environment beats the shared file" \
+  PR_RELAY_CONFIG="$CFGDIR/shared-t1" SHIP_FEATURE_CONFIG=/dev/null PR_RELAY_AGENT_TIMEOUT=460
+timeout_case 410 "SHIP_FEATURE_PLAN_TIMEOUT beats PR_RELAY_AGENT_TIMEOUT" \
+  PR_RELAY_CONFIG="$CFGDIR/shared-t1" SHIP_FEATURE_CONFIG=/dev/null PR_RELAY_AGENT_TIMEOUT=460 SHIP_FEATURE_PLAN_TIMEOUT=410
+
+# 5. No config anywhere -> the built-in default, which is 500 and not 300. The default is the point
+# of the change, so it gets its own assertion rather than riding on another test.
+timeout_case 500 "no config at all → the 500s built-in default" \
+  PR_RELAY_CONFIG=/dev/null SHIP_FEATURE_CONFIG=/dev/null
+
+# 6. An EMPTY value means "not set", not "disable" — the model-pin contract, not the REVIEWERS one.
+# With ${VAR+x} semantics an empty export would block the file it came from while the shared-file
+# flag still filled from AGENT_TIMEOUT, silently deleting a rung. Neither of these can be reached
+# by the non-empty fixtures above.
+timeout_case 470 "an empty SHIP_FEATURE_PLAN_TIMEOUT does not block the shared file" \
+  PR_RELAY_CONFIG="$CFGDIR/shared-t1" SHIP_FEATURE_CONFIG=/dev/null SHIP_FEATURE_PLAN_TIMEOUT=
+timeout_case 470 "an empty PR_RELAY_AGENT_TIMEOUT does not block the shared file" \
+  PR_RELAY_CONFIG="$CFGDIR/shared-t1" SHIP_FEATURE_CONFIG=/dev/null PR_RELAY_AGENT_TIMEOUT=
+
+# 7. LAST value wins inside the shared file, as in pr-review-relay's own parser. This is what the
+# from_env_* flag being set BEFORE the loop protects: an inline "is it already set" test in the case
+# arm would keep the FIRST line here while the relay kept the last — one valid file, two timeouts.
+printf 'AGENT_TIMEOUT=430\nAGENT_TIMEOUT=440\n' > "$CFGDIR/shared-t2"
+timeout_case 440 "the last AGENT_TIMEOUT in the shared file wins" \
+  PR_RELAY_CONFIG="$CFGDIR/shared-t2" SHIP_FEATURE_CONFIG=/dev/null
+
+# 8. A bad value from the SHARED FILE is rejected exactly like a bad environment value — validation
+# happens after resolution, so there is no path that skips it. `timeout 0` DISABLES the limit rather
+# than tightening it, which is why zero is refused rather than clamped.
+printf 'AGENT_TIMEOUT=nonsense\n' > "$CFGDIR/shared-t3"
+( printf 'p\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared-t3" SHIP_FEATURE_CONFIG=/dev/null \
+    bash "$CLI" plan-review --reviewers codex >/dev/null 2>&1 )
+check "a non-numeric AGENT_TIMEOUT in the shared file is rejected" $? 1
+printf 'AGENT_TIMEOUT=0\n' > "$CFGDIR/shared-t4"
+( printf 'p\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared-t4" SHIP_FEATURE_CONFIG=/dev/null \
+    bash "$CLI" plan-review --reviewers codex >/dev/null 2>&1 )
+check "a zero AGENT_TIMEOUT in the shared file is rejected" $? 1
+
+# 9. The mapping must NOT cross into the pr-review-relay child. The relay reads this same file
+# itself, so an exported value from here would beat its own config — the failure MODEL_opencode's
+# test guards against, in a second form. Includes the case a plain assignment does NOT fix: a
+# caller that already EXPORTED the name, where the export attribute survives the assignment.
+printf 'AGENT_TIMEOUT=470\n' > "$CFGDIR/shared-t5"
+printf '#!/usr/bin/env bash\necho "RELAYENV SF=${SHIP_FEATURE_PLAN_TIMEOUT:-unset} PR=${PR_RELAY_AGENT_TIMEOUT:-unset}"\nexit 0\n' > "$BIN/pr-review-relay.tmo"; chmod +x "$BIN/pr-review-relay.tmo"
+cp "$BIN/pr-review-relay" "$WORK/relay-stub-backup-tmo"; cp "$BIN/pr-review-relay.tmo" "$BIN/pr-review-relay"
+tmo1=$(PATH="$BIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared-t5" SHIP_FEATURE_CONFIG=/dev/null bash "$CLI" relay --author claude 2>/dev/null)
+tmo2=$(PATH="$BIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared-t5" SHIP_FEATURE_CONFIG=/dev/null SHIP_FEATURE_PLAN_TIMEOUT= bash "$CLI" relay --author claude 2>/dev/null)
+cp "$WORK/relay-stub-backup-tmo" "$BIN/pr-review-relay"; chmod +x "$BIN/pr-review-relay"
+printf '%s' "$tmo1" | grep -q 'SF=unset PR=unset' \
+  && { echo "  ok   [-] the mapped timeout is not exported into pr-review-relay"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL ship-feature pushed a timeout at the relay: $tmo1"; FAIL=$((FAIL+1)); }
+printf '%s' "$tmo2" | grep -q 'SF=unset' \
+  && { echo "  ok   [-] an already-exported name does not carry the mapped value into the child"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the export attribute survived and leaked 470 into the relay: $tmo2"; FAIL=$((FAIL+1)); }
 
 
 # grok45high: Grok 4.6 high effort, prompt-file (not stdin), read-only ALLOWLIST, runs in the
@@ -1395,7 +1509,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=239
+EXPECTED=253
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

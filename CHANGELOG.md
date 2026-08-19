@@ -8,6 +8,26 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Changed
 
+- **The per-reviewer timeout comes from the same file as the rest of the panel, and defaults to
+  500s.** `AGENT_TIMEOUT` in `~/.config/pr-review-relay/config` was the one panel key ship-feature
+  did not read: the resolver consulted the environment and stopped, so that file configured
+  `pr-review-relay` and left every plan review on the old default. Setting it produced no error and
+  no effect — and the failure it caused is the quiet kind. A timed-out reviewer exits `3` and says
+  so, but the round returns **no findings**, which on the page is indistinguishable from a clean
+  plan. One session lost three consecutive `grok45high` attempts to a 300s clock on a plan whose
+  only fault was being thorough.
+
+  Resolution is now a five-rung ladder, highest first: `SHIP_FEATURE_PLAN_TIMEOUT` in the
+  environment, then in `~/.config/ship-feature/config` (new — it was environment-only, alone among
+  the `SHIP_FEATURE_*` keys, which is why writing it there did nothing), then
+  `PR_RELAY_AGENT_TIMEOUT` in the environment, then `AGENT_TIMEOUT` in pr-review-relay's config,
+  then `500`. Rung 3 is not decorative: without it a machine exporting `PR_RELAY_AGENT_TIMEOUT`
+  gets that value in the relay and the shared file's value here — the same inputs, two timeouts.
+
+  `load_shared_model_pins` is renamed `load_shared_panel_config`. It stopped being only about model
+  pins when `REVIEWERS` and `PLAN_REVIEWERS` moved into it, and a name that lies is how the next key
+  ends up in a fourth place.
+
 - **The whole panel can live in one file.** On top of the model pins, `REVIEWERS` and
   `PLAN_REVIEWERS` from `~/.config/pr-review-relay/config` are read as the fallback for
   `SHIP_FEATURE_REVIEWERS` and `SHIP_FEATURE_PLAN_REVIEWERS`. They were duplicated across the two

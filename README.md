@@ -113,7 +113,7 @@ ship-feature skill for any feature/fix.
   plan (a file — keep it in `~/.config/ship-feature/plans/`, see WORKFLOW.md §1 — or stdin) out to a panel
   of agents for a **read-only** review and print each
   one. The panel runs **in parallel by default** — the reviewers are independent, so running them one
-  after another only serializes their timeouts, and a four-seat panel at 300s each can sit for twenty
+  after another only serializes their timeouts, and a four-seat panel at the per-reviewer timeout each can sit for many
   minutes before it prints a verdict. Pass `--sequential` to run them one at a time and stream each
   review as it lands. Read-only means each reviewer is pinned to its CLI's read-only mode and none is given a way to
   write your checkout or post anywhere — see [`WORKFLOW.md`](WORKFLOW.md) for what that does and does not
@@ -138,8 +138,10 @@ ship-feature skill for any feature/fix.
   `grok` is the PR-relay name — use `grok45high` here). The
   panel is your quorum — a supported reviewer whose CLI is missing **fails** the round rather than
   thinning it. Exit `0` = every reviewer responded, `3` = one failed/timed out/returned empty (re-run),
-  `1` = usage error. Per-reviewer timeout is `SHIP_FEATURE_PLAN_TIMEOUT` (env-only), which falls back to
-  `PR_RELAY_AGENT_TIMEOUT`, then 300s. Lets you say "review this plan with codex and kimi3" as one command.
+  `1` = usage error. Per-reviewer timeout resolves highest-first: `SHIP_FEATURE_PLAN_TIMEOUT` (the
+  environment, then `~/.config/ship-feature/config`), then `PR_RELAY_AGENT_TIMEOUT` from the
+  environment, then **`AGENT_TIMEOUT` in `~/.config/pr-review-relay/config`** — the one place to set
+  it for this tool and `pr-review-relay` at once — then `500`s. Lets you say "review this plan with codex and kimi3" as one command.
 - `ship-feature relay [args…]` — a **transparent** wrapper over
   [`pr-review-relay`](https://github.com/hamen/pr-review-relay) that preserves its stdout and exact exit
   code, and reminds you what each code means: `0` = every **dispatched** reviewer ran — not that

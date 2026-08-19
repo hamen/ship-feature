@@ -37,8 +37,16 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # Escape hatch, ENV-ONLY (export it — it is NOT read from this file): set SHIP_FEATURE_ALLOW_BEHIND=1 to
 # let `ship-feature preflight` proceed when your branch is behind/diverged from the default branch.
 
-# Per-reviewer timeout for `ship-feature plan-review`, in seconds. ENV-ONLY (not read from this file);
-# falls back to PR_RELAY_AGENT_TIMEOUT, then 300. e.g. export SHIP_FEATURE_PLAN_TIMEOUT=480
+# Per-reviewer timeout for `ship-feature plan-review`, in seconds. Default 500.
+#
+# THE ONE PLACE to set this is AGENT_TIMEOUT in ~/.config/pr-review-relay/config, which configures
+# this tool AND pr-review-relay together — see the shared-config note further down. Setting it here
+# is the escape hatch for plan-review ALONE ("I have fast inference today and would rather not
+# wait"), and it wins over the shared file.
+#
+# Resolution, highest first: the environment, THIS file, PR_RELAY_AGENT_TIMEOUT in the environment,
+# AGENT_TIMEOUT in pr-review-relay's config, then 500.
+# SHIP_FEATURE_PLAN_TIMEOUT=300
 
 # ---------------------------------------------------------------------------------------------
 # The model pins. Three sources, highest first: the environment, THIS file, and finally
