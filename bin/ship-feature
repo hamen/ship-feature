@@ -97,7 +97,17 @@ load_config() {
       # It was environment-only until now, alone among the SHIP_FEATURE_* keys, which is why writing
       # it into this file did nothing at all. Demonstrated the hard way: the line was added here and
       # the next plan review still ran on the old default.
-      SHIP_FEATURE_PLAN_TIMEOUT) [ -n "${SHIP_FEATURE_PLAN_TIMEOUT:-}" ] || SHIP_FEATURE_PLAN_TIMEOUT="$val" ;;
+      # `export -n` for the same reason load_shared_panel_config does it, and the first draft of
+      # this change fixed that site and missed this one. A plain assignment does NOT clear an
+      # inherited export attribute, so a caller that exported the name — even empty — would have
+      # THIS file's value cross into the pr-review-relay child. Reproduced before fixing:
+      # `export SHIP_FEATURE_PLAN_TIMEOUT=` plus `SHIP_FEATURE_PLAN_TIMEOUT=420` in this file put
+      # `SF=420` in the child's environment. plan-review's budget is plan-review's alone.
+      SHIP_FEATURE_PLAN_TIMEOUT)
+        if [ -z "${SHIP_FEATURE_PLAN_TIMEOUT:-}" ]; then
+          export -n SHIP_FEATURE_PLAN_TIMEOUT 2>/dev/null || true
+          SHIP_FEATURE_PLAN_TIMEOUT="$val"
+        fi ;;
       # The model pins. Same precedence as the keys above — the environment wins, the file
       # fills in.
       #
@@ -662,7 +672,7 @@ have found something serious, write it down before you go looking for the next t
               #     cross-repo claims are simply unverifiable here) keeps the turn alive.
               #   task — the plan agent can spawn parallel explore subagents, and it does. That
               #     is how a review that was verifying real claims against real files still
-              #     produced nothing: it spent the 300s budget in delegation and got cut off
+              #     produced nothing: it spent the whole per-reviewer budget in delegation and got cut off
               #     mid-sweep. The cap is not negotiable, so the fan-out has to go.
               #   lsp — a language server is a PROCESS the project starts, configured by the
               #     project. Denying bash and edit while leaving this on means the checkout can

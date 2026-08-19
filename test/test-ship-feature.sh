@@ -836,6 +836,18 @@ printf '%s' "$tmo1" | grep -q 'SF=unset PR=unset' \
 printf '%s' "$tmo2" | grep -q 'SF=unset' \
   && { echo "  ok   [-] an already-exported name does not carry the mapped value into the child"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the export attribute survived and leaked 470 into the relay: $tmo2"; FAIL=$((FAIL+1)); }
+# BOTH assigning sites, not just the shared-file one. The first draft of this change put `export -n`
+# on load_shared_panel_config and missed the identical trap in load_config, and the test above could
+# not see it: it only ever exercised the shared-config path. Cross-review caught it as a Blocker and
+# it reproduced exactly — `export SHIP_FEATURE_PLAN_TIMEOUT=` plus a value in ship-feature's own
+# config put SF=420 in the child's environment. Two assignments, two chances to leak, two tests.
+printf 'SHIP_FEATURE_PLAN_TIMEOUT=420\n' > "$CFGDIR/own-t2"
+cp "$BIN/pr-review-relay" "$WORK/relay-stub-backup-tmo3"; cp "$BIN/pr-review-relay.tmo" "$BIN/pr-review-relay"
+tmo3=$(PATH="$BIN:$PATH" PR_RELAY_CONFIG=/dev/null SHIP_FEATURE_CONFIG="$CFGDIR/own-t2" SHIP_FEATURE_PLAN_TIMEOUT= bash "$CLI" relay --author claude 2>/dev/null)
+cp "$WORK/relay-stub-backup-tmo3" "$BIN/pr-review-relay"; chmod +x "$BIN/pr-review-relay"
+printf '%s' "$tmo3" | grep -q 'SF=unset' \
+  && { echo "  ok   [-] ship-feature's OWN config does not leak the timeout into the child either"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL load_config's assignment kept the export attribute and leaked into the relay: $tmo3"; FAIL=$((FAIL+1)); }
 
 
 # grok45high: Grok 4.6 high effort, prompt-file (not stdin), read-only ALLOWLIST, runs in the
@@ -1509,7 +1521,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=253
+EXPECTED=254
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

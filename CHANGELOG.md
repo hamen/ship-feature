@@ -12,10 +12,9 @@ All notable changes to **ship-feature** are documented here. This project follow
   500s.** `AGENT_TIMEOUT` in `~/.config/pr-review-relay/config` was the one panel key ship-feature
   did not read: the resolver consulted the environment and stopped, so that file configured
   `pr-review-relay` and left every plan review on the old default. Setting it produced no error and
-  no effect — and the failure it caused is the quiet kind. A timed-out reviewer exits `3` and says
-  so, but the round returns **no findings**, which on the page is indistinguishable from a clean
-  plan. One session lost three consecutive `grok45high` attempts to a 300s clock on a plan whose
-  only fault was being thorough.
+  no effect. A timed-out reviewer exits `3` and prints a diagnostic, but the round returns **no
+  findings**, which on the page is indistinguishable from a clean plan. One session lost three
+  consecutive `grok45high` attempts to a 300s clock on a plan whose only fault was being thorough.
 
   Resolution is now a five-rung ladder, highest first: `SHIP_FEATURE_PLAN_TIMEOUT` in the
   environment, then in `~/.config/ship-feature/config` (new — it was environment-only, alone among
