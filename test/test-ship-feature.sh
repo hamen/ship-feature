@@ -1388,6 +1388,12 @@ SF_ADAPTERS="adapters/codex/AGENTS.snippet.md adapters/cursor/ship-feature.md ad
 # both correct sentences that happened to break across a line. That would have taught the next person
 # to reflow prose to please a grep, which is backwards — the adapters are prose for humans and their
 # wrapping must stay free.
+# KEEP EVERY `{0,n}` AT 255 OR BELOW. BSD grep — which is what macOS runs — refuses a larger
+# interval outright with "maximum repetition exceeds 255", and `grep -q` then exits non-zero exactly
+# as it would for a genuine miss. So the clause reports the phrase missing from every adapter, on
+# macOS only, while GNU grep on Linux passes it. That is the worst shape a test failure can take:
+# it names the wrong cause, and it is invisible on the machine most of this gets written on. To span
+# a longer distance, concatenate intervals — `.{0,200}.{0,200}` — rather than raising one.
 sf_clause() {  # sf_clause <label> <extended-regex>
   local label="$1" re="$2" f miss=""
   for f in $SF_ADAPTERS; do
@@ -1397,6 +1403,18 @@ sf_clause() {  # sf_clause <label> <extended-regex>
     && { echo "  ok   [-] every adapter states: $label"; PASS=$((PASS+1)); } \
     || { echo "  FAIL adapter consistency: '$label' missing from$miss"; FAIL=$((FAIL+1)); }
 }
+# THE CAP IS ENFORCED, not merely documented. This suite is written and run on Linux, where GNU grep
+# accepts any interval, so a clause with `.{0,300}` looks perfectly healthy here and fails only on
+# the macOS job — reporting the phrase as missing from every adapter, which sends the next reader
+# after a documentation drift that never happened. It went unnoticed for eleven days that way. The
+# check below reads THIS file, so the guard cannot drift from the clauses it guards.
+# Comment lines are skipped: the paragraph above names `.{0,300}` as the thing to avoid, and a guard
+# that fails on its own description of the rule teaches people to delete the description.
+sf_over_cap=$(grep -vE '^[[:space:]]*#' "$HERE/test-ship-feature.sh" | grep -oE '\{0,[0-9]+\}' | tr -d '{}' | cut -d, -f2 | awk '$1 > 255' | sort -u | tr '\n' ' ')
+[ -z "$sf_over_cap" ] \
+  && { echo "  ok   [-] every regex interval stays within BSD grep's 255 cap"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL regex interval(s) over BSD grep's 255 cap (fails on macOS only): $sf_over_cap"; FAIL=$((FAIL+1)); }
+
 # The patterns are MULTI-WORD ANCHORS, not single tokens. The first version of this test grepped for
 # `qualifying`, `narrow`, `benched`, `dispositions` — words that survive having the rule around them
 # deleted or REVERSED, so the test would stay green while the adapter said the opposite. Two reviewers
@@ -1410,7 +1428,7 @@ sf_clause "a new closing finding restarts the cycle" '(closing|final).{0,120}(ne
 sf_clause "never publish the derived context file"   '(never|not) .{0,20}(gh pr edit|re-publish).{0,120}derived|derived file to the pr body'
 sf_clause "exit 4 = escalate, never --reset"          'exit .?4.?.{0,120}(escalat|stop)'
 sf_clause "a clean round 1 IS the closing round"      'round 1 was already clean|clean initial round is the closing round'
-sf_clause "exit 0 = DISPATCHED, and benched still exits 0" '(dispatched reviewer ran|supposed to dispatch).{0,400}benched'
+sf_clause "exit 0 = DISPATCHED, and benched still exits 0" '(dispatched reviewer ran|supposed to dispatch).{0,200}.{0,200}benched'
 sf_clause "non-qualifying findings are left unfixed"  'non-qualifying findings are recorded and left unfixed'
 sf_clause "post dispositions BEFORE re-running"       'post (the )?dispositions before re-running'
 sf_clause "keep the relay marker out of that comment" '(do .{0,4}not.{0,4} put|keep|must not contain).{0,80}marker text.{0,180}delet'
@@ -1432,13 +1450,13 @@ sf_clause "a reduced panel is escalated to the human, not silent" '(tell the hum
 sf_clause "plan-review cap is 2 rounds"                       '(2|two).{0,10}round.{0,40}cap|cap.{0,20}(2|two).{0,10}round'
 sf_clause "a clean round 1 skips a wasted round 2"            'clean round 1|round 1 .{0,60}(raises no|no blocker).{0,120}gate 1'
 sf_clause "round 2 runs the same full panel, never narrowed" 'same full panel.{0,60}never.{0,10}narrow|never.{0,10}narrow.{0,120}same full panel'
-sf_clause "plan-qualifying is compared against PR-qualifying/qualifying Should-fix" 'plan-qualifying.{0,300}(qualifying should-fix|pr-qualifying)|(qualifying should-fix|pr-qualifying).{0,300}plan-qualifying'
+sf_clause "plan-qualifying is compared against PR-qualifying/qualifying Should-fix" 'plan-qualifying.{0,150}.{0,150}(qualifying should-fix|pr-qualifying)|(qualifying should-fix|pr-qualifying).{0,150}.{0,150}plan-qualifying'
 sf_clause "plan-qualifying must not be conflated with PR-qualifying"       '(not the same as|must not be conflated|distinct term|do not conflate)'
 sf_clause "plan-qualifying covers a missing edge case"                    'materially incomplete.{0,160}missing edge case|missing edge case.{0,160}materially incomplete'
 sf_clause "plan-qualifying covers an unhandled failure mode"              'materially incomplete.{0,160}failure mode|failure mode.{0,160}materially incomplete'
 sf_clause "plan-qualifying covers missing verification"                   'materially incomplete.{0,160}verification|verification.{0,160}materially incomplete'
-sf_clause "round 2 still open -> disagreement summary -> Gate 1" 'round 2.{0,300}disagreement summary.{0,200}gate 1|disagreement summary.{0,300}round 2'
-sf_clause "disagreement summary states objection + classification + reason" 'objection.{0,60}classification.{0,60}reason|disagreement summary.{0,400}(objection|classification|reason).{0,120}(objection|classification|reason).{0,120}(objection|classification|reason)'
+sf_clause "round 2 still open -> disagreement summary -> Gate 1" 'round 2.{0,150}.{0,150}disagreement summary.{0,200}gate 1|disagreement summary.{0,150}.{0,150}round 2'
+sf_clause "disagreement summary states objection + classification + reason" 'objection.{0,60}classification.{0,60}reason|disagreement summary.{0,200}.{0,200}(objection|classification|reason).{0,120}(objection|classification|reason).{0,120}(objection|classification|reason)'
 sf_clause "a human-authorized round is not a third autonomous round" 'human-authorized.{0,80}not a third autonomous'
 sf_clause "a human-authorized round resolves clean or re-escalates" 'human-authorized.{0,200}(resolves cleanly|resolve).{0,160}(disagreement summary|gate 1)'
 sf_clause "Gate 1 accepts the plan plus a disagreement summary" 'plan plus a disagreement summary|plan.{0,20}disagreement summary'
@@ -1521,7 +1539,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=254
+EXPECTED=255
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
