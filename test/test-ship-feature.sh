@@ -117,6 +117,12 @@ export PR_RELAY_CONFIG=/dev/null
 # satisfy the "no config at all -> the built-in default" assertion below: green on this machine,
 # red in CI, for a reason the assertion never mentions.
 unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL KIMI3_REVIEW_MODEL GROK45HIGH_REVIEW_MODEL PR_RELAY_OPENCODE_MODEL SHIP_FEATURE_PLAN_TIMEOUT PR_RELAY_AGENT_TIMEOUT SHIP_FEATURE_GEMINI_MODEL SHIP_FEATURE_GEMINI_TESTED_VERSIONS
+# The gemini seat picks its auth method from the environment, and anyone who actually uses gemini
+# has one of these exported — a working machine is the normal case, not the exotic one. Leave them
+# in place and the seat takes the API-key path on this developer's box and the OAuth path in CI,
+# from the same source, with the cases that cover the OAuth copy silently asserting nothing. Each
+# test below sets exactly the auth it means to exercise.
+unset GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_GENAI_USE_VERTEXAI GOOGLE_GENAI_USE_GCA
 
 # Assert the isolation is actually in force HERE, before a single fixture runs. This check used to
 # sit at the very end with the others, which meant that if the sf_isolate_git call were deleted the
@@ -411,7 +417,21 @@ case "$GEMINI_CLI_SYSTEM_SETTINGS_PATH" in "$GEMINI_CLI_HOME"/*)
   case "$GEMINI_CLI_SYSTEM_DEFAULTS_PATH" in "$GEMINI_CLI_HOME"/*) sysiso=yes;; esac;; esac
 # Isolation facts go on their OWN first line: the prompt (in argv) contains newlines, so anything
 # after argv=[$*] would land on an unrelated line and a single-line grep would miss it.
-echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso credsafe=$credsafe sysiso=$sysiso xdg=${XDG_CONFIG_HOME-UNSET} envstop=$envstop"
+# gca=... whether the run opted into Google Code Assist, i.e. took the OAuth path.
+gca=${GOOGLE_GENAI_USE_GCA-UNSET}
+# homecreds/credmode: the OAuth creds the seat copies into GEMINI_CLI_HOME. That copy is the one
+# part of this isolation that handles a real secret, so report whether it happened and with what
+# mode — a plain `cp -p` would carry a world-readable source mode straight into the sandbox.
+homecreds=no; credmode=none
+if [ -f "$GEMINI_CLI_HOME/.gemini/oauth_creds.json" ]; then
+  homecreds=yes
+  credmode=$(ls -l "$GEMINI_CLI_HOME/.gemini/oauth_creds.json" | cut -c1-10)
+fi
+# lockedsame=yes when the USER scope reads the SAME locked settings as the workspace scope. A
+# workspace-only lock would leave the user scope free to re-enable a write tool.
+lockedsame=no
+cmp -s "$GEMINI_CLI_HOME/.gemini/settings.json" .gemini/settings.json && lockedsame=yes
+echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso credsafe=$credsafe sysiso=$sysiso xdg=${XDG_CONFIG_HOME-UNSET} envstop=$envstop gca=$gca homecreds=$homecreds credmode=$credmode lockedsame=$lockedsame"
 echo "REVIEW-gemini argv=[$*]"
 exit 0
 GEMINISTUB
@@ -1097,6 +1117,67 @@ printf '%s' "$out" | grep 'REVIEW-gemini' | grep -q -- "-m gemini-9.9-test" && {
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/sharedgem" SHIP_FEATURE_GEMINI_MODEL=env-wins bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
 printf '%s' "$out" | grep 'REVIEW-gemini' | grep -q -- "-m env-wins" && { echo "  ok   [-] the environment outranks MODEL_gemini"; PASS=$((PASS+1)); } || { echo "  FAIL MODEL_gemini overrode the environment"; FAIL=$((FAIL+1)); }
 
+# A CLI is free to print a banner around its version number. The gate fails CLOSED, so a fragile
+# parse does not leak — it bricks the seat on a version that WAS audited, and the failure blames the
+# gate rather than the parse. Assert the number is picked out of the noise.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" STUB_GEMINI_VERSION='gemini-cli version 0.26.0 (build deadbeef)' bash "$CLI" plan-review --reviewers antigravity 2>/dev/null); rc=$?
+check "the version gate reads a version printed with a banner (0)" "$rc" 0
+
+# --- the OAuth credential path ------------------------------------------------------------------
+# GEMINI_CLI_HOME also moves where gemini looks for its OAuth creds, so the seat copies the real ones
+# in. That copy is the only place this isolation handles a live secret, and until now the suite only
+# asserted the creds were ABSENT from the workspace — never that the copy itself behaves.
+FAKEHOME="$WORK/fakehome"; mkdir -p "$FAKEHOME/.gemini"
+printf '{"fake":"oauth"}' > "$FAKEHOME/.gemini/oauth_creds.json"
+printf '{"fake":"accounts"}' > "$FAKEHOME/.gemini/google_accounts.json"
+chmod 644 "$FAKEHOME/.gemini/oauth_creds.json"        # deliberately loose: the copy must tighten it
+
+# No environment auth selected -> the OAuth fallback runs.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
+printf '%s' "$iso" | grep -q -- "homecreds=yes" && { echo "  ok   [-] the OAuth creds are copied into the isolated home"; PASS=$((PASS+1)); } || { echo "  FAIL the OAuth creds were not copied into GEMINI_CLI_HOME"; FAIL=$((FAIL+1)); }
+# 0600, not the source's 0644: the copy lands in a temp dir and must not widen the secret.
+printf '%s' "$iso" | grep -q -- "credmode=-rw-------" && { echo "  ok   [-] the copied creds are 0600 regardless of the source mode"; PASS=$((PASS+1)); } || { echo "  FAIL the copied OAuth creds did not end up 0600"; FAIL=$((FAIL+1)); }
+printf '%s' "$iso" | grep -q -- "gca=true" && { echo "  ok   [-] the OAuth fallback opts into GOOGLE_GENAI_USE_GCA"; PASS=$((PASS+1)); } || { echo "  FAIL the OAuth fallback did not set GOOGLE_GENAI_USE_GCA"; FAIL=$((FAIL+1)); }
+# Copied, never reachable from the workspace: the allowlisted read_file is scoped to the workspace,
+# so this is what stops a hostile plan from asking the reviewer to read the token back out.
+printf '%s' "$iso" | grep -q -- "credsafe=yes" && { echo "  ok   [-] the copied creds stay outside the workspace"; PASS=$((PASS+1)); } || { echo "  FAIL the copied OAuth creds were reachable from the workspace"; FAIL=$((FAIL+1)); }
+# The USER scope must read the SAME locked file as the workspace scope, or it could re-enable a tool.
+printf '%s' "$iso" | grep -q -- "lockedsame=yes" && { echo "  ok   [-] the user scope reads the same locked settings as the workspace"; PASS=$((PASS+1)); } || { echo "  FAIL the user-scope settings differ from the workspace ones"; FAIL=$((FAIL+1)); }
+# COPY, not symlink: gemini's own token refresh writes this file, and a symlink would send that write
+# through to the user's real ~/.gemini.
+[ -s "$FAKEHOME/.gemini/oauth_creds.json" ] && { echo "  ok   [-] the user's real creds are left intact"; PASS=$((PASS+1)); } || { echo "  FAIL the user's real OAuth creds were disturbed"; FAIL=$((FAIL+1)); }
+
+# GEMINI_API_KEY selected -> no OAuth fallback. GCA outranks an API key inside gemini, so copying
+# stale creds here would break an otherwise valid key run.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" GEMINI_API_KEY=k bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
+printf '%s' "$iso" | grep -q -- "homecreds=no" && printf '%s' "$iso" | grep -q -- "gca=UNSET" \
+  && { echo "  ok   [-] GEMINI_API_KEY suppresses the OAuth fallback"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL GEMINI_API_KEY did not suppress the OAuth fallback"; FAIL=$((FAIL+1)); }
+
+# Vertex selected the way v0.26.0 actually selects it.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" GOOGLE_GENAI_USE_VERTEXAI=true bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
+printf '%s' "$iso" | grep -q -- "homecreds=no" && printf '%s' "$iso" | grep -q -- "gca=UNSET" \
+  && { echo "  ok   [-] GOOGLE_GENAI_USE_VERTEXAI suppresses the OAuth fallback"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL Vertex did not suppress the OAuth fallback"; FAIL=$((FAIL+1)); }
+
+# GOOGLE_API_KEY ALONE selects no auth method in gemini-cli v0.26.0. Treating it as one used to
+# suppress the fallback and leave the run with no credentials at all — an opaque auth failure for
+# anyone who had that variable exported for some other Google tool.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" GOOGLE_API_KEY=k bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
+printf '%s' "$iso" | grep -q -- "homecreds=yes" && printf '%s' "$iso" | grep -q -- "gca=true" \
+  && { echo "  ok   [-] GOOGLE_API_KEY alone does not count as selected auth"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL GOOGLE_API_KEY alone suppressed the OAuth fallback"; FAIL=$((FAIL+1)); }
+
+# No creds to copy at all -> the seat still runs (auth simply rides whatever the environment has).
+EMPTYHOME="$WORK/emptyhome"; mkdir -p "$EMPTYHOME"
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$EMPTYHOME" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null); rc=$?
+check "the seat runs when there are no OAuth creds to copy (0)" "$rc" 0
+printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "gca=UNSET" && { echo "  ok   [-] no creds copied means no GCA opt-in"; PASS=$((PASS+1)); } || { echo "  FAIL GCA was opted into with no creds copied"; FAIL=$((FAIL+1)); }
+
 # antigravity in the panel but the gemini CLI missing → hard quorum failure (3), never a silent pass.
 # Build a SELF-CONTAINED PATH: the reviewer stubs plus symlinks to only the coreutils plan-review
 # needs — but deliberately NO gemini. Using a curated PATH (not the system one) means the test can't
@@ -1658,7 +1739,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=278
+EXPECTED=290
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

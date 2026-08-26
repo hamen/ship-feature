@@ -54,19 +54,6 @@ All notable changes to **ship-feature** are documented here. This project follow
   gate — where it used to be skipped with a warning, a missing `gemini` binary now **fails the quorum**
   (exit `3`), so a review can't silently pass on a thinned panel.
 
-### Notes
-
-- The `antigravity` name maps to two different binaries by command: the `gemini` CLI in `plan-review`
-  (the only Gemini binary with a read-only mode) and `agy` in `relay` (unchanged). The `plan-review`
-  isolation is stronger than a pure `--safe-mode`: it neutralizes both the reviewed *checkout's* config
-  and the user's own global `~/.gemini` (via `GEMINI_CLI_HOME`), at the cost of the reviewer not seeing
-  the checkout's files.
-- Because `tools.core` is an allowlist, a future gemini-cli release that adds a new read-only tool will
-  have it disabled until it is added to `GEMINI_LOCKED_SETTINGS` in `bin/ship-feature` — the safe
-  direction (a new *write* tool is disabled automatically; only new *read* conveniences need a manual
-  opt-in).
-
-### Changed
 
 - **The per-reviewer timeout comes from the same file as the rest of the panel, and defaults to
   500s.** `AGENT_TIMEOUT` in `~/.config/pr-review-relay/config` was the one panel key ship-feature
@@ -119,6 +106,18 @@ All notable changes to **ship-feature** are documented here. This project follow
   only when the checkout carries its own opencode config, so the tree being reviewed can never
   reconfigure the reviewer reading it. `external_directory`, `task`, `webfetch`, `websearch` and
   `lsp` are denied, and `OPENCODE_CONFIG_DIR` is unset alongside `OPENCODE_CONFIG`.
+
+### Notes
+
+- The `antigravity` name maps to two different binaries by command: the `gemini` CLI in `plan-review`
+  (the only Gemini binary with a read-only mode) and `agy` in `relay` (unchanged). The `plan-review`
+  isolation is stronger than a pure `--safe-mode`: it neutralizes both the reviewed *checkout's* config
+  and the user's own global `~/.gemini` (via `GEMINI_CLI_HOME`), at the cost of the reviewer not seeing
+  the checkout's files.
+- Because `tools.core` is an allowlist, a future gemini-cli release that adds a new read-only tool will
+  have it disabled until it is added to `GEMINI_LOCKED_SETTINGS` in `bin/ship-feature` — the safe
+  direction (a new *write* tool is disabled automatically; only new *read* conveniences need a manual
+  opt-in).
 
 ## [0.4.0] — 2026-08-13
 

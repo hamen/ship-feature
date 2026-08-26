@@ -901,7 +901,12 @@ have found something serious, write it down before you go looking for the next t
         # Widening the gate is a deliberate act: audit the new release's tools, then add its
         # major.minor to SHIP_FEATURE_GEMINI_TESTED_VERSIONS.
         local gver gmm gtested gver_ok=""
-        gver="$(gemini --version 2>/dev/null | tr -d '[:space:]')"
+        # Parse the FIRST digits.digits(.digits) token rather than trusting the whole line: a CLI is
+        # free to print a banner around its version ("gemini-cli version 0.26.0 (abc123)"), and
+        # stripping whitespace and cutting on '.' would turn that into a major.minor that matches
+        # nothing. This gate fails CLOSED, so a parse that is merely fragile does not leak — it
+        # bricks the seat on a version that was in fact audited, which is its own kind of wrong.
+        gver="$(gemini --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1)"
         gmm="$(printf '%s' "$gver" | cut -d. -f1,2)"
         gtested="$(printf '%s' "$GEMINI_TESTED" | tr ',' ' ')"
         [ -n "$gver" ] && case " $gtested " in *" $gmm "*) gver_ok=1;; esac
@@ -976,7 +981,10 @@ have found something serious, write it down before you go looking for the next t
                    GEMINI_CLI_HOME="$ghome" \
                    GEMINI_CLI_SYSTEM_SETTINGS_PATH="$ghome/.gemini/settings.json" \
                    GEMINI_CLI_SYSTEM_DEFAULTS_PATH="$ghome/.gemini/system-defaults.json" \
-                   gemini -e none -m "$GEMINI_MODEL" -p "$PROMPT" 2>"$errf" ); rc=$?
+                   gemini -e none -m "$GEMINI_MODEL" -p "$PROMPT" 2>>"$errf" ); rc=$?
+          # APPEND, not truncate. The cred-copy warning above is already in $errf at this point, and
+          # '>' would erase it just as the failure it explains is about to be reported. $errf is
+          # created fresh per reviewer under STATUS_DIR, so there is no stale content to inherit.
         else
           echo "could not create the isolated read-only gemini settings" > "$errf"; rc=1; out=""
         fi;;

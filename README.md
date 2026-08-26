@@ -130,7 +130,7 @@ ship-feature skill for any feature/fix.
   your checkout like `claude`/`codex`/`cursor`, held read-only by a tool **allowlist**
   `--tools read_file,list_dir,grep`, with the MCP bridge removed explicitly
   (`--disallowed-tools search_tool,use_tool` — it survives the built-in allowlist), plus
-  `--permission-mode plan` and `--sandbox read-only`).
+  `--permission-mode plan` and `--sandbox read-only`),
   and `antigravity` (aliases `agy`, `gemini`) via the `gemini` CLI, run **fail-closed**: an isolated
   `GEMINI_CLI_HOME` and working dir with a locked `.gemini/settings.json` that allowlists only the
   read-only tools via `tools.core`, names today's write tools in `tools.exclude` as defence-in-depth,
@@ -143,8 +143,8 @@ ship-feature skill for any feature/fix.
   `SHIP_FEATURE_GEMINI_MODEL` or `MODEL_gemini` in the shared panel file. Tradeoff: the isolated run
   sees only the plan text, not the checkout's files. The `antigravity` name maps to the `gemini` CLI
   here but to `agy` in `relay` — only `gemini` has a read-only mode.
-  `--safe-mode` on claude also stops
-  any hooks/plugins/MCP in the checkout from loading. Bare `opencode` and bare `grok` are
+  `--safe-mode` on claude also stops any hooks/plugins/MCP in the checkout from loading.
+  Bare `opencode` and bare `grok` are
   relay-only and skipped with a warning (a plain `opencode run` uses the
   all-allow `build` agent — only the `kimi3` reviewer pins the read-only opencode `plan` agent; bare
   `grok` is the PR-relay name — use `grok45high` here). The
