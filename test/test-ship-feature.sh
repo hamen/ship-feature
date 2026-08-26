@@ -1408,9 +1408,18 @@ sf_clause() {  # sf_clause <label> <extended-regex>
 # the macOS job — reporting the phrase as missing from every adapter, which sends the next reader
 # after a documentation drift that never happened. It went unnoticed for eleven days that way. The
 # check below reads THIS file, so the guard cannot drift from the clauses it guards.
-# Comment lines are skipped: the paragraph above names `.{0,300}` as the thing to avoid, and a guard
-# that fails on its own description of the rule teaches people to delete the description.
-sf_over_cap=$(grep -vE '^[[:space:]]*#' "$HERE/test-ship-feature.sh" | grep -oE '\{0,[0-9]+\}' | tr -d '{}' | cut -d, -f2 | awk '$1 > 255' | sort -u | tr '\n' ' ')
+# EVERY interval form, not just `{0,n}`. BSD grep rejects any bound over 255 — `{300}`, `{300,}`,
+# `{1,300}` all fail the same way — and a guard that only knew the one form this commit happened to
+# fix would let the next clause reproduce the identical macOS-only "missing from every adapter"
+# report that this check exists to prevent. Both bounds of a two-number interval are checked; the
+# open form `{n,}` yields an empty second field, which the numeric filter drops.
+#
+# Comment lines are skipped: the paragraph above names the bad interval as its example, and a guard
+# that fails on its own description of the rule teaches people to delete the description. (An
+# interval inside a TRAILING comment on a code line would still trip it. Left alone: recognising
+# where a comment starts in shell needs a parser, and a rare false alarm that names the real rule is
+# a better failure than a parser that gets quoting wrong.)
+sf_over_cap=$(grep -vE '^[[:space:]]*#' "$HERE/test-ship-feature.sh" | grep -oE '\{[0-9]+(,[0-9]*)?\}' | tr -d '{}' | tr ',' '\n' | grep -E '^[0-9]+$' | awk '$1 > 255' | sort -u | tr '\n' ' ')
 [ -z "$sf_over_cap" ] \
   && { echo "  ok   [-] every regex interval stays within BSD grep's 255 cap"; PASS=$((PASS+1)); } \
   || { echo "  FAIL regex interval(s) over BSD grep's 255 cap (fails on macOS only): $sf_over_cap"; FAIL=$((FAIL+1)); }
