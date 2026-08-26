@@ -137,8 +137,9 @@ ship-feature skill for any feature/fix.
   disables hooks, and declares no MCP — so neither the user's real `~/.gemini` nor a reviewed checkout's
   `.gemini/` contributes any `mcpServers`, hooks, or `tools.allowed`. `tools.core` is an allowlist but
   not a universal one — gemini registers some tools outside it — so the seat additionally **refuses to
-  run against an unaudited gemini-cli**: only the major.minor versions listed in
-  `SHIP_FEATURE_GEMINI_TESTED_VERSIONS` (default `0.26`) are accepted. Model pinned to
+  run against an unaudited gemini-cli**: only the exact versions listed in
+  `SHIP_FEATURE_GEMINI_TESTED_VERSIONS` (default `0.26.0`) are accepted — a patch release can add a tool
+  as easily as a minor one — and the version is probed inside the same isolation the review runs in. Model pinned to
   `gemini-3.1-pro-preview` (the CLI's own default is a retired model that 404s); override with
   `SHIP_FEATURE_GEMINI_MODEL` or `MODEL_gemini` in the shared panel file. Tradeoff: the isolated run
   sees only the plan text, not the checkout's files. The `antigravity` name maps to the `gemini` CLI

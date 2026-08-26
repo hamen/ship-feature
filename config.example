@@ -37,7 +37,7 @@ SHIP_FEATURE_EXCLUDE_MARKER=.claude/
 # SHIP_FEATURE_GEMINI_MODEL=gemini-3.1-pro-preview
 
 # The gemini-cli releases whose TOOL REGISTRY the antigravity seat has been audited against, as
-# major.minor, space- or comma-separated. Default 0.26.
+# EXACT versions, space- or comma-separated. Default 0.26.0.
 #
 # This is a security tripwire, not a compatibility hint. The seat locks gemini down with a
 # `tools.core` ALLOWLIST, but that filter does not cover every tool gemini registers —
@@ -47,9 +47,11 @@ SHIP_FEATURE_EXCLUDE_MARKER=.claude/
 # There is no gemini command that dumps the active tool registry, so the seat refuses to run
 # against a version nobody has looked at, rather than assuming.
 #
-# When gemini updates, the plan gate will fail this seat until someone audits the new release's
-# tools and lists it here. That is the intended cost. Do not widen it to silence the failure.
-# SHIP_FEATURE_GEMINI_TESTED_VERSIONS=0.26
+# The match is EXACT, deliberately. A patch release can add a tool outside `tools.core` as easily as
+# a minor one, so "0.26.1 is close enough to the 0.26.0 we read" is the assumption this gate exists to
+# refuse. Every gemini update, patch releases included, fails this seat until someone audits the new
+# release's tools and lists it here. That is the intended cost. Do not widen it to silence a failure.
+# SHIP_FEATURE_GEMINI_TESTED_VERSIONS=0.26.0
 
 # Path to a PRIVATE, newline-delimited deny-list for scripts/scan-personal-data.sh. Each line is a
 # literal string that must NEVER appear in the public repo (real project slugs, bundle-id prefixes,

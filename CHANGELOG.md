@@ -32,13 +32,17 @@ All notable changes to **ship-feature** are documented here. This project follow
   throws unless `experimental.plan` is enabled. **Tradeoff:** the isolated run sees only the plan text,
   not the checkout's files (deep codebase fact-checking is the PR cross-review's job).
 - **A fail-closed version gate for that seat, via `SHIP_FEATURE_GEMINI_TESTED_VERSIONS`** (default
-  `0.26`). `tools.core` is an allowlist, but **not a universal one**: gemini-cli registers some tools
+  `0.26.0`). `tools.core` is an allowlist, but **not a universal one**: gemini-cli registers some tools
   outside the core-tool filter — `delegate_to_agent` in v0.26.0 — and for those the `tools.exclude`
   blocklist is the only control. A future release that registered another write-capable tool the same
   way would pass both controls while the seat went on advertising a guarantee it no longer had. There
   is no CLI call that dumps the active tool registry, so the seat now runs only against a gemini-cli
   whose registry has actually been audited, and **fails the seat otherwise** rather than assuming.
-  Widening the gate is deliberate: audit the new release's tools, then add its major.minor to the list.
+  The match is on the **exact** version, not major.minor: a patch release can add a tool as easily as
+  a minor one. The version is probed **inside the same isolation** the review runs in — `gemini
+  --version` is still gemini starting up, and probing it on the caller's environment would run the
+  very configuration this seat exists to neutralise, before the gate meant to guard it was evaluated.
+  Widening the gate is deliberate: audit the new release's tools, then add its exact version.
 - **`SHIP_FEATURE_GEMINI_MODEL`** (environment or `~/.config/ship-feature/config`), and **`MODEL_gemini`**
   in the shared `~/.config/pr-review-relay/config`, pin the model for that reviewer. Default
   `gemini-3.1-pro-preview`, because the CLI's own built-in default is a retired model that 404s. The

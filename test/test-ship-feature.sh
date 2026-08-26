@@ -382,26 +382,31 @@ cat > "$PBIN/gemini" <<'GEMINISTUB'
 #!/usr/bin/env bash
 # The seat runs `gemini --version` first and refuses to review against a tool registry it
 # has not been audited against. STUB_GEMINI_VERSION lets a test drive that gate.
-case "${1:-}" in --version|-v)
-  # STUB_GEMINI_VERSION_STDERR mimics a CLI that prints its version on stderr: the probe must still
-  # see it, or the gate fails closed on a binary that was in fact audited.
-  if [ -n "${STUB_GEMINI_VERSION_STDERR:-}" ]; then echo "${STUB_GEMINI_VERSION:-0.26.0}" >&2
-  else echo "${STUB_GEMINI_VERSION:-0.26.0}"; fi
-  exit 0;; esac
+# SCAN the whole argv, not just $1: the probe runs inside the isolation and reaches this stub as
+# `-e none --version`, so matching on the first argument alone silently stopped answering.
+for a in "$@"; do
+  case "$a" in --version|-v)
+    # STUB_GEMINI_VERSION_STDERR mimics a CLI that prints its version on stderr: the probe must
+    # still see it, or the gate fails closed on a binary that was in fact audited.
+    if [ -n "${STUB_GEMINI_VERSION_STDERR:-}" ]; then echo "${STUB_GEMINI_VERSION:-0.26.0}" >&2
+    else echo "${STUB_GEMINI_VERSION:-0.26.0}"; fi
+    exit 0;; esac
+done
 # The plan arrives on STDIN; -p carries the prompt. Nothing asserted the body actually got here, so
 # a CLI that ignored stdin would have the seat reviewing an empty input with every argv assertion
 # still green.
 plan_in="$(cat)"
 stdinbytes=$(printf '%s' "$plan_in" | wc -c | tr -d '[:space:]')
 stdinmagic=no; case "$plan_in" in *MAGICPLANTOKEN*) stdinmagic=yes;; esac
-# credwalk=reachable when OAuth creds turn up by walking a few levels UP from the workspace. gemini's
-# own workspace confinement is the primary control; this asserts the layout does not depend on it
-# alone by leaving the creds one `../` hop away.
-credwalk=clean; d=$PWD; i=0; hn=home
-while [ "$i" -lt 3 ]; do
-  d=$(dirname "$d"); i=$((i+1))
-  if [ -e "$d/.gemini/oauth_creds.json" ] || [ -e "$d/$hn/.gemini/oauth_creds.json" ]; then credwalk=reachable; break; fi
-done
+# credwalk=adjacent when the OAuth creds sit in the workspace's own tree, in its immediate parent, or
+# in a sibling of the workspace — the specific regression this layout avoids. Be honest about the
+# scope: both directories must live under STATUS_DIR so they get cleaned up, so a traversal that
+# ignores gemini's workspace confinement altogether reaches them whatever the layout. gemini's
+# confinement is the control. This asserts the layout, not a second line of defence.
+credwalk=clean
+cwparent=$(dirname "$PWD")
+if [ -e "$PWD/.gemini/oauth_creds.json" ] || [ -e "$cwparent/.gemini/oauth_creds.json" ] \
+   || [ -n "$(ls "$cwparent"/*/.gemini/oauth_creds.json 2>/dev/null)" ]; then credwalk=adjacent; fi
 # locked=yes only if the workspace settings allowlist exactly the read-only tools, deny-list ALL of
 # today's write tools, disable hooks (hooksConfig-specific), and declare no MCP — structural, not just
 # tool-name presence.
@@ -450,7 +455,7 @@ fi
 # workspace-only lock would leave the user scope free to re-enable a write tool.
 lockedsame=no
 cmp -s "$GEMINI_CLI_HOME/.gemini/settings.json" .gemini/settings.json && lockedsame=yes
-echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso credsafe=$credsafe sysiso=$sysiso xdg=${XDG_CONFIG_HOME-UNSET} envstop=$envstop gca=$gca homecreds=$homecreds credmode=$credmode lockedsame=$lockedsame stdinbytes=$stdinbytes stdinmagic=$stdinmagic cae=${CODE_ASSIST_ENDPOINT-UNSET} credwalk=$credwalk"
+echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso credsafe=$credsafe sysiso=$sysiso xdg=${XDG_CONFIG_HOME-UNSET} envstop=$envstop gca=$gca homecreds=$homecreds credmode=$credmode lockedsame=$lockedsame stdinbytes=$stdinbytes stdinmagic=$stdinmagic cae=${CODE_ASSIST_ENDPOINT-UNSET} gburl=${GEMINI_BASE_URL-UNSET} ggburl=${GOOGLE_GEMINI_BASE_URL-UNSET} credwalk=$credwalk"
 echo "REVIEW-gemini argv=[$*]"
 exit 0
 GEMINISTUB
@@ -1122,12 +1127,18 @@ check "plan-review fails the seat on an unaudited gemini version (3)" "$rc" 3
 # is not a gate.
 printf '%s' "$out" | grep -q 'REVIEW-gemini' && { echo "  FAIL gemini reviewed anyway on an unaudited version"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] an unaudited gemini version never reaches the review"; PASS=$((PASS+1)); }
 printf '%s' "$out" | grep -qi 'audited' && { echo "  ok   [-] the unaudited-version failure says why"; PASS=$((PASS+1)); } || { echo "  FAIL the unaudited-version failure gave no reason"; FAIL=$((FAIL+1)); }
-# Auditing a new release and listing it opens the gate — major.minor, so patch releases ride along.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" STUB_GEMINI_VERSION=9.99.7 SHIP_FEATURE_GEMINI_TESTED_VERSIONS='0.26 9.99' bash "$CLI" plan-review --reviewers antigravity 2>/dev/null); rc=$?
+# Auditing a release and listing it opens the gate — for THAT release.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" STUB_GEMINI_VERSION=9.99.7 SHIP_FEATURE_GEMINI_TESTED_VERSIONS='0.26.0 9.99.7' bash "$CLI" plan-review --reviewers antigravity 2>/dev/null); rc=$?
 check "plan-review accepts a gemini version listed as audited (0)" "$rc" 0
 printf '%s' "$out" | grep -q 'REVIEW-gemini' && { echo "  ok   [-] an audited gemini version runs the review"; PASS=$((PASS+1)); } || { echo "  FAIL an audited gemini version still did not review"; FAIL=$((FAIL+1)); }
+# The match is EXACT, not major.minor. A patch release can add a tool outside `tools.core` as easily
+# as a minor one, and "9.99.8 is close enough to the 9.99.7 we read" is the assumption this gate
+# exists to refuse. This case is the difference between a version gate and a version suggestion.
+( printf 'plan\n' | PATH="$PBIN:$PATH" STUB_GEMINI_VERSION=9.99.8 SHIP_FEATURE_GEMINI_TESTED_VERSIONS='0.26.0 9.99.7' bash "$CLI" plan-review --reviewers antigravity >/dev/null 2>&1 ); check "an unaudited PATCH release does not ride in on its neighbour (3)" $? 3
+# A major.minor prefix is not a wildcard either.
+( printf 'plan\n' | PATH="$PBIN:$PATH" STUB_GEMINI_VERSION=9.99.0 SHIP_FEATURE_GEMINI_TESTED_VERSIONS='9.99' bash "$CLI" plan-review --reviewers antigravity >/dev/null 2>&1 ); check "a major.minor entry does not admit its patch releases (3)" $? 3
 # The list is read from the config file too, not only the environment.
-printf 'SHIP_FEATURE_GEMINI_TESTED_VERSIONS=9.99\n' > "$CFGDIR/gemver"
+printf 'SHIP_FEATURE_GEMINI_TESTED_VERSIONS=9.99.0\n' > "$CFGDIR/gemver"
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" STUB_GEMINI_VERSION=9.99.0 SHIP_FEATURE_CONFIG="$CFGDIR/gemver" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null); rc=$?
 check "the config file can widen the audited gemini versions (0)" "$rc" 0
 
@@ -1151,13 +1162,14 @@ check "the version gate reads a version printed with a banner (0)" "$rc" 0
 # GEMINI_CLI_HOME also moves where gemini looks for its OAuth creds, so the seat copies the real ones
 # in. That copy is the only place this isolation handles a live secret, and until now the suite only
 # asserted the creds were ABSENT from the workspace — never that the copy itself behaves.
-FAKEHOME="$WORK/fakehome"; mkdir -p "$FAKEHOME/.gemini"
-printf '{"fake":"oauth"}' > "$FAKEHOME/.gemini/oauth_creds.json"
-printf '{"fake":"accounts"}' > "$FAKEHOME/.gemini/google_accounts.json"
-chmod 644 "$FAKEHOME/.gemini/oauth_creds.json"        # deliberately loose: the copy must tighten it
+GEMHOME="$WORK/gemhome"; mkdir -p "$GEMHOME/.gemini"
+GEMHOME_EMPTY="$WORK/gemhome-empty"; mkdir -p "$GEMHOME_EMPTY"
+printf '{"fake":"oauth"}' > "$GEMHOME/.gemini/oauth_creds.json"
+printf '{"fake":"accounts"}' > "$GEMHOME/.gemini/google_accounts.json"
+chmod 644 "$GEMHOME/.gemini/oauth_creds.json"        # deliberately loose: the copy must tighten it
 
 # No environment auth selected -> the OAuth fallback runs.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$GEMHOME" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
 iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
 printf '%s' "$iso" | grep -q -- "homecreds=yes" && { echo "  ok   [-] the OAuth creds are copied into the isolated home"; PASS=$((PASS+1)); } || { echo "  FAIL the OAuth creds were not copied into GEMINI_CLI_HOME"; FAIL=$((FAIL+1)); }
 # 0600, not the source's 0644: the copy lands in a temp dir and must not widen the secret.
@@ -1170,35 +1182,42 @@ printf '%s' "$iso" | grep -q -- "credsafe=yes" && { echo "  ok   [-] the copied 
 printf '%s' "$iso" | grep -q -- "lockedsame=yes" && { echo "  ok   [-] the user scope reads the same locked settings as the workspace"; PASS=$((PASS+1)); } || { echo "  FAIL the user-scope settings differ from the workspace ones"; FAIL=$((FAIL+1)); }
 # COPY, not symlink: gemini's own token refresh writes this file, and a symlink would send that write
 # through to the user's real ~/.gemini.
-[ -s "$FAKEHOME/.gemini/oauth_creds.json" ] && { echo "  ok   [-] the user's real creds are left intact"; PASS=$((PASS+1)); } || { echo "  FAIL the user's real OAuth creds were disturbed"; FAIL=$((FAIL+1)); }
+[ -s "$GEMHOME/.gemini/oauth_creds.json" ] && { echo "  ok   [-] the user's real creds are left intact"; PASS=$((PASS+1)); } || { echo "  FAIL the user's real OAuth creds were disturbed"; FAIL=$((FAIL+1)); }
 
 # GEMINI_API_KEY selected -> no OAuth fallback. GCA outranks an API key inside gemini, so copying
 # stale creds here would break an otherwise valid key run.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" GEMINI_API_KEY=k bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$GEMHOME" GEMINI_API_KEY=k bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
 iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
 printf '%s' "$iso" | grep -q -- "homecreds=no" && printf '%s' "$iso" | grep -q -- "gca=UNSET" \
   && { echo "  ok   [-] GEMINI_API_KEY suppresses the OAuth fallback"; PASS=$((PASS+1)); } \
   || { echo "  FAIL GEMINI_API_KEY did not suppress the OAuth fallback"; FAIL=$((FAIL+1)); }
 
-# Vertex selected the way v0.26.0 actually selects it.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" GOOGLE_GENAI_USE_VERTEXAI=true bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+# Vertex WITH credentials is selected auth, so the OAuth fallback stays out of the way.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$GEMHOME" GOOGLE_GENAI_USE_VERTEXAI=true GOOGLE_APPLICATION_CREDENTIALS="$GEMHOME/sa.json" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
 iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
 printf '%s' "$iso" | grep -q -- "homecreds=no" && printf '%s' "$iso" | grep -q -- "gca=UNSET" \
-  && { echo "  ok   [-] GOOGLE_GENAI_USE_VERTEXAI suppresses the OAuth fallback"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL Vertex did not suppress the OAuth fallback"; FAIL=$((FAIL+1)); }
+  && { echo "  ok   [-] Vertex with credentials suppresses the OAuth fallback"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL Vertex with credentials did not suppress the OAuth fallback"; FAIL=$((FAIL+1)); }
+# The FLAG ALONE is not auth. It is a common leftover in a shell profile, and counting it suppressed
+# the fallback and left the run with no credentials at all — the same failure as GOOGLE_API_KEY,
+# through a different door.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$GEMHOME" GOOGLE_GENAI_USE_VERTEXAI=true CLOUDSDK_CONFIG="$GEMHOME_EMPTY" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
+printf '%s' "$iso" | grep -q -- "homecreds=yes" && printf '%s' "$iso" | grep -q -- "gca=true" \
+  && { echo "  ok   [-] a bare Vertex flag with no credentials still falls back to OAuth"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a credential-less Vertex flag suppressed the OAuth fallback"; FAIL=$((FAIL+1)); }
 
 # GOOGLE_API_KEY ALONE selects no auth method in gemini-cli v0.26.0. Treating it as one used to
 # suppress the fallback and leave the run with no credentials at all — an opaque auth failure for
 # anyone who had that variable exported for some other Google tool.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" GOOGLE_API_KEY=k bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$GEMHOME" GOOGLE_API_KEY=k bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
 iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
 printf '%s' "$iso" | grep -q -- "homecreds=yes" && printf '%s' "$iso" | grep -q -- "gca=true" \
   && { echo "  ok   [-] GOOGLE_API_KEY alone does not count as selected auth"; PASS=$((PASS+1)); } \
   || { echo "  FAIL GOOGLE_API_KEY alone suppressed the OAuth fallback"; FAIL=$((FAIL+1)); }
 
 # No creds to copy at all -> the seat still runs (auth simply rides whatever the environment has).
-EMPTYHOME="$WORK/emptyhome"; mkdir -p "$EMPTYHOME"
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$EMPTYHOME" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null); rc=$?
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$GEMHOME_EMPTY" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null); rc=$?
 check "the seat runs when there are no OAuth creds to copy (0)" "$rc" 0
 printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "gca=UNSET" && { echo "  ok   [-] no creds copied means no GCA opt-in"; PASS=$((PASS+1)); } || { echo "  FAIL GCA was opted into with no creds copied"; FAIL=$((FAIL+1)); }
 
@@ -1215,15 +1234,15 @@ printf '%s' "$iso" | grep -q -- "stdinbytes=0" && { echo "  FAIL gemini was hand
 # gemini gives GCA priority over both an API key and Vertex, and the seat deliberately does not copy
 # credentials when env auth is selected. So an exported GCA wins the auth race and then has nothing
 # to authenticate with: a valid API key, refused, for a reason nothing in the output names.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" GOOGLE_GENAI_USE_GCA=true GEMINI_API_KEY=k bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$GEMHOME" GOOGLE_GENAI_USE_GCA=true GEMINI_API_KEY=k bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
 printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "gca=UNSET" && { echo "  ok   [-] an inherited GCA is dropped when an API key is selected"; PASS=$((PASS+1)); } || { echo "  FAIL an inherited GOOGLE_GENAI_USE_GCA reached the child over an API key"; FAIL=$((FAIL+1)); }
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" GOOGLE_GENAI_USE_GCA=true GOOGLE_GENAI_USE_VERTEXAI=true bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$GEMHOME" GOOGLE_GENAI_USE_GCA=true GOOGLE_GENAI_USE_VERTEXAI=true GOOGLE_APPLICATION_CREDENTIALS="$GEMHOME/sa.json" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
 printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "gca=UNSET" && { echo "  ok   [-] an inherited GCA is dropped when Vertex is selected"; PASS=$((PASS+1)); } || { echo "  FAIL an inherited GOOGLE_GENAI_USE_GCA reached the child over Vertex"; FAIL=$((FAIL+1)); }
 # Dropping the inherited one must not break the deliberate opt-in: env applies -u before NAME=value.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" GOOGLE_GENAI_USE_GCA=true bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$GEMHOME" GOOGLE_GENAI_USE_GCA=true bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
 printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "gca=true" && { echo "  ok   [-] the seat's own GCA opt-in still survives the unset"; PASS=$((PASS+1)); } || { echo "  FAIL unsetting the inherited GCA also killed the opt-in"; FAIL=$((FAIL+1)); }
 # No creds to copy and an inherited GCA: the opt-in must NOT happen just because the variable existed.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$EMPTYHOME" GOOGLE_GENAI_USE_GCA=true bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$GEMHOME_EMPTY" GOOGLE_GENAI_USE_GCA=true bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
 printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "gca=UNSET" && { echo "  ok   [-] an inherited GCA does not opt in by itself"; PASS=$((PASS+1)); } || { echo "  FAIL an inherited GCA survived with no creds copied"; FAIL=$((FAIL+1)); }
 
 # --- a base-URL override on the ENVIRONMENT, not just in a .env file ----------------------------
@@ -1231,12 +1250,19 @@ printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "gca=UNSET" && { echo "  o
 # An exported CODE_ASSIST_ENDPOINT redirects auth and bearer tokens just as well and was untouched.
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" CODE_ASSIST_ENDPOINT=https://attacker.example bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
 printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "cae=UNSET" && { echo "  ok   [-] an inherited CODE_ASSIST_ENDPOINT is stripped for the run"; PASS=$((PASS+1)); } || { echo "  FAIL an inherited base-URL override reached gemini"; FAIL=$((FAIL+1)); }
+# The sibling overrides are named in the same `-u` list and must be covered by the same reasoning:
+# one asserted variable and two unasserted ones is a list nobody notices going stale.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" GEMINI_BASE_URL=https://attacker.example GOOGLE_GEMINI_BASE_URL=https://attacker.example bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
+printf '%s' "$iso" | grep -q -- "gburl=UNSET" && printf '%s' "$iso" | grep -q -- "ggburl=UNSET" \
+  && { echo "  ok   [-] the other inherited base-URL overrides are stripped too"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL an inherited GEMINI_BASE_URL/GOOGLE_GEMINI_BASE_URL reached gemini"; FAIL=$((FAIL+1)); }
 
 # --- the creds are not one `../` hop from the workspace -----------------------------------------
 # gemini confines read_file to the workspace, and that is the control this relies on. It is also
 # someone else's invariant: assert the layout does not hand the creds over the moment it slips.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
-printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "credwalk=clean" && { echo "  ok   [-] the copied creds are not reachable by walking up from the workspace"; PASS=$((PASS+1)); } || { echo "  FAIL the OAuth creds sit within a few '../' hops of the reviewer's cwd"; FAIL=$((FAIL+1)); }
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$GEMHOME" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "credwalk=clean" && { echo "  ok   [-] the copied creds are not adjacent to the reviewer's workspace"; PASS=$((PASS+1)); } || { echo "  FAIL the OAuth creds sit in the workspace tree, its parent, or a sibling"; FAIL=$((FAIL+1)); }
 
 # --- the version probe must read stderr too -----------------------------------------------------
 # The gate fails CLOSED, so a probe that misses the number does not leak — it refuses an audited
@@ -1805,7 +1831,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=299
+EXPECTED=303
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
