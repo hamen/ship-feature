@@ -906,7 +906,7 @@ have found something serious, write it down before you go looking for the next t
         # stripping whitespace and cutting on '.' would turn that into a major.minor that matches
         # nothing. This gate fails CLOSED, so a parse that is merely fragile does not leak — it
         # bricks the seat on a version that was in fact audited, which is its own kind of wrong.
-        gver="$(gemini --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1)"
+        gver="$(gemini --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1)"
         gmm="$(printf '%s' "$gver" | cut -d. -f1,2)"
         gtested="$(printf '%s' "$GEMINI_TESTED" | tr ',' ' ')"
         [ -n "$gver" ] && case " $gtested " in *" $gmm "*) gver_ok=1;; esac
@@ -917,8 +917,15 @@ have found something serious, write it down before you go looking for the next t
         #   gwork = the CWD / workspace
         # kept SEPARATE so the allowlisted read_file tool (which gemini restricts to the workspace) can
         # never reach the credentials in ghome — a malicious plan cannot make gemini disclose them.
-        local giso="$STATUS_DIR/gemini_iso_$key" ghome gwork
-        ghome="$giso/home"; gwork="$giso/work"
+        # NOT siblings under a shared parent. When they were, the credential directory sat exactly
+        # one `../` hop from the reviewer's working directory, and the only thing keeping the
+        # allowlisted read_file away from it was gemini's own workspace confinement. That
+        # confinement is still the primary control and is expected to hold — but it is someone
+        # else's invariant, enforced in someone else's release cycle, and a layout that survives it
+        # slipping costs nothing to choose. Neither directory is now reachable by walking up from
+        # the other without already knowing the per-reviewer name.
+        local ghome gwork
+        ghome="$STATUS_DIR/gemini_home_$key/home"; gwork="$STATUS_DIR/gemini_work_$key/ws"
         if [ -z "$gver_ok" ]; then
           if [ -z "$gver" ]; then
             echo "could not determine the gemini-cli version (is \`gemini\` on PATH?); refusing to run the seat unverified" > "$errf"
@@ -955,7 +962,12 @@ have found something serious, write it down before you go looking for the next t
           # real creds into ghome and opt in with GOOGLE_GENAI_USE_GCA=true (the locked settings drop
           # the user's `security.auth.selectedType`, so non-interactive gemini would otherwise refuse
           # OAuth). Gating on "no env auth" matters because GCA takes precedence over an API key, so a
-          # stale ~/.gemini would otherwise break an otherwise valid GEMINI_API_KEY run.
+          # stale ~/.gemini would otherwise break an otherwise valid GEMINI_API_KEY run. An
+          # INHERITED GOOGLE_GENAI_USE_GCA is dropped for the child (see the `-u` below) rather than
+          # honoured: gemini gives GCA priority over both an API key and Vertex, and the branch below
+          # deliberately does not copy credentials when env auth is selected — so an exported GCA
+          # would win the auth race and then have nothing to authenticate with. `env` applies -u
+          # before NAME=value, so opting in below still works.
           local realhome="${HOME:-}" gca_env=""
           [ -n "$realhome" ] || realhome="$(cd ~ 2>/dev/null && pwd)"
           local env_auth=""
@@ -977,6 +989,8 @@ have found something serious, write it down before you go looking for the next t
           # -u XDG_CONFIG_HOME: defence-in-depth in case a future gemini honors an XDG config path.
           out=$( cd "$gwork" && printf '%s' "$plan" | run_reviewer env \
                    -u XDG_CONFIG_HOME \
+                   -u GOOGLE_GENAI_USE_GCA \
+                   -u CODE_ASSIST_ENDPOINT -u GEMINI_BASE_URL -u GOOGLE_GEMINI_BASE_URL \
                    ${gca_env:+"$gca_env"} \
                    GEMINI_CLI_HOME="$ghome" \
                    GEMINI_CLI_SYSTEM_SETTINGS_PATH="$ghome/.gemini/settings.json" \

@@ -382,7 +382,26 @@ cat > "$PBIN/gemini" <<'GEMINISTUB'
 #!/usr/bin/env bash
 # The seat runs `gemini --version` first and refuses to review against a tool registry it
 # has not been audited against. STUB_GEMINI_VERSION lets a test drive that gate.
-case "${1:-}" in --version|-v) echo "${STUB_GEMINI_VERSION:-0.26.0}"; exit 0;; esac
+case "${1:-}" in --version|-v)
+  # STUB_GEMINI_VERSION_STDERR mimics a CLI that prints its version on stderr: the probe must still
+  # see it, or the gate fails closed on a binary that was in fact audited.
+  if [ -n "${STUB_GEMINI_VERSION_STDERR:-}" ]; then echo "${STUB_GEMINI_VERSION:-0.26.0}" >&2
+  else echo "${STUB_GEMINI_VERSION:-0.26.0}"; fi
+  exit 0;; esac
+# The plan arrives on STDIN; -p carries the prompt. Nothing asserted the body actually got here, so
+# a CLI that ignored stdin would have the seat reviewing an empty input with every argv assertion
+# still green.
+plan_in="$(cat)"
+stdinbytes=$(printf '%s' "$plan_in" | wc -c | tr -d '[:space:]')
+stdinmagic=no; case "$plan_in" in *MAGICPLANTOKEN*) stdinmagic=yes;; esac
+# credwalk=reachable when OAuth creds turn up by walking a few levels UP from the workspace. gemini's
+# own workspace confinement is the primary control; this asserts the layout does not depend on it
+# alone by leaving the creds one `../` hop away.
+credwalk=clean; d=$PWD; i=0; hn=home
+while [ "$i" -lt 3 ]; do
+  d=$(dirname "$d"); i=$((i+1))
+  if [ -e "$d/.gemini/oauth_creds.json" ] || [ -e "$d/$hn/.gemini/oauth_creds.json" ]; then credwalk=reachable; break; fi
+done
 # locked=yes only if the workspace settings allowlist exactly the read-only tools, deny-list ALL of
 # today's write tools, disable hooks (hooksConfig-specific), and declare no MCP — structural, not just
 # tool-name presence.
@@ -431,7 +450,7 @@ fi
 # workspace-only lock would leave the user scope free to re-enable a write tool.
 lockedsame=no
 cmp -s "$GEMINI_CLI_HOME/.gemini/settings.json" .gemini/settings.json && lockedsame=yes
-echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso credsafe=$credsafe sysiso=$sysiso xdg=${XDG_CONFIG_HOME-UNSET} envstop=$envstop gca=$gca homecreds=$homecreds credmode=$credmode lockedsame=$lockedsame"
+echo "GEMINI-ISO cwd=$PWD locked=$locked homeiso=$homeiso credsafe=$credsafe sysiso=$sysiso xdg=${XDG_CONFIG_HOME-UNSET} envstop=$envstop gca=$gca homecreds=$homecreds credmode=$credmode lockedsame=$lockedsame stdinbytes=$stdinbytes stdinmagic=$stdinmagic cae=${CODE_ASSIST_ENDPOINT-UNSET} credwalk=$credwalk"
 echo "REVIEW-gemini argv=[$*]"
 exit 0
 GEMINISTUB
@@ -1067,6 +1086,11 @@ printf '%s' "$iso" | grep -q -- "xdg=UNSET" && { echo "  ok   [-] antigravity un
 printf '%s' "$iso" | grep -q -- "envstop=yes" && { echo "  ok   [-] antigravity plants a controlled .env (blocks ancestor .env injection)"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not block ancestor .env lookup"; FAIL=$((FAIL+1)); }
 # The SYSTEM scope (highest precedence) + system-defaults must also be redirected under GEMINI_CLI_HOME,
 # so /etc/gemini-cli or an inherited hostile GEMINI_CLI_SYSTEM_SETTINGS_PATH can't re-enable anything.
+# NOTE the assumption this rests on: gemini merges its four settings scopes with SYSTEM at the
+# highest precedence, which is why SYSTEM points at the locked file while SYSTEM_DEFAULTS is an
+# empty {}. If a future release changed that merge order, every scope here would still be a file we
+# control — but which one wins would change, and this assertion would not notice. Re-read the merge
+# order when widening SHIP_FEATURE_GEMINI_TESTED_VERSIONS.
 printf '%s' "$iso" | grep -q -- "sysiso=yes" && { echo "  ok   [-] antigravity isolates the SYSTEM settings scope too"; PASS=$((PASS+1)); } || { echo "  FAIL antigravity/gemini did not isolate the system settings scope"; FAIL=$((FAIL+1)); }
 # And it must NOT run in the caller's CWD (where a checkout's .gemini/ would live).
 # grep -F: $PWD may contain regex metacharacters (e.g. a dotted TMPDIR), so match it as a literal.
@@ -1177,6 +1201,48 @@ EMPTYHOME="$WORK/emptyhome"; mkdir -p "$EMPTYHOME"
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$EMPTYHOME" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null); rc=$?
 check "the seat runs when there are no OAuth creds to copy (0)" "$rc" 0
 printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "gca=UNSET" && { echo "  ok   [-] no creds copied means no GCA opt-in"; PASS=$((PASS+1)); } || { echo "  FAIL GCA was opted into with no creds copied"; FAIL=$((FAIL+1)); }
+
+# --- the plan actually reaches the reviewer -----------------------------------------------------
+# -p carries the PROMPT and the plan goes on stdin. Every other assertion here reads argv, so a CLI
+# that ignored stdin would leave the seat reviewing nothing at all with the suite still green. The
+# reviewer's whole purpose is the one thing nothing checked.
+out=$(printf 'MAGICPLANTOKEN in the plan body\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+iso=$(printf '%s\n' "$out" | grep 'GEMINI-ISO')
+printf '%s' "$iso" | grep -q -- "stdinmagic=yes" && { echo "  ok   [-] the plan body reaches gemini on stdin"; PASS=$((PASS+1)); } || { echo "  FAIL the plan body never reached gemini"; FAIL=$((FAIL+1)); }
+printf '%s' "$iso" | grep -q -- "stdinbytes=0" && { echo "  FAIL gemini was handed an empty plan"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] gemini is not handed an empty plan"; PASS=$((PASS+1)); }
+
+# --- an INHERITED GOOGLE_GENAI_USE_GCA must not reach the child ---------------------------------
+# gemini gives GCA priority over both an API key and Vertex, and the seat deliberately does not copy
+# credentials when env auth is selected. So an exported GCA wins the auth race and then has nothing
+# to authenticate with: a valid API key, refused, for a reason nothing in the output names.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" GOOGLE_GENAI_USE_GCA=true GEMINI_API_KEY=k bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "gca=UNSET" && { echo "  ok   [-] an inherited GCA is dropped when an API key is selected"; PASS=$((PASS+1)); } || { echo "  FAIL an inherited GOOGLE_GENAI_USE_GCA reached the child over an API key"; FAIL=$((FAIL+1)); }
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" GOOGLE_GENAI_USE_GCA=true GOOGLE_GENAI_USE_VERTEXAI=true bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "gca=UNSET" && { echo "  ok   [-] an inherited GCA is dropped when Vertex is selected"; PASS=$((PASS+1)); } || { echo "  FAIL an inherited GOOGLE_GENAI_USE_GCA reached the child over Vertex"; FAIL=$((FAIL+1)); }
+# Dropping the inherited one must not break the deliberate opt-in: env applies -u before NAME=value.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" GOOGLE_GENAI_USE_GCA=true bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "gca=true" && { echo "  ok   [-] the seat's own GCA opt-in still survives the unset"; PASS=$((PASS+1)); } || { echo "  FAIL unsetting the inherited GCA also killed the opt-in"; FAIL=$((FAIL+1)); }
+# No creds to copy and an inherited GCA: the opt-in must NOT happen just because the variable existed.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$EMPTYHOME" GOOGLE_GENAI_USE_GCA=true bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "gca=UNSET" && { echo "  ok   [-] an inherited GCA does not opt in by itself"; PASS=$((PASS+1)); } || { echo "  FAIL an inherited GCA survived with no creds copied"; FAIL=$((FAIL+1)); }
+
+# --- a base-URL override on the ENVIRONMENT, not just in a .env file ----------------------------
+# The planted empty .gemini/.env stops the ancestor .env walk, which closes the file half of this.
+# An exported CODE_ASSIST_ENDPOINT redirects auth and bearer tokens just as well and was untouched.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" CODE_ASSIST_ENDPOINT=https://attacker.example bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "cae=UNSET" && { echo "  ok   [-] an inherited CODE_ASSIST_ENDPOINT is stripped for the run"; PASS=$((PASS+1)); } || { echo "  FAIL an inherited base-URL override reached gemini"; FAIL=$((FAIL+1)); }
+
+# --- the creds are not one `../` hop from the workspace -----------------------------------------
+# gemini confines read_file to the workspace, and that is the control this relies on. It is also
+# someone else's invariant: assert the layout does not hand the creds over the moment it slips.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$FAKEHOME" bash "$CLI" plan-review --reviewers antigravity 2>/dev/null)
+printf '%s\n' "$out" | grep 'GEMINI-ISO' | grep -q -- "credwalk=clean" && { echo "  ok   [-] the copied creds are not reachable by walking up from the workspace"; PASS=$((PASS+1)); } || { echo "  FAIL the OAuth creds sit within a few '../' hops of the reviewer's cwd"; FAIL=$((FAIL+1)); }
+
+# --- the version probe must read stderr too -----------------------------------------------------
+# The gate fails CLOSED, so a probe that misses the number does not leak — it refuses an audited
+# binary and blames the gate.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" STUB_GEMINI_VERSION_STDERR=1 bash "$CLI" plan-review --reviewers antigravity 2>/dev/null); rc=$?
+check "the version gate reads a version printed on stderr (0)" "$rc" 0
 
 # antigravity in the panel but the gemini CLI missing → hard quorum failure (3), never a silent pass.
 # Build a SELF-CONTAINED PATH: the reviewer stubs plus symlinks to only the coreutils plan-review
@@ -1739,7 +1805,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=290
+EXPECTED=299
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
