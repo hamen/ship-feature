@@ -909,7 +909,10 @@ have found something serious, write it down before you go looking for the next t
         # It is tidiness with a small safety margin, not a second line of defence.
         local ghome gwork
         ghome="$STATUS_DIR/gemini_home_$key/home"; gwork="$STATUS_DIR/gemini_work_$key/ws"
-        local gver gtested gver_ok="" giso_ok=""
+        # All initialised: the script runs under set -u, and a path that skips the probe would
+        # otherwise reference an unset gver. Reachable only if the branch order ever changes, which
+        # is exactly the kind of thing that changes.
+        local gver="" gtested="" gver_ok="" giso_ok=""
         # Security-critical: if we can't create the locked settings, FAIL — never fall through to a
         # gemini run without the read-only config.
         # An empty `.gemini/.env` in the workspace (and home) stops gemini's ancestor `.env` search at
@@ -941,7 +944,10 @@ have found something serious, write it down before you go looking for the next t
           # line: a CLI may print a banner around its version ("gemini-cli version 0.26.0 (abc123)").
           # This gate fails CLOSED, so a fragile parse does not leak — it refuses a binary that was in
           # fact audited, and blames the gate for it.
-          gver="$( cd "$gwork" && env \
+          # Under run_reviewer, like the review itself: a probe is a gemini start-up too, and an
+          # unwrapped one can hang on network or auth with nothing to stop it — outside the
+          # per-reviewer timeout, so the whole panel waits on a seat that never reports.
+          gver="$( cd "$gwork" && run_reviewer env \
                      -u XDG_CONFIG_HOME -u GOOGLE_GENAI_USE_GCA \
                      -u CODE_ASSIST_ENDPOINT -u GEMINI_BASE_URL -u GOOGLE_GEMINI_BASE_URL \
                      GEMINI_CLI_HOME="$ghome" \
