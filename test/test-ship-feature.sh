@@ -1408,21 +1408,63 @@ sf_clause() {  # sf_clause <label> <extended-regex>
 # the macOS job — reporting the phrase as missing from every adapter, which sends the next reader
 # after a documentation drift that never happened. It went unnoticed for eleven days that way. The
 # check below reads THIS file, so the guard cannot drift from the clauses it guards.
-# EVERY interval form, not just `{0,n}`. BSD grep rejects any bound over 255 — `{300}`, `{300,}`,
-# `{1,300}` all fail the same way — and a guard that only knew the one form this commit happened to
-# fix would let the next clause reproduce the identical macOS-only "missing from every adapter"
-# report that this check exists to prevent. Both bounds of a two-number interval are checked; the
-# open form `{n,}` yields an empty second field, which the numeric filter drops.
+# EVERY interval form. BSD grep rejects any bound over 255 whatever shape it is written in — the
+# exact count, the open form, either bound of a range, and the leading-comma form GNU reads as a
+# zero lower bound — and a guard that only knew the one form this commit happened to fix would let
+# the next clause reproduce the identical macOS-only "missing from every adapter" report that this
+# check exists to prevent. So the extractor takes anything brace-wrapped that is digits and commas,
+# splits on the comma, and tests every numeric field it finds; empty fields fall out at the filter.
 #
 # Comment lines are skipped: the paragraph above names the bad interval as its example, and a guard
 # that fails on its own description of the rule teaches people to delete the description. (An
-# interval inside a TRAILING comment on a code line would still trip it. Left alone: recognising
-# where a comment starts in shell needs a parser, and a rare false alarm that names the real rule is
-# a better failure than a parser that gets quoting wrong.)
-sf_over_cap=$(grep -vE '^[[:space:]]*#' "$HERE/test-ship-feature.sh" | grep -oE '\{[0-9]+(,[0-9]*)?\}' | tr -d '{}' | tr ',' '\n' | grep -E '^[0-9]+$' | awk '$1 > 255' | sort -u | tr '\n' ' ')
+# interval inside a TRAILING comment on a code line would still trip it, as would a brace-wrapped
+# number that is not a regex at all. Left alone: telling where a comment starts in shell needs a
+# parser, and a rare false alarm that names the real rule is a better failure than a parser that
+# gets quoting wrong.)
+sf_intervals_over_cap() {  # <file> -> prints every bound above the cap, empty when the file is fine
+  grep -vE '^[[:space:]]*#' "$1" \
+    | grep -oE '\{[0-9,]+\}' | tr -d '{}' | tr ',' '\n' \
+    | grep -E '^[0-9]+$' | awk '$1 > 255' | sort -u | tr '\n' ' '
+}
+sf_over_cap=$(sf_intervals_over_cap "$HERE/test-ship-feature.sh")
 [ -z "$sf_over_cap" ] \
   && { echo "  ok   [-] every regex interval stays within BSD grep's 255 cap"; PASS=$((PASS+1)); } \
   || { echo "  FAIL regex interval(s) over BSD grep's 255 cap (fails on macOS only): $sf_over_cap"; FAIL=$((FAIL+1)); }
+
+# THE GUARD'S OWN NEGATIVE PATH. The check above only says this file is currently clean, which it
+# would also say if the guard matched nothing at all — and this suite has already shipped exactly
+# that: a first version whose `tr` deleted the zeros inside the number, read 300 as 3, and passed
+# everything. A guard nobody has watched reject anything is decoration.
+#
+# The interval forms are BUILT from parts rather than written literally, because a literal one on a
+# non-comment line of this file would be flagged by the very check these cases exercise.
+sf_lb='{'; sf_rb='}'
+sf_capdir="$WORK/capguard"; mkdir -p "$sf_capdir"
+sf_cap_case() {  # <spec> <flag|clean> <description>
+  local spec="$1" want="$2" why="$3" got
+  printf "sf_clause \"x\" 'a.%s%s%s b'\n" "$sf_lb" "$spec" "$sf_rb" > "$sf_capdir/case"
+  got=$(sf_intervals_over_cap "$sf_capdir/case")
+  if { [ "$want" = flag ] && [ -n "$got" ]; } || { [ "$want" = clean ] && [ -z "$got" ]; }; then
+    echo "  ok   [-] the interval guard $why"; PASS=$((PASS+1))
+  else
+    echo "  FAIL the interval guard failed to $why (reported '$got')"; FAIL=$((FAIL+1))
+  fi
+}
+sf_cap_case "0,300" flag  "rejects the {0,n} form this change fixed"
+sf_cap_case "300"   flag  "rejects the exact-count {n} form"
+sf_cap_case "300,"  flag  "rejects the open {n,} form"
+sf_cap_case "1,300" flag  "rejects a high upper bound in {m,n}"
+sf_cap_case ",300"  flag  "rejects the {,n} form"
+sf_cap_case "256"   flag  "rejects a bound one over the cap"
+sf_cap_case "255"   clean "accepts a bound exactly at the cap"
+sf_cap_case "0,200" clean "accepts an ordinary interval"
+# The comment skip is load-bearing, not cosmetic: without it the paragraph that documents this rule
+# fails the suite, and the next person makes it green by deleting the paragraph.
+printf '# an example naming .%s0,300%s as the thing to avoid\n' "$sf_lb" "$sf_rb" > "$sf_capdir/comment"
+sf_cap_comment=$(sf_intervals_over_cap "$sf_capdir/comment")
+[ -z "$sf_cap_comment" ] \
+  && { echo "  ok   [-] the interval guard ignores a full-line comment"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the interval guard flagged an interval inside a comment"; FAIL=$((FAIL+1)); }
 
 # The patterns are MULTI-WORD ANCHORS, not single tokens. The first version of this test grepped for
 # `qualifying`, `narrow`, `benched`, `dispositions` — words that survive having the rule around them
@@ -1548,7 +1590,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=255
+EXPECTED=264
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
