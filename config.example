@@ -1,8 +1,9 @@
 # ship-feature — example configuration.
 #
 # Copy to ~/.config/ship-feature/config and edit. The `ship-feature` CLI reads this file as plain
-# `KEY=value` lines and honors the SHIP_FEATURE_* keys below — it is NEVER shell-`source`d, so nothing
-# here is executed. Environment variables of the same name take precedence over this file.
+# `KEY=value` lines and honors the keys below — the SHIP_FEATURE_* ones plus the four model pins,
+# which keep their vendor-shaped names because pr-review-relay reads them too. It is NEVER
+# shell-`source`d, so nothing here is executed. Environment variables of the same name take precedence over this file.
 #
 # The values below are the built-in defaults. This example file is TRACKED and public; put your real
 # values only in the copy at ~/.config/ship-feature/config, which is gitignored.
@@ -12,6 +13,10 @@ SHIP_FEATURE_WORKTREE_ROOT=.claude/worktrees
 
 # Marker directory that must be git-excluded so it never shows up in `git status`.
 SHIP_FEATURE_EXCLUDE_MARKER=.claude/
+
+# NOTE: REVIEWERS / PLAN_REVIEWERS in ~/.config/pr-review-relay/config are read as a fallback for
+# the two keys below, so the panel can be defined ONCE for both tools. Set them here only to make
+# ship-feature differ from the relay on purpose.
 
 # The cross-review quorum: the agents you actually have installed. When set, `ship-feature relay`
 # injects it as --reviewers (so a missing agent fails the round instead of silently thinning the panel).
@@ -27,8 +32,24 @@ SHIP_FEATURE_EXCLUDE_MARKER=.claude/
 # SHIP_FEATURE_PLAN_REVIEWERS=claude,codex,antigravity
 
 # Model for the antigravity/gemini plan reviewer (the `gemini` CLI). Default gemini-3.1-pro-preview,
-# because the CLI's own built-in default is a retired model that 404s. Env wins over this file.
+# because the CLI's own built-in default is a retired model that 404s. Env wins over this file, and
+# MODEL_gemini in pr-review-relay's config is the last fallback (see the model pins below).
 # SHIP_FEATURE_GEMINI_MODEL=gemini-3.1-pro-preview
+
+# The gemini-cli releases whose TOOL REGISTRY the antigravity seat has been audited against, as
+# major.minor, space- or comma-separated. Default 0.26.
+#
+# This is a security tripwire, not a compatibility hint. The seat locks gemini down with a
+# `tools.core` ALLOWLIST, but that filter does not cover every tool gemini registers —
+# `delegate_to_agent` in v0.26.0 sits outside it and is stopped only by the `tools.exclude`
+# blocklist. A future release that registered another write-capable tool the same way would pass
+# both controls, and the seat would go on advertising a read-only guarantee it no longer had.
+# There is no gemini command that dumps the active tool registry, so the seat refuses to run
+# against a version nobody has looked at, rather than assuming.
+#
+# When gemini updates, the plan gate will fail this seat until someone audits the new release's
+# tools and lists it here. That is the intended cost. Do not widen it to silence the failure.
+# SHIP_FEATURE_GEMINI_TESTED_VERSIONS=0.26
 
 # Path to a PRIVATE, newline-delimited deny-list for scripts/scan-personal-data.sh. Each line is a
 # literal string that must NEVER appear in the public repo (real project slugs, bundle-id prefixes,
@@ -38,5 +59,77 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # Escape hatch, ENV-ONLY (export it — it is NOT read from this file): set SHIP_FEATURE_ALLOW_BEHIND=1 to
 # let `ship-feature preflight` proceed when your branch is behind/diverged from the default branch.
 
-# Per-reviewer timeout for `ship-feature plan-review`, in seconds. ENV-ONLY (not read from this file);
-# falls back to PR_RELAY_AGENT_TIMEOUT, then 300. e.g. export SHIP_FEATURE_PLAN_TIMEOUT=480
+# Per-reviewer timeout for `ship-feature plan-review`, in seconds. Default 500.
+#
+# THE ONE PLACE to set this is AGENT_TIMEOUT in ~/.config/pr-review-relay/config, which configures
+# this tool AND pr-review-relay together — see the shared-config note further down. Setting it here
+# is the escape hatch for plan-review ALONE ("I have fast inference today and would rather not
+# wait"), and it wins over the shared file.
+#
+# Resolution, highest first: the environment, THIS file, PR_RELAY_AGENT_TIMEOUT in the environment,
+# AGENT_TIMEOUT in pr-review-relay's config, then 500.
+# SHIP_FEATURE_PLAN_TIMEOUT=300
+
+# ---------------------------------------------------------------------------------------------
+# The model pins. Three sources, highest first: the environment, THIS file, and finally
+# pr-review-relay's own config (~/.config/pr-review-relay/config, or $PR_RELAY_CONFIG),
+# whose seat-named keys MODEL_kimi3 / MODEL_cursor / MODEL_grok45high / MODEL_gemini are read as
+# the last fallback.
+#
+# That last source is where a pin normally belongs: both tools drive the same seats on the same
+# accounts, so which model a seat runs is a property of the machine, not of whichever tool is
+# invoking it. Set one here only when ship-feature should differ from the relay ON PURPOSE —
+# otherwise the two files drift, and nothing complains, because both are valid config.
+#
+# MODEL_opencode is NOT read here: that seat is pr-review-relay's own, and the relay reads it
+# from its own file.
+#
+# MODEL_gemini, NOT MODEL_antigravity, is the key for the gemini plan-review seat. The relay already
+# maps MODEL_antigravity onto its own `antigravity` seat, which runs the `agy` binary — a different
+# CLI that accepts different model ids. One key for both would mean one of the two silently getting
+# a model name its own CLI rejects. Same reason MODEL_grok and MODEL_grok45high stay apart.
+# Its value lands in SHIP_FEATURE_GEMINI_MODEL above, which is why that pin keeps the
+# SHIP_FEATURE_ prefix while the four below do not: no other tool reads it.
+#
+# These four are the only keys here without a SHIP_FEATURE_ prefix, and the names are not this
+# tool's to choose: pr-review-relay reads CURSOR_REVIEW_MODEL and PR_RELAY_OPENCODE_MODEL too,
+# because they describe your ACCOUNTS rather than either tool, and one setting should configure
+# both. They are exported when read, so the relay — a child process — actually sees them.
+#
+# They used to be environment-only, which split the panel across two files: who sits on it here,
+# what they actually run in your shell profile. A seat and its model could drift apart, and a run
+# with no profile loaded (cron, a fresh machine) silently got the bundled default.
+
+# Model for the `cursor` plan reviewer. Default: composer-2.5, Cursor's own model -- Cursor-branded
+# quota pool, and not Claude, GPT, Codex or Grok, so every reviewer on the panel stays on the model
+# its own vendor built.
+# It is pinned rather than left on cursor-agent's own "Auto" default, which routes to the frontier
+# models and may pick a Claude one — plan-review would then have Claude grading a plan Claude wrote,
+# while the panel reports an independent "Cursor" reviewer. (Auto also bills Cursor's small "Other
+# Models" quota instead of the larger Cursor-branded pool.)
+# `cursor-agent --list-models` shows what your account offers. Pick something OUTSIDE the families
+# already on your panel: setting this back to `auto`, to a claude-* id while Claude writes your
+# plans, or to a cursor-grok-* id while grok45high reviews alongside it, all collapse two nominally
+# independent seats onto one model family. The override is for a retired model id.
+# e.g. CURSOR_REVIEW_MODEL=composer-2.5-fast
+
+# Model for the `kimi3` plan reviewer, which runs through opencode. Default: opencode-go/kimi-k3,
+# the bundled tier. Set an `openrouter/<vendor>/<model>` id to route through OpenRouter instead.
+#
+# This is the seat where Kimi K3 and GLM sit, and which of them is better is a property of the
+# CODE UNDER REVIEW, not of the seat: a measured bake-off on a 75 KB Kotlin diff went to GLM 5.2,
+# while Rails' own AI evals put Kimi K3 twenty-four points ahead on Rails tasks. Changing it is a
+# line in this file, which is the point of it being here.
+#
+# Check the id before pinning it — a bad slug does not error, it returns a broken fragment:
+#   opencode models | grep <vendor>
+#   curl -s https://openrouter.ai/api/v1/models/<id>/endpoints   # which providers actually serve it
+# e.g. KIMI3_REVIEW_MODEL=openrouter/moonshotai/kimi-k3
+
+# Model for the `grok45high` plan reviewer. Default: grok-4.6.
+# e.g. GROK45HIGH_REVIEW_MODEL=grok-4.6
+
+# Model for pr-review-relay's `opencode` seat. Same seat family as KIMI3_REVIEW_MODEL above but a
+# DIFFERENT TOOL and a different code path, so the two are set independently — and they are worth
+# setting differently when the relay reviews code while plan-review reads prose.
+# e.g. PR_RELAY_OPENCODE_MODEL=openrouter/z-ai/glm-5.2

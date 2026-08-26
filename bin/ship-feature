@@ -7,11 +7,18 @@
 #   ship-feature relay [..]  Transparent pass-through to `pr-review-relay`: forwards all args, preserves
 #                            stdout and the EXACT exit code, and prints (on stderr) a one-line reminder of
 #                            what each code means for the workflow.
-#   ship-feature plan-review [<file>] [--reviewers a,b,c] [--parallel]
+#   ship-feature plan-review [<file>] [--reviewers a,b,c] [--sequential]
 #                            Step 2: fan an implementation PLAN (a file, stdin, or ./plan.md) out to a
 #                            panel of agents for a read-only review; prints each review. Defaults the
-#                            panel to SHIP_FEATURE_PLAN_REVIEWERS, then SHIP_FEATURE_REVIEWERS. Exit 0
-#                            clean, 3 not-clean, 1 usage error.
+#                            panel to SHIP_FEATURE_PLAN_REVIEWERS, then SHIP_FEATURE_REVIEWERS. The
+#                            panel runs in PARALLEL by default: reviewers are independent, and running
+#                            them one after another multiplies the per-reviewer timeout by the panel
+#                            size (a 4-seat panel at the per-reviewer timeout each could sit for many
+#                            minutes before
+#                            printing a verdict). --sequential restores one-at-a-time, streaming each
+#                            review as it lands, for when you want to watch a single reviewer work or
+#                            to keep concurrent agent load down. Exit 0 clean, 3 not-clean, 1 usage
+#                            error.
 #   ship-feature help        This message.
 #
 # The workflow itself lives in WORKFLOW.md; this tool does not drive it. State/resume is intentionally
@@ -35,12 +42,40 @@ kill_tree() {
   kill -TERM "$pid" 2>/dev/null || true
 }
 
+# Where WORKFLOW.md §1 says plans live. One canonical path, matching install.sh
+# by construction — a reviewer found the alternative: deriving it from
+# SHIP_FEATURE_CONFIG made the two disagree for anyone with a custom config, and
+# `SHIP_FEATURE_CONFIG=/dev/null` (the ordinary way to say "no config") resolved
+# the plans directory to `/dev`. That variable names a config FILE to read, not a
+# relocation of the install. `SHIP_FEATURE_PLANS_DIR` is the explicit override.
+SF_PLANS_DIR="${SHIP_FEATURE_PLANS_DIR:-$HOME/.config/ship-feature/plans}"
+
+# Created on demand, not only by the installer. An existing install that updates
+# the repository gets the new workflow — which tells its agent to write a plan
+# here — while the directory still does not exist, and the first plan write
+# fails. Best effort: this is a diagnostic path, not a reason to refuse a
+# command. Mode 0700 for the same reason the installer sets it: a plan describes
+# an unreleased change in a private repository. A symlink is left alone.
+sf_ensure_plans_dir() {
+  [ -e "$SF_PLANS_DIR" ] && return 0
+  mkdir -p "$SF_PLANS_DIR" 2>/dev/null || return 0
+  chmod 700 "$SF_PLANS_DIR" 2>/dev/null || true
+}
+
 # Load ~/.config/ship-feature/config as plain KEY=value lines — NEVER shell-`source`d, and only known
 # SHIP_FEATURE_* keys are honored. Environment variables win over the file.
 load_config() {
   local cfg="${SHIP_FEATURE_CONFIG:-$HOME/.config/ship-feature/config}" key val
-  [ -f "$cfg" ] || return 0
-  while IFS='=' read -r key val; do
+  # The shared pins are read whether or not THIS file exists — a machine can perfectly well have
+  # pr-review-relay configured and no ship-feature config at all, and the early return below
+  # would otherwise skip the fallback entirely. Found by the test that asserts the shared file is
+  # read, running with SHIP_FEATURE_CONFIG=/dev/null.
+  [ -f "$cfg" ] || { load_shared_panel_config; return 0; }
+  # `|| [ -n "$key$val" ]` so a file with NO FINAL NEWLINE does not lose its last line. Without
+  # it, `read` returns non-zero on that line and the loop exits before the case runs —
+  # pr-review-relay's parser reads it, so the SAME file would select different models in the two
+  # tools, which is the drift this whole change exists to remove.
+  while IFS='=' read -r key val || [ -n "$key$val" ]; do
     case "$key" in ''|\#*) continue;; esac
     key="$(printf '%s' "$key" | tr -d '[:space:]')"
     val="${val%%[[:space:]]#*}"                                                   # strip an inline "# comment"
@@ -53,7 +88,183 @@ load_config() {
       SHIP_FEATURE_DENYLIST) [ -n "${SHIP_FEATURE_DENYLIST+x}" ] || SHIP_FEATURE_DENYLIST="$val" ;;
       SHIP_FEATURE_REVIEWERS) [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || SHIP_FEATURE_REVIEWERS="$val" ;;
       SHIP_FEATURE_PLAN_REVIEWERS) [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || SHIP_FEATURE_PLAN_REVIEWERS="$val" ;;
-      SHIP_FEATURE_GEMINI_MODEL) [ -n "${SHIP_FEATURE_GEMINI_MODEL+x}" ] || SHIP_FEATURE_GEMINI_MODEL="$val" ;;
+      # NON-EMPTY (${VAR:-}), NOT ${VAR+x} like the keys above — and the difference matters.
+      # Those keys treat an explicitly empty value as a deliberate "disable"; a timeout has no such
+      # meaning, an empty one is just absent. With ${VAR+x} an exported `SHIP_FEATURE_PLAN_TIMEOUT=`
+      # would block THIS file while load_shared_panel_config, which tests non-empty, still filled
+      # from the shared AGENT_TIMEOUT — silently deleting this rung of the ladder.
+      #
+      # It was environment-only until now, alone among the SHIP_FEATURE_* keys, which is why writing
+      # it into this file did nothing at all. Demonstrated the hard way: the line was added here and
+      # the next plan review still ran on the old default.
+      # `export -n` for the same reason load_shared_panel_config does it, and the first draft of
+      # this change fixed that site and missed this one. A plain assignment does NOT clear an
+      # inherited export attribute, so a caller that exported the name — even empty — would have
+      # THIS file's value cross into the pr-review-relay child. Reproduced before fixing:
+      # `export SHIP_FEATURE_PLAN_TIMEOUT=` plus `SHIP_FEATURE_PLAN_TIMEOUT=420` in this file put
+      # `SF=420` in the child's environment. plan-review's budget is plan-review's alone.
+      SHIP_FEATURE_PLAN_TIMEOUT)
+        if [ -z "${SHIP_FEATURE_PLAN_TIMEOUT:-}" ]; then
+          export -n SHIP_FEATURE_PLAN_TIMEOUT 2>/dev/null || true
+          SHIP_FEATURE_PLAN_TIMEOUT="$val"
+        fi ;;
+      # The model pins. Same precedence as the keys above — the environment wins, the file
+      # fills in.
+      #
+      # These are the only keys here NOT named SHIP_FEATURE_*, and the names are not ours to
+      # change: CURSOR_REVIEW_MODEL and PR_RELAY_OPENCODE_MODEL are read by `pr-review-relay`
+      # as well, and one setting should configure both tools. That is also why they are
+      # EXPORTED rather than merely assigned — `relay` runs pr-review-relay as a CHILD process,
+      # and a plain shell variable does not cross that boundary.
+      #
+      # They were environment-only until now, which meant the panel was described in two
+      # places: who sits on it here, what they actually run in ~/.zshrc. One file says both
+      # now, so a seat and its model cannot drift apart — and a run with no shell profile (a
+      # cron job, a fresh machine) gets the same panel as an interactive one instead of
+      # silently falling back to a bundled default.
+      #
+      # NON-EMPTY (${VAR:-}), unlike the keys above: an explicitly empty SHIP_FEATURE_REVIEWERS
+      # means "disable", which is a real thing to want, but an empty model pin means nothing at
+      # all. Treating it as "defined" would let `CURSOR_REVIEW_MODEL=` block both this file and
+      # the shared one, leaving ship-feature on its built-in default while pr-review-relay used
+      # the configured value — the same inputs, two different models.
+      KIMI3_REVIEW_MODEL) [ -n "${KIMI3_REVIEW_MODEL:-}" ] || export KIMI3_REVIEW_MODEL="$val" ;;
+      CURSOR_REVIEW_MODEL) [ -n "${CURSOR_REVIEW_MODEL:-}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
+      GROK45HIGH_REVIEW_MODEL) [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
+      PR_RELAY_OPENCODE_MODEL) [ -n "${PR_RELAY_OPENCODE_MODEL:-}" ] || export PR_RELAY_OPENCODE_MODEL="$val" ;;
+      # The gemini seat's pins live in the SHIP_FEATURE_* namespace, NOT the vendor-shaped
+      # <SEAT>_REVIEW_MODEL shape of the pins above, and deliberately so. Those names are
+      # vendor-shaped for exactly one reason: `pr-review-relay` reads them from this same file.
+      # The relay has no gemini seat — its `antigravity` seat runs the `agy` binary and takes
+      # AGY_REVIEW_MODEL — so a vendor-shaped name here would buy nothing and would invite the two
+      # to be pinned as if they were one seat. They are not: different binaries, different accepted
+      # model ids. Same reason MODEL_grok and MODEL_grok45high stay apart.
+      # NON-EMPTY (${VAR:-}) like the model pins above, not ${VAR+x}: an empty model pin means
+      # nothing at all, so it must not count as "defined" and block the shared file.
+      SHIP_FEATURE_GEMINI_MODEL) [ -n "${SHIP_FEATURE_GEMINI_MODEL:-}" ] || SHIP_FEATURE_GEMINI_MODEL="$val" ;;
+      # The gemini-cli versions whose TOOL REGISTRY this seat has actually been audited against
+      # (see the version gate in plan_review_with). Non-empty semantics for the same reason: an
+      # empty list is not a way to say "allow everything", it is just absent, and the gate stays
+      # closed on the built-in default.
+      SHIP_FEATURE_GEMINI_TESTED_VERSIONS) [ -n "${SHIP_FEATURE_GEMINI_TESTED_VERSIONS:-}" ] || SHIP_FEATURE_GEMINI_TESTED_VERSIONS="$val" ;;
+    esac
+  done < "$cfg"
+
+  load_shared_panel_config
+}
+
+# The SHARED PANEL config: pr-review-relay's own file, read here as the LAST fallback — who sits on
+# the panel (REVIEWERS, PLAN_REVIEWERS), what each seat runs (MODEL_*), and how long each gets
+# (AGENT_TIMEOUT).
+#
+# Renamed from load_shared_model_pins: it stopped being only about model pins when REVIEWERS and
+# PLAN_REVIEWERS moved here, and a name that lies is how the next key ends up in a fourth place.
+#
+# Both tools review with the same seats on the same accounts, so which model a seat runs is a
+# property of the machine, not of the tool that happens to be invoking it. pr-review-relay
+# already keeps that in one place, keyed by SEAT name, and it has carried `MODEL_kimi3` since
+# 2026-08-14 with a comment saying it would take effect once ship-feature learned to read this
+# file. This is that.
+#
+# Keyed by seat means keyed by seat: the relay's `grok` seat and plan-review's `grok45high` seat
+# are DIFFERENT seats — same vendor, different effort — so `MODEL_grok` is not read here and
+# `MODEL_grok45high` is the key for this one. Mapping the relay's key onto this seat would
+# silently give a high-effort plan review the relay's medium-effort pin.
+#
+# Without it the pin lives in two files at once and they drift: whichever one you edit, the
+# other keeps its old value and nothing complains, because both are valid config.
+#
+# Precedence, lowest last: environment > ship-feature's own config > this file. It is called at
+# the END of load_config for exactly that reason — by the time it runs, every key it touches is
+# already set if either higher source provided one.
+#
+# `MODEL_opencode` is deliberately NOT mapped. That seat belongs to pr-review-relay, which reads
+# this file itself; exporting PR_RELAY_OPENCODE_MODEL from here would push an environment value
+# on top of the relay's own config and beat it, which is the opposite of consolidating.
+load_shared_panel_config() {
+  # ${HOME:-}, not $HOME: under `set -u` an unset HOME aborts the whole command, and a caller
+  # that sets both ship-feature paths explicitly has every right not to have one.
+  local cfg="${PR_RELAY_CONFIG:-${HOME:-}/.config/pr-review-relay/config}" key val
+  # LAST VALUE WINS within this file, as in pr-review-relay's own parser. Guarding only on "is it
+  # set" would keep the FIRST of two `REVIEWERS=` lines here while the relay kept the last — a
+  # valid file handing the two tools different panels, which is exactly what reading one file is
+  # meant to prevent. These flags say "a HIGHER source already provided this", which is the thing
+  # that must not be overwritten; a later line of this same file may.
+  local from_env_kimi3=1 from_env_cursor=1 from_env_grok=1 from_env_rev=1 from_env_plan=1 from_env_timeout=1
+  local from_env_gemini=1
+  [ -n "${KIMI3_REVIEW_MODEL:-}" ] || from_env_kimi3=0
+  [ -n "${CURSOR_REVIEW_MODEL:-}" ] || from_env_cursor=0
+  [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || from_env_grok=0
+  [ -n "${SHIP_FEATURE_GEMINI_MODEL:-}" ] || from_env_gemini=0
+  [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || from_env_rev=0
+  [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || from_env_plan=0
+  # BOTH names, because both sit ABOVE this file on the ladder: SHIP_FEATURE_PLAN_TIMEOUT (rungs 1-2)
+  # and PR_RELAY_AGENT_TIMEOUT (rung 3, the relay's own documented environment override). Guard on
+  # only the first and a machine exporting the second gets that value in pr-review-relay and this
+  # file's value here — the same inputs producing two different timeouts, which is the whole failure
+  # this mapping exists to remove.
+  [ -n "${SHIP_FEATURE_PLAN_TIMEOUT:-}" ] || [ -n "${PR_RELAY_AGENT_TIMEOUT:-}" ] || from_env_timeout=0
+  [ -f "$cfg" ] || return 0
+  while IFS='=' read -r key val || [ -n "$key$val" ]; do
+    # Strip a leading UTF-8 BOM, as pr-review-relay's own parser does (lib-panel.sh). Without it
+    # the first key of a BOM'd file reads as "\ufeffMODEL_kimi3" here and as "MODEL_kimi3" there:
+    # one file, two different models, which is the whole failure this change removes.
+    key="${key#$'\xef\xbb\xbf'}"
+    case "$key" in ''|\#*) continue;; esac
+    key="$(printf '%s' "$key" | tr -d '[:space:]')"
+    val="${val%%[[:space:]]#*}"                                                   # strip an inline "# comment"
+    val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"     # trim surrounding space
+    # NON-EMPTY here, not merely DEFINED. The SHIP_FEATURE_* keys use ${VAR+x} so that an
+    # explicitly empty value can DISABLE a setting on purpose; a model pin has no such meaning —
+    # an empty one is just absent. With ${VAR+x}, `CURSOR_REVIEW_MODEL=` would block this file and
+    # leave ship-feature on its built-in default while pr-review-relay used the shared value: the
+    # same inputs, two different models.
+    case "$key" in
+      MODEL_kimi3)      [ "$from_env_kimi3" = 1 ] || export KIMI3_REVIEW_MODEL="$val" ;;
+      MODEL_cursor)     [ "$from_env_cursor" = 1 ] || export CURSOR_REVIEW_MODEL="$val" ;;
+      MODEL_grok45high) [ "$from_env_grok" = 1 ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
+      # `MODEL_gemini`, not `MODEL_antigravity`. The relay already maps MODEL_antigravity onto its
+      # own agy seat; this one is the `gemini` binary. One key for two binaries would mean one of
+      # them silently getting a model id its CLI does not accept. NOT exported, unlike the pins
+      # above: nothing downstream reads it from the environment, and the isolated gemini child
+      # should inherit no name we did not deliberately put there.
+      MODEL_gemini)     [ "$from_env_gemini" = 1 ] || SHIP_FEATURE_GEMINI_MODEL="$val" ;;
+      # WHO sits on the panel, from the same file for the same reason the models are. These two
+      # were already duplicated across the two configs — identical today, free to drift tomorrow,
+      # with nothing to notice it because both files are valid. A panel that differs between the
+      # plan gate and the PR gate is the kind of difference you discover from a verdict.
+      #
+      # ${VAR+x} semantics here, unlike the model pins above: an explicitly empty
+      # SHIP_FEATURE_REVIEWERS means "no injected quorum" on purpose, and that has to survive a
+      # value in this file. (Captured in the flags above, before the loop.)
+      #
+      # NOT exported, unlike the model pins: the panel is passed to pr-review-relay as
+      # `--reviewers` ARGUMENTS, in-process. The pins have to cross into the child, these do not.
+      REVIEWERS)        [ "$from_env_rev" = 1 ] || SHIP_FEATURE_REVIEWERS="$val" ;;
+      PLAN_REVIEWERS)   [ "$from_env_plan" = 1 ] || SHIP_FEATURE_PLAN_REVIEWERS="$val" ;;
+      # HOW LONG a reviewer gets, from the same file for the same reason as WHO reviews and WHAT
+      # they run. pr-review-relay reads this key already; ship-feature did not, so `AGENT_TIMEOUT`
+      # in that file configured one tool of the two and every plan review silently kept the old
+      # default. That is not a loud failure — a timed-out reviewer exits 3 and says so — but the
+      # round returns no findings, and "no findings" reads exactly like a clean plan.
+      #
+      # Mapped onto SHIP_FEATURE_PLAN_TIMEOUT because that is the name the resolver at the top of
+      # cmd_plan_review actually reads; mapping it onto PR_RELAY_AGENT_TIMEOUT would put an
+      # environment value on top of the relay's own config, which MODEL_opencode below exists to
+      # warn against.
+      #
+      # A PLAIN ASSIGNMENT, never `export` — unlike the model pins, which have to cross into the
+      # pr-review-relay child. This must NOT: the relay reads this same file itself, and pushing a
+      # value at it would beat its own config.
+      #
+      # `export -n` first, because a plain assignment does NOT clear an inherited export attribute.
+      # A caller that exported the name (even empty) would otherwise have this resolved value cross
+      # into the child anyway, quietly defeating the line above.
+      AGENT_TIMEOUT)
+        if [ "$from_env_timeout" != 1 ]; then
+          export -n SHIP_FEATURE_PLAN_TIMEOUT 2>/dev/null || true
+          SHIP_FEATURE_PLAN_TIMEOUT="$val"
+        fi ;;
     esac
   done < "$cfg"
 }
@@ -157,7 +368,12 @@ cmd_relay() {
   local rc=$?
   # Workflow-policy reminder only (on stderr, so it never pollutes the forwarded stdout).
   case "$rc" in
-    0) echo "  → relay: every reviewer ran (exit 0). This is NOT approval — READ the verdicts and resolve every Blocker/Should-fix before merging." >&2 ;;
+    # NOT "every reviewer ran": a benched (out-of-quota) reviewer is dropped deliberately and the run
+    # still exits 0, so this message must not claim a full panel. And the loop rule is no longer
+    # "resolve every Should-fix" — only qualifying ones open a round. The tool telling the operator
+    # the old rule out-ranks any document, so it says the same thing WORKFLOW.md does — including
+    # UNDISPUTED, without which it would push agents into re-rounds on findings the rule sends to Gate 2.
+    0) echo "  → relay: every DISPATCHED reviewer ran (exit 0) — check the startup lines for a benched seat. NOT approval: READ the verdicts, resolve every Blocker and every UNDISPUTED qualifying Should-fix (correctness / safety / deployability / verification) — a disputed classification does not block the loop, it goes to Gate 2." >&2 ;;
     3) echo "  → relay: round not clean (exit 3) — do not trust these reviews, re-run." >&2 ;;
     4) echo "  → relay: round cap reached (exit 4) — stop and escalate to a human." >&2 ;;
   esac
@@ -174,37 +390,51 @@ cmd_relay() {
 # Supported reviewers are ONLY those that can be run genuinely read-only over the plan
 # text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
 # load either), codex (--sandbox read-only), cursor (--mode=ask,
-# Q&A), qwen (--approval-mode plan, its read-only mode that denies edit/write/shell, plus
-# --safe-mode to also block checkout config), and antigravity/gemini via the `gemini` CLI run
-# FAIL-CLOSED (see plan_review_with below): an isolated GEMINI_CLI_HOME + working dir with a locked
-# settings.json that hard-excludes the write tools, disables hooks, and loads no MCP — so NO user- or
-# checkout-scope config (mcpServers, hooks, tools.allowed) loads at all. This is the gemini analog of
-# claude/qwen `--safe-mode`. NOTE the deliberate overloading: in plan-review the reviewer name
-# `antigravity` (alias `agy`, `gemini`) maps to the `gemini` CLI — the only Gemini binary with a
-# read-only mode — whereas in `relay` `antigravity` maps to `agy`. TRADEOFF: because the run is fully
-# isolated, gemini reviews the PLAN TEXT ONLY and has no access to the checkout's files — deep codebase
-# fact-checking is the PR cross-review stage's job, not this cheap plan gate.
-# opencode is RELAY-ONLY here (it needs the file-attach path) — if listed it is skipped with a
-# warning, never run. That keeps the "read-only, nothing is written" guarantee true for the whole
-# set that actually runs.
+# Q&A, on a model pinned away from Cursor's Auto — see CURSOR_REVIEW_MODEL below),
+# kimi3 (Kimi K3 via opencode, model pinned away from the bundled default via
+# KIMI3_REVIEW_MODEL — see below — and pinned read-only by OPENCODE_CONFIG_CONTENT — opencode's
+# highest-precedence config layer — denying `edit`+`bash` so nothing can be written even via
+# shell, reading the checkout unless it carries its own opencode config, plus `--pure` and
+# `--agent plan`), and antigravity via the `gemini` CLI run FAIL-CLOSED (see plan_review_with):
+# an isolated GEMINI_CLI_HOME and workspace whose locked settings.json allowlists only read-only
+# tools, disables hooks and loads no MCP, so no user- or checkout-scope config contributes a write
+# tool. NOTE the deliberate overloading: in plan-review the reviewer name `antigravity` (aliases
+# `agy`, `gemini`) maps to the `gemini` CLI — the only Gemini binary with a genuine read-only mode —
+# whereas in `relay` `antigravity` maps to `agy`. TRADEOFF: because the run is fully isolated,
+# gemini reviews the PLAN TEXT ONLY and cannot read the checkout; deep codebase fact-checking is the
+# PR cross-review stage's job, not this cheap plan gate.
+# Bare `opencode` and bare `grok` are RELAY-ONLY here — a bare `opencode run` uses the all-allow
+# build agent — so if listed they are skipped with a warning, never run. That keeps the
+# "read-only, nothing is written" guarantee true for the whole set that actually runs.
 plan_tool_for() { case "$1" in
-  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; qwen) echo qwen;; antigravity) echo gemini;; *) echo "";; esac; }
-# Named but deliberately not run in plan-review (available in `relay`).
-plan_relay_only() { case "$1" in opencode) return 0;; *) return 1;; esac; }
+  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; kimi3) echo opencode;;
+  grok45high) echo grok;; antigravity) echo gemini;; *) echo "";; esac; }
+# Named but deliberately not run in plan-review (available in `relay`). Note: `kimi3` IS a
+# supported plan reviewer (read-only plan agent); only the bare `opencode` name is relay-only.
+# Bare `grok` is the PR-relay reviewer (medium effort in pr-review-relay); plan-review uses
+# `grok45high` (high effort). Listing bare `grok` here is skipped so a
+# SHIP_FEATURE_REVIEWERS fallback that includes `grok` does not fail the plan panel.
+# `antigravity`/`agy` are NO LONGER relay-only: they run here as the isolated `gemini` seat above.
+plan_relay_only() { case "$1" in opencode|grok) return 0;; *) return 1;; esac; }
 
 cmd_plan_review() {
   load_config
-  local reviewers="" file="" parallel=0 have_file=0 have_reviewers=0
+  # Parallel by default: the reviewers are independent, so sequencing them only serializes
+  # their timeouts. --sequential is the opt-out; --parallel is kept as a no-op so existing
+  # scripts and docs that pass it keep working.
+  local reviewers="" file="" parallel=1 have_file=0 have_reviewers=0
   while [ $# -gt 0 ]; do
     case "$1" in
       # Guard $2 so a trailing `--reviewers` (or one followed by a flag) is a clean usage
       # error, not a `set -u` unbound-variable crash.
-      --reviewers)   [ $# -ge 2 ] || die "--reviewers needs a list (e.g. --reviewers codex,qwen)."
+      --reviewers)   [ $# -ge 2 ] || die "--reviewers needs a list (e.g. --reviewers codex,kimi3)."
                      case "$2" in -*) die "--reviewers needs a list, got the flag '$2'.";; esac
                      reviewers="$2"; have_reviewers=1; shift 2;;
       --reviewers=*) die "pass reviewers as two tokens: --reviewers <list> (the --reviewers=... form isn't supported)." ;;
-      --parallel)    parallel=1; shift;;
-      -h|--help)     echo "usage: ship-feature plan-review [<plan-file>] [--reviewers a,b,c] [--parallel]"; return 0;;
+      --parallel)    parallel=1; shift;;   # already the default; accepted so old callers don't break
+      --sequential)  parallel=0; shift;;
+      -h|--help)     echo "usage: ship-feature plan-review [<plan-file>] [--reviewers a,b,c] [--sequential]"
+                     echo "       the panel runs in parallel by default (--parallel still accepted; last flag wins)"; return 0;;
       # Everything after `--` is positional — collect the plan file from there too, don't drop it.
       --)            shift; while [ $# -gt 0 ]; do [ "$have_file" = 0 ] || die "only one plan file may be given."; file="$1"; have_file=1; shift; done; break;;
       -)             [ "$have_file" = 0 ] || die "only one plan file may be given (got '$file' and '-')."; file="-"; have_file=1; shift;;   # '-' = read stdin
@@ -227,17 +457,29 @@ cmd_plan_review() {
     [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "plan file is empty: $file"
   else
     if [ ! -t 0 ]; then plan="$(cat)"; [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && src="(stdin)"; fi
-    if [ -z "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && [ -f plan.md ]; then plan="$(cat plan.md)"; src="plan.md"; fi
-    [ -n "$(printf '%s' "$plan" | tr -d '[:space:]')" ] || die "no plan given — pass a file, pipe it on stdin, or create a non-empty ./plan.md."
+    # `./plan.md` is still read when it is there — breaking existing setups to
+    # make a point would be worse than the point. But it is no longer SUGGESTED:
+    # the message names the durable directory instead, because a plan in the cwd
+    # is usually a plan in the repository, and always a plan a `rm -rf` of a
+    # worktree takes with it.
+    if [ -z "$(printf '%s' "$plan" | tr -d '[:space:]')" ] && [ -f plan.md ]; then
+      plan="$(cat plan.md)"; src="plan.md"
+      sf_ensure_plans_dir
+      printf '  ! reading ./plan.md — keep plans in %s instead (see WORKFLOW.md §1)\n' "$SF_PLANS_DIR" >&2
+    fi
+    if [ -z "$(printf '%s' "$plan" | tr -d '[:space:]')" ]; then
+      sf_ensure_plans_dir
+      die "no plan given — pass a file (keep it in $SF_PLANS_DIR) or pipe it on stdin."
+    fi
   fi
 
-  # Panel: --reviewers > SHIP_FEATURE_PLAN_REVIEWERS > SHIP_FEATURE_REVIEWERS > refuse. The resolved
-  # panel is your QUORUM: every named+supported reviewer is required (a missing CLI fails the round),
-  # so a review never silently passes on a thinned panel. opencode is the exception (relay-only).
+  # Panel: --reviewers > SHIP_FEATURE_REVIEWERS > refuse. The resolved panel is your
+  # QUORUM: every named+supported reviewer is required (a missing CLI fails the round),
+  # so a review never silently passes on a thinned panel. agy/opencode are the exception.
   # An explicit but empty `--reviewers ""` is a usage error, not a silent fall-through to
   # the env panel (which would surprise a user who meant to name a list).
   if [ "$have_reviewers" = 1 ]; then
-    [ -n "$reviewers" ] || die "--reviewers was empty — name at least one (e.g. --reviewers codex,qwen)."
+    [ -n "$reviewers" ] || die "--reviewers was empty — name at least one (e.g. --reviewers codex,kimi3)."
   else
     # Plan review can want a different (usually smaller) panel than the PR cross-review:
     # SHIP_FEATURE_PLAN_REVIEWERS is preferred, falling back to the shared quorum.
@@ -248,7 +490,16 @@ cmd_plan_review() {
   # Portable timeout: GNU `timeout`, else Homebrew `gtimeout`, else run WITHOUT a limit
   # (stock macOS ships neither) — a missing timeout must never break the reviewer.
   local TIMEOUT_BIN; TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
-  local timeout_s="${SHIP_FEATURE_PLAN_TIMEOUT:-${PR_RELAY_AGENT_TIMEOUT:-300}}"
+  # 500, matching pr-review-relay's own default. The panel runs reasoning models at high
+  # effort; 300 was tuned when it did not, and an ordinary plan no longer fits — grok45high
+  # timed out three times in one session on a plan whose only fault was being thorough.
+  #
+  # The ladder, highest first: this variable (environment, then ~/.config/ship-feature/config),
+  # then PR_RELAY_AGENT_TIMEOUT from the environment, then AGENT_TIMEOUT from
+  # ~/.config/pr-review-relay/config (mapped onto this name by load_shared_panel_config), then
+  # this literal. Rung 3 has to stay: without it a machine that exports PR_RELAY_AGENT_TIMEOUT
+  # gets that value in the relay and the shared file's value here — two tools, two timeouts.
+  local timeout_s="${SHIP_FEATURE_PLAN_TIMEOUT:-${PR_RELAY_AGENT_TIMEOUT:-500}}"
   # Reject non-digits AND values that are numerically zero ("0", "00", …): GNU
   # `timeout 0` DISABLES the timeout, the opposite of the intent. 10# forces base-10 so
   # a leading zero isn't read as octal.
@@ -261,9 +512,17 @@ cmd_plan_review() {
 Judge it for: wrong assumptions, stale or incorrect facts about the codebase, missing edge
 cases, unhandled failure modes, risky or out-of-order steps, and anything it overlooks.
 You have read-only access — do NOT write code or modify anything. Be concise. Group findings
-by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one line.')"
+by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one line.
+You can read ONLY the current checkout. A plan that cites another repository, a dashboard or
+an external service is not an invitation to go looking: those claims cannot be checked here,
+so say the claim is unverified and move on. Do not spend the review trying to reach them —
+a run that ends hunting for a file outside the checkout produces no review at all.
+BUDGET YOUR TIME: you are cut off after a few minutes, and a run that is still reading files
+when the clock stops delivers NOTHING — which is worse than a review with two claims left
+unchecked. Verify only what could change your verdict, then stop reading and write. If you
+have found something serious, write it down before you go looking for the next thing.')"
 
-  echo "▶ Plan review — reviewers: $reviewers${src:+ — plan: $src}$([ "$parallel" = 1 ] && printf ' — parallel')" >&2
+  echo "▶ Plan review — reviewers: $reviewers${src:+ — plan: $src}$([ "$parallel" = 1 ] || printf ' — sequential')" >&2
 
   # Per-reviewer state lives in files so it survives the subshells used under --parallel
   # (same technique as pr-review-relay). The EXIT trap removes the dir; the INT/TERM trap
@@ -273,10 +532,20 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # defence in depth on a shared machine, on top of the 0700 dir mktemp gives us. Not
   # restored: this is the CLI's terminal command, the process exits right after.
   umask 077
-  local STATUS_DIR; STATUS_DIR="$(mktemp -d)" || die "cannot create temp dir"
+  # NOT `local`. The trap body below is single-quoted, so "$STATUS_DIR" is expanded when the trap
+  # fires at EXIT — which happens after this function has already returned. A function-local would
+  # be gone by then, `set -u` (line 19) would abort the trap body on the unbound name, and `rm`
+  # would never run: the directory, holding every reviewer's buffered output, would survive every
+  # single run. It did, ~310 a day, until this was found.
+  STATUS_DIR="$(mktemp -d)" || die "cannot create temp dir"
+  # (`trap "rm -rf -- $(printf '%q' "$STATUS_DIR")" EXIT` would be quote-safe AND allow `local`
+  # again, removing the landmine above. Not taken: it trades a one-word fix for a subtler line, and
+  # the regression test in test-ship-feature.sh already turns a relapse into two loud failures.)
   # Single-quoted trap body, double-quoted var: evaluated safely at exit even if a path
-  # ever held a quote.
-  trap 'rm -rf "$STATUS_DIR"' EXIT
+  # ever held a quote. Baking the path in with a double-quoted body would work only while the path
+  # holds no single quote, which is exactly what this form was written to survive.
+  # `--` so a TMPDIR that legitimately starts with '-' cannot have its path parsed as options.
+  trap 'rm -rf -- "$STATUS_DIR"' EXIT
   # On interrupt, tear down the parallel reviewers so they don't keep burning credits.
   # kill_tree walks each backgrounded job's whole descendant tree (subshell → $() →
   # timeout → agent), which a group-kill can't reach because `timeout` re-groups its child.
@@ -287,50 +556,355 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   # Run a reviewer command under the timeout when one is available, else directly.
   run_reviewer() { if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$timeout_s" "$@"; else "$@"; fi; }
 
+  # Pin the Cursor reviewer's model. Left unset, cursor-agent falls back to whatever
+  # ~/.cursor/cli-config.json holds — typically "Auto", which routes to the frontier models and is
+  # free to pick a CLAUDE one. This command reviews a plan that Claude usually wrote, right before
+  # the human approves it: Claude grading its own plan while the panel labels it an independent
+  # "Cursor" reviewer defeats the point of the gate. (It also bills Cursor's small "Other Models"
+  # quota instead of the much larger Cursor-branded pool.) composer-2.5 is Cursor's own model:
+  # Cursor-pool, and not Claude, GPT, Codex or Grok, so every reviewer on the panel stays on the
+  # model its own vendor built and they keep failing differently from each other.
+  # Deliberately NOT named SHIP_FEATURE_*: it describes the user's Cursor account rather than this
+  # tool, pr-review-relay reads the same variable, and one setting should configure both. It is
+  # still read from the config file (load_config exports it there, so the child process sees it);
+  # the environment keeps winning over the file.
+  # `local` still reads the inherited/exported value on the RHS before the shadow takes effect, so
+  # the override survives and nothing leaks to global scope. It is safe here only because this
+  # variable is read inside the function and nowhere else; anything a trap expands must NOT be
+  # local, since traps fire once the function has already returned.
+  local CURSOR_REVIEW_MODEL="${CURSOR_REVIEW_MODEL:-composer-2.5}"
+
+  # Pin the kimi3 reviewer's model. Same override pattern as CURSOR_REVIEW_MODEL above: config
+  # file or environment, local so the override survives without leaking to global scope. Left
+  # unset in BOTH, it falls back to the bundled OpenCode Go tier — put
+  # KIMI3_REVIEW_MODEL=openrouter/<vendor>/<model> in the config file to route through a
+  # pay-as-you-go OpenRouter model instead. This seat is where Kimi K3 and GLM sit, and which
+  # one is better is a property of the code under review, not of the seat: GLM won a measured
+  # bake-off on a Kotlin diff, while Rails' own AI evals put Kimi K3 24 points ahead on Rails
+  # tasks. That is a line in a config file, which is the point of it being there.
+  local KIMI3_REVIEW_MODEL="${KIMI3_REVIEW_MODEL:-opencode-go/kimi-k3}"
+
+  # Pin the grok45high reviewer's model. Same override pattern as CURSOR_REVIEW_MODEL and
+  # KIMI3_REVIEW_MODEL above: config file or environment, local so the override survives without
+  # leaking to global scope. Defaults to grok-4.6 (xAI released it 2026-08-12); set
+  # GROK45HIGH_REVIEW_MODEL=grok-<version> in the config file to pin a different one without
+  # editing this script.
+  local GROK45HIGH_REVIEW_MODEL="${GROK45HIGH_REVIEW_MODEL:-grok-4.6}"
+
+  # Pin the gemini reviewer's model. The CLI's own built-in default is a retired model that 404s,
+  # so this is not merely a preference — left unpinned the seat does not run at all. Override with
+  # SHIP_FEATURE_GEMINI_MODEL (environment or config file) or MODEL_gemini in the shared panel file.
+  local GEMINI_MODEL="${SHIP_FEATURE_GEMINI_MODEL:-gemini-3.1-pro-preview}"
+  # This value reaches a command line as the argument to `-m`. It is user config, so reject a
+  # leading '-': otherwise `SHIP_FEATURE_GEMINI_MODEL=--yolo` is parsed by gemini as a FLAG rather
+  # than as a model name, and the seat's whole read-only premise turns on a config typo.
+  case "$GEMINI_MODEL" in -*) die "invalid SHIP_FEATURE_GEMINI_MODEL: '$GEMINI_MODEL' (must not start with '-').";; esac
+
+  # The gemini-cli releases whose TOOL REGISTRY this seat has been audited against. See the gate in
+  # the antigravity arm of plan_review_with for why a version pin is load-bearing here and not
+  # merely tidy. Major.minor, space- or comma-separated.
+  local GEMINI_TESTED="${SHIP_FEATURE_GEMINI_TESTED_VERSIONS:-0.26}"
+
+  # The locked, read-only settings the isolated gemini run loads (a single line so the heredoc-free
+  # printf stays Bash 3.2-safe).
+  #   - `tools.core` is an ALLOWLIST: of the tools gemini filters through it, ONLY these are enabled,
+  #     so a write/exec/network tool that a future release adds to that set is off by default.
+  #   - `tools.exclude` is an unconditional blocklist naming today's known write tools. It is NOT
+  #     redundant: gemini registers some tools OUTSIDE the core-tool filter — `delegate_to_agent` in
+  #     v0.26.0 — and for those the exclude list is the only thing standing in the way. That gap is
+  #     exactly why the version gate below exists; the two controls together are complete only for a
+  #     registry we have actually looked at.
+  #   - hooks off, and no MCP servers.
+  local GEMINI_LOCKED_SETTINGS='{"tools":{"core":["read_file","read_many_files","glob","search_file_content","list_directory"],"exclude":["run_shell_command","replace","write_file","web_fetch","google_web_search","save_memory","write_todos","delegate_to_agent"]},"hooksConfig":{"enabled":false},"mcpServers":{}}'
+
+  # Does the checkout carry its own opencode configuration?
+  #
+  # kimi3 reads the tree it reviews, which means the tree could otherwise reconfigure the
+  # reviewer — MCP servers, agents, model routing. Permissions are already pinned by
+  # OPENCODE_CONFIG_CONTENT and cannot be overridden, but nothing else is, and there is no
+  # permission key for "ignore this repo's config". So when one of these exists the seat
+  # degrades to an isolated empty dir instead.
+  #
+  # Prints the path of the first config found and returns 0; returns 1 when nothing is found.
+  #
+  # WALKS UP from $PWD, rather than checking one directory: plan-review is often run from a
+  # subdirectory and opencode discovers config by walking up, so a $PWD-only check would miss a
+  # config that opencode still loads. Stopping at the GIT ROOT is not enough either — this
+  # workflow's own worktrees live at <repo>/.claude/worktrees/<name>, which is its own git
+  # toplevel, so the main repo's opencode.json sits three levels up and outside that root.
+  #
+  # It STOPS AT $HOME, exclusive, and that bound is not a detail. `~/.opencode` exists on any
+  # machine that has run opencode, so walking to / matches the user's own data directory for
+  # every checkout under $HOME and degrades every review to prose. The distinction is whose
+  # config it is: the user's own configuration is how the seat gets a model at all and is
+  # trusted by construction; what must not configure the reviewer is the tree being REVIEWED.
+  # Both paths are RESOLVED before comparing. A raw string compare misses a $HOME with a
+  # trailing slash, and misses a symlinked $HOME against a physical $PWD — and the cost of
+  # missing is not a warning, it is `~/.opencode` matching and every review silently degrading
+  # to prose, which is the failure this bound exists to prevent.
+  kimi3_repo_config() {
+    local dir f home="" stop="" main=""
+    dir="$(cd "$PWD" 2>/dev/null && pwd -P)" || dir="$PWD"
+    [ -n "${HOME:-}" ] && home="$(cd "$HOME" 2>/dev/null && pwd -P)"
+    # opencode stops project-config discovery at the worktree root (1.18.18), so walking past it
+    # would degrade reviews over a config opencode never loads — and a needless prose-only review
+    # is the very failure this change exists to end. Bound the walk there.
+    stop="$(git rev-parse --show-toplevel 2>/dev/null && :)" || stop=""
+    [ -n "$stop" ] && stop="$(cd "$stop" 2>/dev/null && pwd -P)"
+    while :; do
+      { [ -n "$home" ] && [ "$dir" = "$home" ]; } && return 1
+      for f in opencode.json opencode.jsonc .opencode; do
+        if [ -e "$dir/$f" ]; then printf '%s' "${dir}/${f}"; return 0; fi
+      done
+      [ -n "$stop" ] && [ "$dir" = "$stop" ] && break
+      [ "$dir" = "/" ] && return 1
+      dir="$(dirname "$dir")"
+    done
+    # A LINKED worktree is its own toplevel, so the loop above never sees the main checkout —
+    # and this workflow puts every worktree at <repo>/.claude/worktrees/<name>, i.e. inside the
+    # repo whose config we are guarding against. Check that root explicitly rather than by
+    # walking, so the bound above stays honest.
+    main="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+    [ -n "$main" ] || return 1
+    main="$(cd "$(dirname "$main")" 2>/dev/null && pwd -P)" || return 1
+    [ "$main" = "$dir" ] && return 1
+    for f in opencode.json opencode.jsonc .opencode; do
+      if [ -e "$main/$f" ]; then printf '%s' "${main}/${f}"; return 0; fi
+    done
+    return 1
+  }
+
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
   # under --parallel neither the reviews nor the failure messages interleave; the caller
-  # emits them in panel order after the barrier. qwen runs `--approval-mode plan` — its
-  # genuine read-only mode that denies edit/write/shell — NOT `yolo` (which auto-approves
-  # those). `--safe-mode` additionally blocks any checkout config from loading.
-  # antigravity runs the `gemini` CLI FAIL-CLOSED. Default non-interactive mode alone is NOT enough —
-  # a checkout's (or the user's) `tools.allowed` can re-enable write tools, and hooks/MCP still load.
-  # So we run gemini with BOTH an isolated GEMINI_CLI_HOME and an isolated working dir set to the same
-  # locked directory, whose `.gemini/settings.json`:
-  #   - HARD-excludes the write tools via `tools.exclude` (an unconditional blocklist, unaffected by
-  #     any `tools.allowed`);
-  #   - disables hooks (`hooksConfig.enabled:false`, so no SessionStart shell);
-  #   - declares no MCP servers.
-  # gemini has FOUR settings scopes (user, workspace, system, system-defaults); the branch below points
-  # ALL of them at controlled files, so no scope — not the user's real ~/.gemini, not the checkout's
-  # .gemini, not /etc/gemini-cli nor an inherited GEMINI_CLI_SYSTEM_SETTINGS_PATH — contributes any
-  # mcpServers, hooks, or tools.allowed. That also closes the shallow-merge hole where a `mcpServers:{}`
-  # override would leave lower-scope MCP servers loaded (there simply are none). Plus `-e none`
-  # (extensions off) and default non-interactive mode. NOT `--approval-mode plan` (throws in v0.26.0
-  # unless `experimental.plan` is enabled). This is the gemini analog of claude/qwen `--safe-mode`. `-m`
-  # pins a model because the CLI's built-in default is a retired model that 404s (override via
-  # SHIP_FEATURE_GEMINI_MODEL). TRADEOFF: full isolation means gemini sees only the plan on stdin, not
-  # the checkout's files (deep codebase fact-checking is the PR cross-review's job).
-  local GEMINI_MODEL="${SHIP_FEATURE_GEMINI_MODEL:-gemini-3.1-pro-preview}"
-  # SHIP_FEATURE_GEMINI_MODEL is user config; reject a leading '-' so it can't be parsed as a gemini flag
-  # (e.g. `-m --dangerous`) instead of a model name.
-  case "$GEMINI_MODEL" in -*) die "invalid SHIP_FEATURE_GEMINI_MODEL: '$GEMINI_MODEL' (must not start with '-').";; esac
-  # The locked, read-only settings the isolated gemini run loads (single line so the heredoc-free printf
-  # stays Bash 3.2-safe). `tools.core` is an ALLOWLIST: gemini enables ONLY the tools named here, so any
-  # write/exec/network tool — including one a future gemini-cli adds or renames — is disabled by
-  # default (fail-CLOSED, not a denylist that a new tool could slip past). We allowlist just the
-  # read-only tools. `tools.exclude` additionally names today's known write tools as explicit
-  # defence-in-depth. hooks off + no MCP round it out.
-  local GEMINI_LOCKED_SETTINGS='{"tools":{"core":["read_file","read_many_files","glob","search_file_content","list_directory"],"exclude":["run_shell_command","replace","write_file","web_fetch","google_web_search","save_memory","write_todos","delegate_to_agent"]},"hooksConfig":{"enabled":false},"mcpServers":{}}'
+  # emits them in panel order after the barrier. kimi3 cannot modify your working tree: it pins
+  # read-only through OPENCODE_CONFIG_CONTENT (opencode's highest-precedence config layer, applied
+  # last so it wins over any merged global/project config) denying `edit`+`bash`, unsets any
+  # inherited OPENCODE_CONFIG* so a hostile env can't pre-seed "allow", and adds --pure +
+  # --agent plan. It reads the checkout (that is the point of a reviewer) unless the checkout
+  # carries its own opencode config, in which case it degrades to an isolated empty dir.
+  # Note: like every reviewer here, opencode still writes its own session data under its data
+  # dir — the guarantee is "your checkout is untouched", not "nothing touches disk".
   plan_review_with() {
-    local name="$1" out rc=0 errf key Name why
+    local name="$1" out rc=0 errf key Name why ro_cwd="" prompt_file expected_bytes actual_bytes body sandbox_hint="" sandbox_unenforced="" degraded_note="" repo_opencode_config=""
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
     Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
     case "$name" in
       claude) out=$(printf '%s' "$plan" | run_reviewer claude -p --permission-mode plan --safe-mode "$PROMPT" 2>"$errf"); rc=$?;;
       codex)  out=$(printf '%s' "$plan" | run_reviewer codex exec --sandbox read-only "$PROMPT" 2>"$errf"); rc=$?;;
-      cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask 2>"$errf"); rc=$?;;
-      qwen)   out=$(printf '%s' "$plan" | run_reviewer qwen --safe-mode --approval-mode plan -p "$PROMPT" 2>"$errf"); rc=$?;;
+      cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask --model "$CURSOR_REVIEW_MODEL" 2>"$errf"); rc=$?;;
+      kimi3)  # Pin read-only via OPENCODE_CONFIG_CONTENT — the HIGHEST-precedence config layer
+              # (it is applied last, so it wins over any merged global/project/OPENCODE_CONFIG value;
+              # verified: it overrides even a project opencode.json that sets edit/bash "allow").
+              # Denying `edit`+`bash` removes those tools entirely, so nothing can be written — not
+              # via a file edit, not via shell. We also unset any INHERITED OPENCODE_CONFIG* so a
+              # hostile environment can't pre-seed an "allow". `--pure` skips external plugins;
+              # `--agent plan` is defense in depth.
+              #
+              # RUNS IN THE CHECKOUT, like claude, codex, cursor and grok45high — and that is a
+              # change. It used to run in an empty dir outside any checkout, which made the seat
+              # useless in practice: with no tree to read, the model spends its turn hunting for
+              # the repo, hits `permission requested: external_directory (…); auto-rejecting`, and
+              # returns an empty review. Observed twice on 2026-08-14. A reviewer that cannot read
+              # the code cannot catch a stale line number or a claim the source contradicts, which
+              # is the entire reason for a panel.
+              #
+              # The isolation existed for one concrete reason: a repo's own opencode.json would be
+              # discovered from the cwd. That reason is kept, not dropped — when the checkout ships
+              # its own opencode config we fall back to the isolated empty dir and SAY SO in the
+              # panel output, exactly as grok45high degrades when its sandbox cannot be enforced.
+              # So the tree being reviewed can never reconfigure the reviewer reading it.
+              #
+              # Note the denial is belt and braces even in the checkout: the hostile-env test
+              # proves OPENCODE_CONFIG_CONTENT wins over a project config that sets edit/bash
+              # "allow". The fallback is about everything ELSE a repo config can carry (MCP
+              # servers, agents, model routing), which no permission key covers.
+              #
+              # Two more denials, both learned by watching the seat fail with a tree to read:
+              #
+              #   external_directory — a rejected external read is FATAL to the run, not a tool
+              #     that quietly returns nothing. Reviewing a plan that mentions another repo,
+              #     the model reached for it, got auto-rejected, and the whole review ended
+              #     there. Denying it up front (plus the prompt line telling reviewers that
+              #     cross-repo claims are simply unverifiable here) keeps the turn alive.
+              #   task — the plan agent can spawn parallel explore subagents, and it does. That
+              #     is how a review that was verifying real claims against real files still
+              #     produced nothing: it spent the whole per-reviewer budget in delegation and got cut off
+              #     mid-sweep. The cap is not negotiable, so the fan-out has to go.
+              #   lsp — a language server is a PROCESS the project starts, configured by the
+              #     project. Denying bash and edit while leaving this on means the checkout can
+              #     still run code; the seat's guarantee is that the reviewed tree executes
+              #     nothing, so it goes too.
+              #   webfetch + websearch — webfetch was "allow", and that was safe only while the
+              #     seat had nothing to read. A reviewer that can read the tree AND reach the
+              #     network is an exfiltration path the moment a file in that tree contains an
+              #     instruction: these repos carry committed keystores and cached secrets. Both
+              #     go, not just fetch — a search query carries content outward exactly as well
+              #     as a URL does, and the enforcement here lives in the permission layer, not
+              #     in the prompt asking nicely. The prompt tells reviewers not to chase
+              #     external claims anyway, so this costs nothing.
+              #
+              # Both keys are in opencode's PermissionConfig schema (bash, doom_loop, edit,
+              # external_directory, glob, grep, list, lsp, question, read, skill, task,
+              # todowrite, webfetch, websearch) — checked, not guessed, because an unknown key
+              # here would be ignored silently and the seat would keep failing the same way.
+              ro_cwd=""
+              if repo_opencode_config="$(kimi3_repo_config)"; then
+                # FAIL CLOSED. If the isolated dir cannot be created, the alternative is running
+                # in the very checkout whose config we just refused to load — while the note
+                # below tells the reader it was isolated. Skip the seat instead: a missing
+                # reviewer is visible, a lying one is not.
+                if ! ro_cwd="$(TMPDIR=/tmp mktemp -d 2>/dev/null || mktemp -d)" || [ -z "$ro_cwd" ]; then
+                  printf '  ! %s: %s found and no isolated cwd could be created — seat skipped\n' \
+                    "$name" "$repo_opencode_config" > "$STATUS_DIR/diag_$key"
+                  echo fail > "$STATUS_DIR/$key"; return 0
+                fi
+                degraded_note="! $repo_opencode_config would configure the reviewer — this review saw the plan text ONLY, not the code"
+              fi
+              out=$(cd "${ro_cwd:-$PWD}" \
+                    && unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR \
+                    && export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","task":"deny","lsp":"deny"}}' \
+                    && printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" \
+                       | run_reviewer opencode run --pure --agent plan -m "$KIMI3_REVIEW_MODEL" 2>"$errf"); rc=$?
+              [ -n "$ro_cwd" ] && rm -rf "$ro_cwd"
+              true;;
+      grok45high)
+              # Grok headless ignores stdin: plan goes in --prompt-file (kept in STATUS_DIR, never
+              # in the checkout, so it can't show up in anyone's `git status`).
+              #
+              # Runs in the CURRENT cwd — the checkout — exactly like claude, codex and cursor, so
+              # it can verify the plan's claims against the code instead of reviewing prose. That
+              # is the whole point of the panel: the reviewers that read the tree are the ones that
+              # catch a stale line number or a test the change would turn red. The trade-off is the
+              # same one those three already make: a checkout-scoped config (here `.grok`) is
+              # loaded, just as CLAUDE.md / AGENTS.md / .cursor are for the others.
+              #
+              # Read-only is enforced by an ALLOWLIST: `--tools` names the only BUILT-INS the
+              # session gets, which is what keeps out `run_terminal_command` (shell),
+              # `search_replace` (editor), `spawn_subagent` and `scheduler_*`. A denylist would
+              # have to enumerate every write path correctly, and an unknown name in
+              # `--tools`/`--deny` is accepted silently, so a typo there fails OPEN.
+              #
+              # `--disallowed-tools search_tool,use_tool` is NOT redundant: the MCP bridge
+              # survives the built-in allowlist. Verified — with `--tools read_file` alone the
+              # session still reports `search_tool` and `use_tool`, i.e. every MCP server
+              # configured on the machine stays reachable, including ones that write. With the
+              # two removed, the session reports exactly read_file/list_dir/grep.
+              #
+              # Residual risk, stated because there is no flag for it: a checkout can still
+              # contribute `.grok` config, hooks and plugins (`grok inspect` shows what a
+              # directory yields). Grok has no `--safe-mode` equivalent to suppress them. What
+              # remains is bounded by everything above — no shell tool, no MCP bridge, plan mode,
+              # OS sandbox — but "runs code from the tree it reviews" is the same bet the other
+              # in-checkout reviewers already make, not a guarantee we can make stronger here.
+              # --permission-mode plan overrides machine always-approve; --sandbox read-only
+              # is the OS write barrier (needs a working sandbox / bwrap on Linux). Note it can
+              # warn and continue unenforced if setup fails, so it is a layer, not the guarantee.
+              # High effort is the plan-review posture; PR relay uses bare `grok` (medium).
+              # PREVENTION, not just detection. Grok's own docs: a BUILT-IN profile that fails to
+              # apply "logs a warning and continues without enforcement" — and by the time that
+              # warning reaches us the checkout's hooks and plugins have already run. Discarding
+              # the review afterwards is a signal, not a barrier. So refuse to START when the OS
+              # barrier cannot be applied: on Linux that is bubblewrap plus unprivileged user
+              # namespaces; macOS Seatbelt is available on all versions.
+              # (Grok's fail-closed CUSTOM profiles live in ~/.grok/sandbox.toml or the
+              # checkout's .grok/sandbox.toml — one is the user's own config, the other is a file
+              # in someone else's repo. Neither is ours to write, hence this check instead.)
+              # When it cannot be enforced we DEGRADE rather than refuse: back to the isolated
+              # empty cwd with every tool denied — the posture this reviewer had before, which
+              # needs no sandbox because there is nothing to write and nothing to read. You get a
+              # text-only review (worse) instead of no review (worse still) or an unsandboxed one
+              # in your checkout (worst).
+              why=""
+              case "${SHIP_FEATURE_FORCE_SANDBOX_PROBE:-}" in   # test-only override
+                ok) ;;
+                fail) why="forced by SHIP_FEATURE_FORCE_SANDBOX_PROBE";;
+                *)
+                  if [ "$(uname -s)" = Linux ]; then
+                    command -v bwrap >/dev/null 2>&1 || why="bubblewrap (bwrap) not found"
+                    if [ -z "$why" ] && [ -r /proc/sys/kernel/unprivileged_userns_clone ] \
+                       && [ "$(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null)" = 0 ]; then
+                      why="unprivileged user namespaces are disabled"
+                    fi
+                  fi;;
+              esac
+              if [ -n "$why" ]; then
+                ro_cwd="$(mktemp -d "$STATUS_DIR/iso-grok45high.XXXXXX")" || {
+                  printf '  ! %s: cannot create isolated cwd (mktemp failed)\n' "$name" > "$STATUS_DIR/diag_$key"
+                  echo fail > "$STATUS_DIR/$key"; return 0
+                }
+                degraded_note="! read-only sandbox cannot be enforced ($why) — this review saw the plan text ONLY, not the checkout"
+              fi
+              prompt_file="$STATUS_DIR/prompt_grok45high_$$"
+              body="$(printf '%s\n\n--- PLAN ---\n~~~~plan\n%s\n~~~~\n--- END PLAN ---\n' "$PROMPT" "$plan")"
+              if ! printf '%s' "$body" > "$prompt_file"; then
+                printf '  ! %s: failed to write prompt-file\n' "$name" > "$STATUS_DIR/diag_$key"
+                echo fail > "$STATUS_DIR/$key"; return 0
+              fi
+              expected_bytes=$(printf '%s' "$body" | wc -c | tr -d ' ')
+              actual_bytes=$(wc -c < "$prompt_file" | tr -d ' ')
+              if [ -z "$actual_bytes" ] || [ "$actual_bytes" = 0 ] || [ "$actual_bytes" != "$expected_bytes" ]; then
+                printf '  ! %s: prompt-file write incomplete (expected %sB, got %sB)\n' \
+                  "$name" "$expected_bytes" "${actual_bytes:-0}" > "$STATUS_DIR/diag_$key"
+                echo fail > "$STATUS_DIR/$key"; [ -n "$ro_cwd" ] && rm -rf "$ro_cwd"; return 0
+              fi
+              if [ -n "$ro_cwd" ]; then      # degraded: isolated, no tools, no checkout
+                out=$(cd "$ro_cwd" \
+                      && run_reviewer grok \
+                           --prompt-file "$prompt_file" \
+                           --cwd "$ro_cwd" \
+                           -m "$GROK45HIGH_REVIEW_MODEL" \
+                           --reasoning-effort high \
+                           --permission-mode plan \
+                           --deny '*' \
+                           --verbatim \
+                           --no-memory \
+                           --no-subagents \
+                           --disable-web-search \
+                           --max-turns 40 \
+                           </dev/null 2>"$errf"); rc=$?
+                rm -rf "$ro_cwd"
+              else
+                out=$(run_reviewer grok \
+                         --prompt-file "$prompt_file" \
+                         -m "$GROK45HIGH_REVIEW_MODEL" \
+                         --reasoning-effort high \
+                         --permission-mode plan \
+                         --sandbox read-only \
+                         --tools read_file,list_dir,grep \
+                         --disallowed-tools search_tool,use_tool \
+                         --verbatim \
+                         --no-memory \
+                         --no-subagents \
+                         --disable-web-search \
+                         --max-turns 40 \
+                         </dev/null 2>"$errf"); rc=$?
+              fi
+              # Backstop to the pre-flight check above, for a sandbox that fails to apply for a
+              # reason we cannot probe. Checked regardless of the exit code — a sandbox complaint
+              # on stderr with a perfectly good review on stdout and exit 0 is exactly the silent
+              # fail-open shape, and gating this on `rc != 0` (as it once did) meant the one case
+              # worth catching was the one never inspected.
+              # Matched on FAILURE PHRASING, not on the bare words "sandbox"/"namespace": those
+              # appear in healthy logs too, and discarding a good review over the word "namespace"
+              # would train people to ignore this.
+              if [ -z "$ro_cwd" ] && [ -s "$errf" ] && grep -qiE 'continu(e|ing|es) (without enforcement|unsandboxed)|(sandbox|profile)[^.]{0,40}(could not|cannot|can'"'"'t|failed to) (be )?appl|failed to (set up|start|initiali[sz]e) (the )?sandbox|sandbox (is )?unavailable|running unsandboxed' "$errf" 2>/dev/null; then
+                sandbox_hint="  ! $name: sandbox unavailable (check bubblewrap / user namespaces)"
+                sandbox_unenforced=1
+              fi;;
       antigravity)
+        # FAIL-CLOSED VERSION GATE. The locked settings above are only as good as the tool registry
+        # they are written against: gemini registers some tools outside the `tools.core` filter, so
+        # for those the blocklist is the sole control, and a release that adds another one the same
+        # way would pass both controls unnoticed while this seat kept claiming it cannot write.
+        # There is no CLI call that dumps the active registry, so the honest control is to run only
+        # against a version whose registry someone has actually read, and to refuse otherwise.
+        # Widening the gate is a deliberate act: audit the new release's tools, then add its
+        # major.minor to SHIP_FEATURE_GEMINI_TESTED_VERSIONS.
+        local gver gmm gtested gver_ok=""
+        gver="$(gemini --version 2>/dev/null | tr -d '[:space:]')"
+        gmm="$(printf '%s' "$gver" | cut -d. -f1,2)"
+        gtested="$(printf '%s' "$GEMINI_TESTED" | tr ',' ' ')"
+        [ -n "$gver" ] && case " $gtested " in *" $gmm "*) gver_ok=1;; esac
         # Security-critical: if we can't create the locked settings, FAIL — never fall through to a
         # gemini run without the read-only config. Everything lives under STATUS_DIR (mktemp, 0700,
         # cleaned on exit), normally in $TMPDIR, outside any reviewed checkout. Use TWO sibling dirs:
@@ -340,10 +914,17 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
         # never reach the credentials in ghome — a malicious plan cannot make gemini disclose them.
         local giso="$STATUS_DIR/gemini_iso_$key" ghome gwork
         ghome="$giso/home"; gwork="$giso/work"
+        if [ -z "$gver_ok" ]; then
+          if [ -z "$gver" ]; then
+            echo "could not determine the gemini-cli version (is \`gemini\` on PATH?); refusing to run the seat unverified" > "$errf"
+          else
+            echo "gemini-cli $gver is outside the audited set ($gtested): its tool registry has not been reviewed for this seat. Audit the release's tools, then add $gmm to SHIP_FEATURE_GEMINI_TESTED_VERSIONS." > "$errf"
+          fi
+          rc=1; out=""
         # An empty `.gemini/.env` in the workspace (and home) stops gemini's ancestor `.env` search at
         # our controlled dir, so it can't pick up a hostile `/tmp/.env` (or any ancestor .env) that sets
         # CODE_ASSIST_ENDPOINT / a base-URL override and redirects auth or bearer tokens to an attacker.
-        if mkdir -p "$ghome/.gemini" "$gwork/.gemini" \
+        elif mkdir -p "$ghome/.gemini" "$gwork/.gemini" \
            && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$ghome/.gemini/settings.json" \
            && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$gwork/.gemini/settings.json" \
            && printf '%s' '{}' > "$ghome/.gemini/system-defaults.json" \
@@ -362,17 +943,18 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
           # write and are discarded on exit. `cp -L` DEREFERENCES: if the source cred is itself a symlink
           # we still get a real file (a plain `cp` would recreate the symlink and defeat this). A failed
           # copy just fails auth → fail-closed.
-          # Auth: an explicit environment method — GEMINI_API_KEY, GOOGLE_API_KEY, or Vertex
-          # (GOOGLE_GENAI_USE_VERTEXAI=true) — is the verified path; it rides the inherited env and needs
-          # nothing here. ONLY when NO such env auth is selected do we fall back to the user's OAuth: copy
-          # the real creds into ghome and opt in with GOOGLE_GENAI_USE_GCA=true (the locked settings drop
+          # Auth: an explicit environment method — GEMINI_API_KEY, or Vertex, which needs BOTH
+          # GOOGLE_GENAI_USE_VERTEXAI=true and its own credentials (GOOGLE_API_KEY alone selects
+          # nothing in v0.26.0) — is the verified path; it rides the inherited env and needs nothing
+          # here. ONLY when NO such env auth is selected do we fall back to the user's OAuth: copy the
+          # real creds into ghome and opt in with GOOGLE_GENAI_USE_GCA=true (the locked settings drop
           # the user's `security.auth.selectedType`, so non-interactive gemini would otherwise refuse
           # OAuth). Gating on "no env auth" matters because GCA takes precedence over an API key, so a
-          # stale ~/.gemini would otherwise break a valid GEMINI_API_KEY run.
+          # stale ~/.gemini would otherwise break an otherwise valid GEMINI_API_KEY run.
           local realhome="${HOME:-}" gca_env=""
           [ -n "$realhome" ] || realhome="$(cd ~ 2>/dev/null && pwd)"
           local env_auth=""
-          { [ -n "${GEMINI_API_KEY:-}" ] || [ -n "${GOOGLE_API_KEY:-}" ] || [ "${GOOGLE_GENAI_USE_VERTEXAI:-}" = "true" ]; } && env_auth=1
+          { [ -n "${GEMINI_API_KEY:-}" ] || [ "${GOOGLE_GENAI_USE_VERTEXAI:-}" = "true" ]; } && env_auth=1
           if [ -z "$env_auth" ] && [ -n "$realhome" ]; then
             local cf; for cf in oauth_creds.json google_accounts.json; do
               if [ -e "$realhome/.gemini/$cf" ]; then
@@ -399,17 +981,31 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
           echo "could not create the isolated read-only gemini settings" > "$errf"; rc=1; out=""
         fi;;
     esac
+    if [ -n "$sandbox_unenforced" ]; then
+      { printf '  ! %s: read-only sandbox was not enforced — review discarded\n' "$name"
+        printf '%s\n' "$sandbox_hint"
+        [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /'
+      } > "$STATUS_DIR/diag_$key"
+      echo fail > "$STATUS_DIR/$key"; return 0
+    fi
     if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
       why="exited with code $rc"
       case "$rc" in 0) why="ran but returned an empty review";; 124) why="timed out after ${timeout_s}s (raise SHIP_FEATURE_PLAN_TIMEOUT)";; 127) why="command not found";; esac
-      { printf '  ! %s: no review — %s\n' "$name" "$why"; [ "$rc" != 124 ] && [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /'; } > "$STATUS_DIR/diag_$key"
+      { printf '  ! %s: no review — %s\n' "$name" "$why"
+        [ -n "$sandbox_hint" ] && printf '%s\n' "$sandbox_hint"
+        [ "$rc" != 124 ] && [ -s "$errf" ] && tail -n 10 "$errf" | sed 's/^/    │ /'
+      } > "$STATUS_DIR/diag_$key"
       echo fail > "$STATUS_DIR/$key"; return 0
     fi
-    printf '\n========== %s (plan review) ==========\n%s\n=======================================\n' "$Name" "$out" > "$STATUS_DIR/out_$key"
+    { printf '\n========== %s (plan review) ==========\n' "$Name"
+      [ -n "$degraded_note" ] && printf '%s\n\n' "$degraded_note"
+      printf '%s\n=======================================\n' "$out"
+    } > "$STATUS_DIR/out_$key"
     if [ "$rc" -ne 0 ]; then
       # Name the timeout explicitly: a bare "exited with code 124" is opaque.
       if [ "$rc" = 124 ]; then printf '  ! %s: timed out after %ss — review may be truncated (not clean)\n' "$name" "$timeout_s" > "$STATUS_DIR/diag_$key"
       else printf '  ! %s: exited with code %s — review may be truncated (not clean)\n' "$name" "$rc" > "$STATUS_DIR/diag_$key"; fi
+      [ -n "$sandbox_hint" ] && printf '%s\n' "$sandbox_hint" >> "$STATUS_DIR/diag_$key"
       echo fail > "$STATUS_DIR/$key"
     else echo ok > "$STATUS_DIR/$key"; fi
   }
@@ -420,13 +1016,18 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
   local IFS_SAVE="$IFS"; set -f; IFS=','; set -- $reviewers; IFS="$IFS_SAVE"; set +f
   for r in "$@"; do
     r="$(printf '%s' "$r" | tr -d '[:space:]')"; [ -z "$r" ] && continue
-    # In plan-review, agy/gemini are aliases of the antigravity reviewer (all run the `gemini` CLI
-    # read-only); they collapse to one identity so the panel can't run Gemini twice.
+    # In plan-review, `agy` and `gemini` are aliases of the `antigravity` seat: all three run the
+    # `gemini` CLI, so they must collapse to ONE name or a panel naming two of them would run the
+    # same reviewer twice and call it a quorum.
     { [ "$r" = "agy" ] || [ "$r" = "gemini" ]; } && r=antigravity
     rk="$(skey "$r")"
     case " $seen " in *" $rk "*) continue;; esac
     seen="$seen $rk"
-    if plan_relay_only "$r"; then warn "$r is relay-only (no read-only mode / needs file-attach) — not run in plan-review; skipping."; continue; fi
+    if plan_relay_only "$r"; then
+      if [ "$r" = grok ]; then warn "grok is relay-only here — use grok45high for plan-review (high effort); skipping.";
+      else warn "$r is relay-only (no read-only mode / needs file-attach) — not run in plan-review; skipping."; fi
+      continue
+    fi
     tool="$(plan_tool_for "$r")"
     # A named reviewer that is unknown, or supported-but-not-installed, is a hard failure:
     # the panel is the quorum, so a review must not quietly pass with it missing.
@@ -464,10 +1065,10 @@ by severity: Blocker / Should-fix / Nit. If the plan is sound, say so in one lin
     if [ "$(cat "$f")" != ok ]; then failed=$((failed + 1)); names="$names ${f##*/k_}"; fi
   done
   if [ "$ran" = 0 ]; then
-    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, qwen, antigravity/gemini (opencode is relay-only). Pass --reviewers with a supported agent."
+    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, kimi3, grok45high, antigravity (aliases agy, gemini) — bare opencode and bare grok are relay-only. Pass --reviewers with a supported agent."
   fi
-  if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Fix and re-run." >&2; return 3; fi
-  echo "✔ Plan review done — $ran/$ran reviewer(s) responded. READ the findings and revise the plan before Gate 1." >&2
+  if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Re-run THIS ROUND. If the SAME reviewer fails a SECOND consecutive attempt, drop that one reviewer, proceed with the rest, and tell the human about the reduced panel before Gate 1 — do not keep retrying it." >&2; return 3; fi
+  echo "✔ Plan review done — $ran/$ran reviewer(s) responded (cap: 2 rounds, same full panel both times). READ the findings: no Blocker/plan-qualifying Should-fix → straight to Gate 1. Was this round 1 with a plan-qualifying finding → revise once and re-run. Was this round 2 with a plan-qualifying finding still open → do not run a round 3 on your own — write a disagreement summary (objection, classification, reason) and take it to Gate 1 instead." >&2
   return 0
 }
 
@@ -478,7 +1079,10 @@ main() {
     preflight)   cmd_preflight "$@" ;;
     relay)       cmd_relay "$@" ;;
     plan-review) cmd_plan_review "$@" ;;
-    help|-h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+    # Print the whole header comment block — from line 2 to the first line that is not a
+    # comment. A hardcoded end line silently truncates help the moment anyone documents a new
+    # flag up there, which is exactly how this broke once; the shebang is the only line skipped.
+    help|-h|--help) awk 'NR>1 { if ($0 !~ /^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//' ;;
     *) die "unknown command: $sub (try: ship-feature help)" ;;
   esac
 }
