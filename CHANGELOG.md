@@ -6,6 +6,8 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-08-27
+
 ### Added
 
 - **`antigravity` (aliases `agy`, `gemini`) is now a read-only reviewer in `ship-feature plan-review`.**
@@ -442,6 +444,7 @@ First release.
   and gitleaks. (`scan-personal-data.sh` needs a private deny-list, so it runs locally pre-publication,
   not in CI.)
 
+[0.5.0]: https://github.com/hamen/ship-feature/releases/tag/v0.5.0
 [0.4.0]: https://github.com/hamen/ship-feature/releases/tag/v0.4.0
 [0.3.0]: https://github.com/hamen/ship-feature/releases/tag/v0.3.0
 [0.2.0]: https://github.com/hamen/ship-feature/releases/tag/v0.2.0

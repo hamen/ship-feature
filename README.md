@@ -27,6 +27,29 @@ each driver agent (Claude, Codex, Cursor) gets a thin adapter that points at it,
 
 ## 🆕 What's new
 
+**v0.5.0** — **one file configures the whole panel, and the panel gains a Gemini seat.** The seats,
+their models and the per-reviewer timeout were spread across two config files that were free to
+disagree, and nothing complained when they did: `ship-feature` and `pr-review-relay` could run the
+same named seat on two different models, or the same round on two different clocks, from inputs that
+were each individually valid. `~/.config/pr-review-relay/config` is now the single place the panel is
+defined — `REVIEWERS`, `PLAN_REVIEWERS`, `MODEL_*` and `AGENT_TIMEOUT` are all read from it, with the
+environment and ship-feature's own config still winning above it. The timeout default moves to 500s,
+after a session lost three consecutive `grok45high` attempts to a 300s clock on a plan whose only
+fault was being thorough.
+
+**`antigravity`** (aliases `agy`, `gemini`) becomes a real plan reviewer rather than a name that was
+silently skipped, running the `gemini` CLI fail-closed: an isolated `GEMINI_CLI_HOME` and workspace
+with all four settings scopes redirected to controlled files, a locked `settings.json` that
+allowlists only read-only tools, hooks off and no MCP. Because that allowlist does not cover every
+tool gemini registers, the seat also **refuses to run against a gemini-cli whose tool registry has
+not been audited** — `SHIP_FEATURE_GEMINI_TESTED_VERSIONS`, matched exactly, so a patch release does
+not ride in on its neighbour. A panel that lists `antigravity` now requires the binary instead of
+thinning itself silently. `kimi3` gained read access to the checkout it reviews.
+
+Also fixed: the macOS CI job had been failing since 2026-08-15 on `grep: maximum repetition exceeds
+255` — BSD grep refusing an interval bound the adapter-consistency patterns used, reported as
+"missing from every adapter", which named the wrong cause and was invisible on Linux.
+
 **v0.4.0** — **the plan-review panel runs in parallel, and knows when to stop.** Reviewers are
 independent, so running them one after another only serialized their timeouts: a four-seat panel at a
 300s cap could sit for twenty minutes before printing a verdict, and one real session lost two seats
