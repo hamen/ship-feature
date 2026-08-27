@@ -103,6 +103,25 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Fixed
 
+- **The macOS CI job has been failing since 2026-08-15, for a reason that had nothing to do with the
+  code it was reporting on.** Four `sf_clause` adapter-consistency patterns used `.{0,300}` and
+  `.{0,400}`. BSD grep — which is what macOS runs — refuses an interval above 255 outright:
+  `grep: maximum repetition exceeds 255`, after which `grep -q` exits non-zero exactly as it would
+  for a genuine miss. So the suite reported those clauses as *missing from every adapter*, on macOS
+  only, while GNU grep on Linux matched them happily.
+
+  That is the worst shape a failure can take. It names the wrong cause — it sends the reader looking
+  for documentation drift that never happened — and it is invisible on the machine the tests get
+  written on. Eleven days of merges to `main` went in over a red macOS job.
+
+  The intervals are now concatenated (`.{0,200}.{0,200}`) rather than lowered, so the distance each
+  clause allows between its anchors is unchanged; these clauses exist to catch a rule going missing
+  from prose that is free to reflow, and narrowing the span would quietly weaken them.
+
+  A check enforces the cap on this file itself, so the rule cannot drift from the clauses it governs.
+  It skips comment lines, because the paragraph explaining the rule names the bad interval as its
+  example, and a guard that fails on its own description teaches people to delete the description.
+
 - **The `kimi3` plan-review seat reads the checkout it reviews.** It ran in an empty directory
   outside any checkout, so it had nothing to read: the model spent its turn hunting for the repo,
   hit an auto-rejected `external_directory` request, and returned an empty review. It now runs in
