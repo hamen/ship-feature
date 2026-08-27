@@ -6,28 +6,58 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- **The macOS CI job has been failing since 2026-08-15, for a reason that had nothing to do with the
-  code it was reporting on.** Four `sf_clause` adapter-consistency patterns used `.{0,300}` and
-  `.{0,400}`. BSD grep — which is what macOS runs — refuses an interval above 255 outright:
-  `grep: maximum repetition exceeds 255`, after which `grep -q` exits non-zero exactly as it would
-  for a genuine miss. So the suite reported those clauses as *missing from every adapter*, on macOS
-  only, while GNU grep on Linux matched them happily.
-
-  That is the worst shape a failure can take. It names the wrong cause — it sends the reader looking
-  for documentation drift that never happened — and it is invisible on the machine the tests get
-  written on. Eleven days of merges to `main` went in over a red macOS job.
-
-  The intervals are now concatenated (`.{0,200}.{0,200}`) rather than lowered, so the distance each
-  clause allows between its anchors is unchanged; these clauses exist to catch a rule going missing
-  from prose that is free to reflow, and narrowing the span would quietly weaken them.
-
-  A check enforces the cap on this file itself, so the rule cannot drift from the clauses it governs.
-  It skips comment lines, because the paragraph explaining the rule names the bad interval as its
-  example, and a guard that fails on its own description teaches people to delete the description.
+- **`antigravity` (aliases `agy`, `gemini`) is now a read-only reviewer in `ship-feature plan-review`.**
+  It runs the `gemini` CLI **fail-closed**: an isolated `GEMINI_CLI_HOME` **and** working dir with a
+  locked `.gemini/settings.json` that **allowlists only the read-only tools** via `tools.core`
+  (`read_file`, `read_many_files`, `glob`, `search_file_content`, `list_directory`), with
+  `tools.exclude` naming today's known write tools as extra defence-in-depth. It also disables hooks
+  (`hooksConfig.enabled:false`, so no `SessionStart` shell) and declares no MCP. All four gemini
+  settings scopes are redirected to controlled files (user via `GEMINI_CLI_HOME`, workspace via the
+  CWD, system + system-defaults via `GEMINI_CLI_SYSTEM_SETTINGS_PATH` /
+  `GEMINI_CLI_SYSTEM_DEFAULTS_PATH`), so **neither the user's real `~/.gemini`, nor a reviewed
+  checkout's `.gemini/`, nor `/etc/gemini-cli` contributes any `mcpServers`, hooks, or
+  `tools.allowed`** — closing the shallow-merge hole where a `mcpServers:{}` override would still leave
+  global MCP servers loaded. `GEMINI_CLI_HOME` and the workspace are **separate sibling dirs**, so the
+  copied OAuth creds live outside the workspace and the allowlisted `read_file` can't disclose them.
+  `XDG_CONFIG_HOME` is unset for the run, and a controlled empty `.gemini/.env` halts gemini's ancestor
+  `.env` walk (so a hostile `/tmp/.env` can't inject a `CODE_ASSIST_ENDPOINT` / base-URL override).
+  Auth: an explicit environment method — `GEMINI_API_KEY`, or Vertex, which needs **both**
+  `GOOGLE_GENAI_USE_VERTEXAI=true` and its own credentials — is preferred; only when none is set does it
+  fall back to the user's OAuth creds (copied in, with `GOOGLE_GENAI_USE_GCA=true`) so a stale
+  `~/.gemini` can't override a valid API key. Note that `GOOGLE_API_KEY` **alone** selects no auth
+  method in gemini-cli v0.26.0, so it is not treated as one. Default non-interactive mode and `-e none`
+  (extensions off) are layered on top. `--approval-mode plan` is **not** used: in gemini-cli v0.26.0 it
+  throws unless `experimental.plan` is enabled. **Tradeoff:** the isolated run sees only the plan text,
+  not the checkout's files (deep codebase fact-checking is the PR cross-review's job).
+- **A fail-closed version gate for that seat, via `SHIP_FEATURE_GEMINI_TESTED_VERSIONS`** (default
+  `0.26.0`). `tools.core` is an allowlist, but **not a universal one**: gemini-cli registers some tools
+  outside the core-tool filter — `delegate_to_agent` in v0.26.0 — and for those the `tools.exclude`
+  blocklist is the only control. A future release that registered another write-capable tool the same
+  way would pass both controls while the seat went on advertising a guarantee it no longer had. There
+  is no CLI call that dumps the active tool registry, so the seat now runs only against a gemini-cli
+  whose registry has actually been audited, and **fails the seat otherwise** rather than assuming.
+  The match is on the **exact** version, not major.minor: a patch release can add a tool as easily as
+  a minor one. The version is probed **inside the same isolation** the review runs in — `gemini
+  --version` is still gemini starting up, and probing it on the caller's environment would run the
+  very configuration this seat exists to neutralise, before the gate meant to guard it was evaluated.
+  Widening the gate is deliberate: audit the new release's tools, then add its exact version.
+- **`SHIP_FEATURE_GEMINI_MODEL`** (environment or `~/.config/ship-feature/config`), and **`MODEL_gemini`**
+  in the shared `~/.config/pr-review-relay/config`, pin the model for that reviewer. Default
+  `gemini-3.1-pro-preview`, because the CLI's own built-in default is a retired model that 404s. The
+  key is `MODEL_gemini`, not `MODEL_antigravity`: the relay already maps `MODEL_antigravity` onto its
+  own `agy` seat, and the two seats are different binaries that accept different model ids — the same
+  reason `MODEL_grok` and `MODEL_grok45high` stay apart.
 
 ### Changed
+
+- **`agy` is no longer relay-only in `plan-review`.** It (and `gemini`) now alias the read-only
+  `antigravity` reviewer above. Only bare `opencode` and bare `grok` remain relay-only.
+  **Behavior change:** a panel that lists `antigravity` now **requires** the `gemini` CLI at the plan
+  gate — where it used to be skipped with a warning, a missing `gemini` binary now **fails the quorum**
+  (exit `3`), so a review can't silently pass on a thinned panel.
+
 
 - **The per-reviewer timeout comes from the same file as the rest of the panel, and defaults to
   500s.** `AGENT_TIMEOUT` in `~/.config/pr-review-relay/config` was the one panel key ship-feature
@@ -73,6 +103,25 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Fixed
 
+- **The macOS CI job has been failing since 2026-08-15, for a reason that had nothing to do with the
+  code it was reporting on.** Four `sf_clause` adapter-consistency patterns used `.{0,300}` and
+  `.{0,400}`. BSD grep — which is what macOS runs — refuses an interval above 255 outright:
+  `grep: maximum repetition exceeds 255`, after which `grep -q` exits non-zero exactly as it would
+  for a genuine miss. So the suite reported those clauses as *missing from every adapter*, on macOS
+  only, while GNU grep on Linux matched them happily.
+
+  That is the worst shape a failure can take. It names the wrong cause — it sends the reader looking
+  for documentation drift that never happened — and it is invisible on the machine the tests get
+  written on. Eleven days of merges to `main` went in over a red macOS job.
+
+  The intervals are now concatenated (`.{0,200}.{0,200}`) rather than lowered, so the distance each
+  clause allows between its anchors is unchanged; these clauses exist to catch a rule going missing
+  from prose that is free to reflow, and narrowing the span would quietly weaken them.
+
+  A check enforces the cap on this file itself, so the rule cannot drift from the clauses it governs.
+  It skips comment lines, because the paragraph explaining the rule names the bad interval as its
+  example, and a guard that fails on its own description teaches people to delete the description.
+
 - **The `kimi3` plan-review seat reads the checkout it reviews.** It ran in an empty directory
   outside any checkout, so it had nothing to read: the model spent its turn hunting for the repo,
   hit an auto-rejected `external_directory` request, and returned an empty review. It now runs in
@@ -80,6 +129,18 @@ All notable changes to **ship-feature** are documented here. This project follow
   only when the checkout carries its own opencode config, so the tree being reviewed can never
   reconfigure the reviewer reading it. `external_directory`, `task`, `webfetch`, `websearch` and
   `lsp` are denied, and `OPENCODE_CONFIG_DIR` is unset alongside `OPENCODE_CONFIG`.
+
+### Notes
+
+- The `antigravity` name maps to two different binaries by command: the `gemini` CLI in `plan-review`
+  (the only Gemini binary with a read-only mode) and `agy` in `relay` (unchanged). The `plan-review`
+  isolation is stronger than a pure `--safe-mode`: it neutralizes both the reviewed *checkout's* config
+  and the user's own global `~/.gemini` (via `GEMINI_CLI_HOME`), at the cost of the reviewer not seeing
+  the checkout's files.
+- Because `tools.core` is an allowlist, a future gemini-cli release that adds a new read-only tool will
+  have it disabled until it is added to `GEMINI_LOCKED_SETTINGS` in `bin/ship-feature` — the safe
+  direction (a new *write* tool is disabled automatically; only new *read* conveniences need a manual
+  opt-in).
 
 ## [0.4.0] — 2026-08-13
 

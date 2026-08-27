@@ -63,8 +63,22 @@ layer — denying `edit`+`bash`, with inherited `OPENCODE_CONFIG*` unset, an iso
 and `--agent plan`), `grok45high` (Grok 4.6 high effort, model pinned to `$GROK45HIGH_REVIEW_MODEL` —
 default `grok-4.6` — via `grok --prompt-file`, running in your
 checkout with a read-only tool allowlist `--tools read_file,list_dir,grep`, the MCP bridge removed
-(`--disallowed-tools search_tool,use_tool`), `--permission-mode plan`, `--sandbox read-only`); `agy`, bare `opencode`, and bare `grok`
-are relay-only and skipped with a warning (use `grok45high` for plan review).
+(`--disallowed-tools search_tool,use_tool`), `--permission-mode plan`, `--sandbox read-only`), and `antigravity` (aliases `agy`, `gemini`) via the
+`gemini` CLI. The gemini run is fail-closed: an isolated `GEMINI_CLI_HOME` **and** working dir with a
+locked `.gemini/settings.json` that **allowlists only the read-only tools** via `tools.core`, names
+today's write tools in `tools.exclude` as defence-in-depth, disables hooks, and declares no MCP — so
+neither the user's real `~/.gemini` nor a reviewed checkout's `.gemini/` contributes any `mcpServers`,
+hooks, or `tools.allowed` (the gemini analog of claude's `--safe-mode`; default non-interactive mode
+plus `-e none` on top). Because `tools.core` does **not** filter every tool gemini registers, the seat
+also refuses to run against a gemini-cli whose tool registry has not been audited: only the exact
+versions in `SHIP_FEATURE_GEMINI_TESTED_VERSIONS` (default `0.26.0`) are accepted, and anything else fails
+the seat rather than trusting an unknown registry. Exact, not major.minor — a patch release can add a
+tool as easily as a minor one. The version is probed inside the same isolation the review runs in. Model pinned to `gemini-3.1-pro-preview`; override
+with `SHIP_FEATURE_GEMINI_MODEL` or `MODEL_gemini` in the shared panel file. **Tradeoff:** because the
+run is fully isolated, gemini reviews the plan text only — it has no access to the checkout's files
+(deep codebase fact-checking is the PR cross-review's job). The `antigravity` name maps to the `gemini`
+CLI **here** but to `agy` in `relay` — only `gemini` has a read-only mode. Bare `opencode` and bare
+`grok` are relay-only and skipped with a warning (use `grok45high` for plan review).
 
 Reviewers that run in the checkout — `claude`, `codex`, `cursor`, `grok45high` — can read the tree, so
 they check the plan against the code (a stale line number, a test the change would turn red). `kimi3`

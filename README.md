@@ -130,10 +130,23 @@ ship-feature skill for any feature/fix.
   your checkout like `claude`/`codex`/`cursor`, held read-only by a tool **allowlist**
   `--tools read_file,list_dir,grep`, with the MCP bridge removed explicitly
   (`--disallowed-tools search_tool,use_tool` — it survives the built-in allowlist), plus
-  `--permission-mode plan` and `--sandbox read-only`).
-  `--safe-mode` on claude also stops
-  any hooks/plugins/MCP in the checkout from loading. `agy`, bare `opencode`, and bare `grok` are
-  relay-only and skipped with a warning (agy has no read-only mode; a plain `opencode run` uses the
+  `--permission-mode plan` and `--sandbox read-only`),
+  and `antigravity` (aliases `agy`, `gemini`) via the `gemini` CLI, run **fail-closed**: an isolated
+  `GEMINI_CLI_HOME` and working dir with a locked `.gemini/settings.json` that allowlists only the
+  read-only tools via `tools.core`, names today's write tools in `tools.exclude` as defence-in-depth,
+  disables hooks, and declares no MCP — so neither the user's real `~/.gemini` nor a reviewed checkout's
+  `.gemini/` contributes any `mcpServers`, hooks, or `tools.allowed`. `tools.core` is an allowlist but
+  not a universal one — gemini registers some tools outside it — so the seat additionally **refuses to
+  run against an unaudited gemini-cli**: only the exact versions listed in
+  `SHIP_FEATURE_GEMINI_TESTED_VERSIONS` (default `0.26.0`) are accepted — a patch release can add a tool
+  as easily as a minor one — and the version is probed inside the same isolation the review runs in. Model pinned to
+  `gemini-3.1-pro-preview` (the CLI's own default is a retired model that 404s); override with
+  `SHIP_FEATURE_GEMINI_MODEL` or `MODEL_gemini` in the shared panel file. Tradeoff: the isolated run
+  sees only the plan text, not the checkout's files. The `antigravity` name maps to the `gemini` CLI
+  here but to `agy` in `relay` — only `gemini` has a read-only mode.
+  `--safe-mode` on claude also stops any hooks/plugins/MCP in the checkout from loading.
+  Bare `opencode` and bare `grok` are
+  relay-only and skipped with a warning (a plain `opencode run` uses the
   all-allow `build` agent — only the `kimi3` reviewer pins the read-only opencode `plan` agent; bare
   `grok` is the PR-relay name — use `grok45high` here). The
   panel is your quorum — a supported reviewer whose CLI is missing **fails** the round rather than

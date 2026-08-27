@@ -132,6 +132,21 @@ load_config() {
       CURSOR_REVIEW_MODEL) [ -n "${CURSOR_REVIEW_MODEL:-}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
       GROK45HIGH_REVIEW_MODEL) [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
       PR_RELAY_OPENCODE_MODEL) [ -n "${PR_RELAY_OPENCODE_MODEL:-}" ] || export PR_RELAY_OPENCODE_MODEL="$val" ;;
+      # The gemini seat's pins live in the SHIP_FEATURE_* namespace, NOT the vendor-shaped
+      # <SEAT>_REVIEW_MODEL shape of the pins above, and deliberately so. Those names are
+      # vendor-shaped for exactly one reason: `pr-review-relay` reads them from this same file.
+      # The relay has no gemini seat — its `antigravity` seat runs the `agy` binary and takes
+      # AGY_REVIEW_MODEL — so a vendor-shaped name here would buy nothing and would invite the two
+      # to be pinned as if they were one seat. They are not: different binaries, different accepted
+      # model ids. Same reason MODEL_grok and MODEL_grok45high stay apart.
+      # NON-EMPTY (${VAR:-}) like the model pins above, not ${VAR+x}: an empty model pin means
+      # nothing at all, so it must not count as "defined" and block the shared file.
+      SHIP_FEATURE_GEMINI_MODEL) [ -n "${SHIP_FEATURE_GEMINI_MODEL:-}" ] || SHIP_FEATURE_GEMINI_MODEL="$val" ;;
+      # The gemini-cli versions whose TOOL REGISTRY this seat has actually been audited against
+      # (see the version gate in plan_review_with). Non-empty semantics for the same reason: an
+      # empty list is not a way to say "allow everything", it is just absent, and the gate stays
+      # closed on the built-in default.
+      SHIP_FEATURE_GEMINI_TESTED_VERSIONS) [ -n "${SHIP_FEATURE_GEMINI_TESTED_VERSIONS:-}" ] || SHIP_FEATURE_GEMINI_TESTED_VERSIONS="$val" ;;
     esac
   done < "$cfg"
 
@@ -176,9 +191,11 @@ load_shared_panel_config() {
   # meant to prevent. These flags say "a HIGHER source already provided this", which is the thing
   # that must not be overwritten; a later line of this same file may.
   local from_env_kimi3=1 from_env_cursor=1 from_env_grok=1 from_env_rev=1 from_env_plan=1 from_env_timeout=1
+  local from_env_gemini=1
   [ -n "${KIMI3_REVIEW_MODEL:-}" ] || from_env_kimi3=0
   [ -n "${CURSOR_REVIEW_MODEL:-}" ] || from_env_cursor=0
   [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || from_env_grok=0
+  [ -n "${SHIP_FEATURE_GEMINI_MODEL:-}" ] || from_env_gemini=0
   [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || from_env_rev=0
   [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || from_env_plan=0
   # BOTH names, because both sit ABOVE this file on the ladder: SHIP_FEATURE_PLAN_TIMEOUT (rungs 1-2)
@@ -206,6 +223,12 @@ load_shared_panel_config() {
       MODEL_kimi3)      [ "$from_env_kimi3" = 1 ] || export KIMI3_REVIEW_MODEL="$val" ;;
       MODEL_cursor)     [ "$from_env_cursor" = 1 ] || export CURSOR_REVIEW_MODEL="$val" ;;
       MODEL_grok45high) [ "$from_env_grok" = 1 ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
+      # `MODEL_gemini`, not `MODEL_antigravity`. The relay already maps MODEL_antigravity onto its
+      # own agy seat; this one is the `gemini` binary. One key for two binaries would mean one of
+      # them silently getting a model id its CLI does not accept. NOT exported, unlike the pins
+      # above: nothing downstream reads it from the environment, and the isolated gemini child
+      # should inherit no name we did not deliberately put there.
+      MODEL_gemini)     [ "$from_env_gemini" = 1 ] || SHIP_FEATURE_GEMINI_MODEL="$val" ;;
       # WHO sits on the panel, from the same file for the same reason the models are. These two
       # were already duplicated across the two configs — identical today, free to drift tomorrow,
       # with nothing to notice it because both files are valid. A panel that differs between the
@@ -372,20 +395,27 @@ cmd_relay() {
 # KIMI3_REVIEW_MODEL — see below — and pinned read-only by OPENCODE_CONFIG_CONTENT — opencode's
 # highest-precedence config layer — denying `edit`+`bash` so nothing can be written even via
 # shell, reading the checkout unless it carries its own opencode config, plus `--pure` and
-# `--agent plan`). agy, bare `opencode`, and bare `grok`
-# name are RELAY-ONLY here — agy has no read-only mode (its relay flag disables ALL permissions)
-# and a bare `opencode run` uses the all-allow build agent — so if listed they are skipped
-# with a warning, never run. That keeps the "read-only, nothing is written" guarantee true
-# for the whole set that actually runs.
+# `--agent plan`), and antigravity via the `gemini` CLI run FAIL-CLOSED (see plan_review_with):
+# an isolated GEMINI_CLI_HOME and workspace whose locked settings.json allowlists only read-only
+# tools, disables hooks and loads no MCP, so no user- or checkout-scope config contributes a write
+# tool. NOTE the deliberate overloading: in plan-review the reviewer name `antigravity` (aliases
+# `agy`, `gemini`) maps to the `gemini` CLI — the only Gemini binary with a genuine read-only mode —
+# whereas in `relay` `antigravity` maps to `agy`. TRADEOFF: because the run is fully isolated,
+# gemini reviews the PLAN TEXT ONLY and cannot read the checkout; deep codebase fact-checking is the
+# PR cross-review stage's job, not this cheap plan gate.
+# Bare `opencode` and bare `grok` are RELAY-ONLY here — a bare `opencode run` uses the all-allow
+# build agent — so if listed they are skipped with a warning, never run. That keeps the
+# "read-only, nothing is written" guarantee true for the whole set that actually runs.
 plan_tool_for() { case "$1" in
   claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; kimi3) echo opencode;;
-  grok45high) echo grok;; *) echo "";; esac; }
+  grok45high) echo grok;; antigravity) echo gemini;; *) echo "";; esac; }
 # Named but deliberately not run in plan-review (available in `relay`). Note: `kimi3` IS a
 # supported plan reviewer (read-only plan agent); only the bare `opencode` name is relay-only.
 # Bare `grok` is the PR-relay reviewer (medium effort in pr-review-relay); plan-review uses
 # `grok45high` (high effort). Listing bare `grok` here is skipped so a
 # SHIP_FEATURE_REVIEWERS fallback that includes `grok` does not fail the plan panel.
-plan_relay_only() { case "$1" in opencode|antigravity|agy|grok) return 0;; *) return 1;; esac; }
+# `antigravity`/`agy` are NO LONGER relay-only: they run here as the isolated `gemini` seat above.
+plan_relay_only() { case "$1" in opencode|grok) return 0;; *) return 1;; esac; }
 
 cmd_plan_review() {
   load_config
@@ -560,6 +590,33 @@ have found something serious, write it down before you go looking for the next t
   # GROK45HIGH_REVIEW_MODEL=grok-<version> in the config file to pin a different one without
   # editing this script.
   local GROK45HIGH_REVIEW_MODEL="${GROK45HIGH_REVIEW_MODEL:-grok-4.6}"
+
+  # Pin the gemini reviewer's model. The CLI's own built-in default is a retired model that 404s,
+  # so this is not merely a preference — left unpinned the seat does not run at all. Override with
+  # SHIP_FEATURE_GEMINI_MODEL (environment or config file) or MODEL_gemini in the shared panel file.
+  local GEMINI_MODEL="${SHIP_FEATURE_GEMINI_MODEL:-gemini-3.1-pro-preview}"
+  # This value reaches a command line as the argument to `-m`. It is user config, so reject a
+  # leading '-': otherwise `SHIP_FEATURE_GEMINI_MODEL=--yolo` is parsed by gemini as a FLAG rather
+  # than as a model name, and the seat's whole read-only premise turns on a config typo.
+  case "$GEMINI_MODEL" in -*) die "invalid SHIP_FEATURE_GEMINI_MODEL: '$GEMINI_MODEL' (must not start with '-').";; esac
+
+  # The gemini-cli releases whose TOOL REGISTRY this seat has been audited against. See the gate in
+  # the antigravity arm of plan_review_with for why a version pin is load-bearing here and not
+  # merely tidy. EXACT versions, space- or comma-separated — a patch release can add a tool as
+  # easily as a minor one.
+  local GEMINI_TESTED="${SHIP_FEATURE_GEMINI_TESTED_VERSIONS:-0.26.0}"
+
+  # The locked, read-only settings the isolated gemini run loads (a single line so the heredoc-free
+  # printf stays Bash 3.2-safe).
+  #   - `tools.core` is an ALLOWLIST: of the tools gemini filters through it, ONLY these are enabled,
+  #     so a write/exec/network tool that a future release adds to that set is off by default.
+  #   - `tools.exclude` is an unconditional blocklist naming today's known write tools. It is NOT
+  #     redundant: gemini registers some tools OUTSIDE the core-tool filter — `delegate_to_agent` in
+  #     v0.26.0 — and for those the exclude list is the only thing standing in the way. That gap is
+  #     exactly why the version gate below exists; the two controls together are complete only for a
+  #     registry we have actually looked at.
+  #   - hooks off, and no MCP servers.
+  local GEMINI_LOCKED_SETTINGS='{"tools":{"core":["read_file","read_many_files","glob","search_file_content","list_directory"],"exclude":["run_shell_command","replace","write_file","web_fetch","google_web_search","save_memory","write_todos","delegate_to_agent"]},"hooksConfig":{"enabled":false},"mcpServers":{}}'
 
   # Does the checkout carry its own opencode configuration?
   #
@@ -835,6 +892,158 @@ have found something serious, write it down before you go looking for the next t
                 sandbox_hint="  ! $name: sandbox unavailable (check bubblewrap / user namespaces)"
                 sandbox_unenforced=1
               fi;;
+      antigravity)
+        # Everything lives under STATUS_DIR (mktemp, 0700, cleaned on exit), normally in $TMPDIR and
+        # outside any reviewed checkout. Two directories:
+        #   ghome = GEMINI_CLI_HOME (holds the copied OAuth creds)
+        #   gwork = the CWD / workspace
+        # They are kept apart so the allowlisted read_file tool, which gemini restricts to the
+        # workspace, does not have the credentials sitting in its own tree.
+        #
+        # Be precise about what that buys, because it is easy to overclaim: the control that keeps a
+        # malicious plan from reading the credentials is gemini's workspace confinement, and nothing
+        # here replaces it. Both directories must live inside STATUS_DIR — that is what gets cleaned
+        # up, and credentials outside it could outlive the run — so they share an ancestor, and a
+        # traversal that ignores confinement entirely reaches them whatever the layout. Keeping them
+        # in separate subtrees only means the creds are not adjacent to the reviewer's own directory.
+        # It is tidiness with a small safety margin, not a second line of defence.
+        local ghome gwork
+        ghome="$STATUS_DIR/gemini_home_$key/home"; gwork="$STATUS_DIR/gemini_work_$key/ws"
+        # All initialised: the script runs under set -u, and a path that skips the probe would
+        # otherwise reference an unset gver. Reachable only if the branch order ever changes, which
+        # is exactly the kind of thing that changes.
+        local gver="" gtested="" gver_ok="" giso_ok=""
+        # Security-critical: if we can't create the locked settings, FAIL — never fall through to a
+        # gemini run without the read-only config.
+        # An empty `.gemini/.env` in the workspace (and home) stops gemini's ancestor `.env` search at
+        # our controlled dir, so it can't pick up a hostile `/tmp/.env` (or any ancestor .env) that sets
+        # CODE_ASSIST_ENDPOINT / a base-URL override and redirects auth or bearer tokens to an attacker.
+        if mkdir -p "$ghome/.gemini" "$gwork/.gemini" \
+           && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$ghome/.gemini/settings.json" \
+           && printf '%s' "$GEMINI_LOCKED_SETTINGS" > "$gwork/.gemini/settings.json" \
+           && printf '%s' '{}' > "$ghome/.gemini/system-defaults.json" \
+           && : > "$ghome/.gemini/.env" && : > "$gwork/.gemini/.env"; then giso_ok=1; fi
+
+        # FAIL-CLOSED VERSION GATE. `tools.core` is an allowlist, but gemini registers some tools
+        # outside that filter, and for those the blocklist is the sole control: a release that adds
+        # another one the same way passes both while this seat keeps claiming it cannot write. No CLI
+        # call dumps the active registry, so the only honest control is to run exclusively against a
+        # version whose registry someone has actually read, and to refuse otherwise.
+        #
+        # The probe runs INSIDE the same isolation as the review. `gemini --version` is still gemini
+        # starting up, and if a release loads user or checkout configuration on that path — hooks, an
+        # MCP server — then probing on the caller's environment would execute exactly the config this
+        # seat exists to neutralise, before the gate it is meant to guard has even been evaluated.
+        #
+        # The match is on the FULL version, not major.minor. A patch release can add a tool as easily
+        # as a minor one, and "0.26.x is close enough to the 0.26.0 we audited" is precisely the
+        # assumption this gate exists to refuse. Widening it is deliberate: audit the release, then
+        # add its exact version to SHIP_FEATURE_GEMINI_TESTED_VERSIONS.
+        if [ -n "$giso_ok" ]; then
+          # Parse the first digits.digits(.digits) token, greedily, rather than trusting the whole
+          # line: a CLI may print a banner around its version ("gemini-cli version 0.26.0 (abc123)").
+          # This gate fails CLOSED, so a fragile parse does not leak — it refuses a binary that was in
+          # fact audited, and blames the gate for it.
+          # Under run_reviewer, like the review itself: a probe is a gemini start-up too, and an
+          # unwrapped one can hang on network or auth with nothing to stop it — outside the
+          # per-reviewer timeout, so the whole panel waits on a seat that never reports.
+          gver="$( cd "$gwork" && run_reviewer env \
+                     -u XDG_CONFIG_HOME -u GOOGLE_GENAI_USE_GCA \
+                     -u CODE_ASSIST_ENDPOINT -u GEMINI_BASE_URL -u GOOGLE_GEMINI_BASE_URL \
+                     GEMINI_CLI_HOME="$ghome" \
+                     GEMINI_CLI_SYSTEM_SETTINGS_PATH="$ghome/.gemini/settings.json" \
+                     GEMINI_CLI_SYSTEM_DEFAULTS_PATH="$ghome/.gemini/system-defaults.json" \
+                     gemini -e none --version 2>&1 | grep -oE '[0-9]+(\.[0-9]+){1,2}' | head -n 1 )"
+          gtested="$(printf '%s' "$GEMINI_TESTED" | tr ',' ' ')"
+          if [ -n "$gver" ]; then case " $gtested " in *" $gver "*) gver_ok=1;; esac; fi
+        fi
+
+        if [ -z "$giso_ok" ]; then
+          echo "could not create the isolated read-only gemini settings" > "$errf"; rc=1; out=""
+        elif [ -z "$gver_ok" ]; then
+          if [ -z "$gver" ]; then
+            echo "could not determine the gemini-cli version (is \`gemini\` on PATH?); refusing to run the seat unverified" > "$errf"
+          else
+            echo "gemini-cli $gver is outside the audited set ($gtested): its tool registry has not been reviewed for this seat. Audit that release's tools, then add $gver to SHIP_FEATURE_GEMINI_TESTED_VERSIONS." > "$errf"
+          fi
+          rc=1; out=""
+        else
+          # Lock EVERY gemini settings scope to controlled files so no hostile config (user, workspace,
+          # OR system — /etc/gemini-cli or an inherited GEMINI_CLI_SYSTEM_SETTINGS_PATH) can re-enable a
+          # write tool, hook, or MCP server:
+          #   - GEMINI_CLI_HOME=$ghome   → USER scope reads $ghome/.gemini/settings.json (locked);
+          #   - cd $gwork                → WORKSPACE scope reads $gwork/.gemini/settings.json (locked);
+          #   - SYSTEM_SETTINGS_PATH     → SYSTEM scope (highest precedence) is the locked file;
+          #   - SYSTEM_DEFAULTS_PATH     → SYSTEM-DEFAULTS scope is an empty {}.
+          # GEMINI_CLI_HOME also moves where gemini looks for OAuth creds, so COPY the real ones into
+          # ghome (GEMINI_API_KEY-based auth needs nothing — it rides the inherited env). COPY, not
+          # symlink: a symlink would let gemini's internal token-refresh writeFile follow it and mutate
+          # the user's REAL ~/.gemini creds; the copies (0600 under the 0700 temp dir) absorb any refresh
+          # write and are discarded on exit. `cp -L` DEREFERENCES: if the source cred is itself a symlink
+          # we still get a real file (a plain `cp` would recreate the symlink and defeat this). A failed
+          # copy just fails auth → fail-closed.
+          # Auth: an explicit environment method — GEMINI_API_KEY, or Vertex, which needs BOTH
+          # GOOGLE_GENAI_USE_VERTEXAI=true and its own credentials (GOOGLE_API_KEY alone selects
+          # nothing in v0.26.0) — is the verified path; it rides the inherited env and needs nothing
+          # here. ONLY when NO such env auth is selected do we fall back to the user's OAuth: copy the
+          # real creds into ghome and opt in with GOOGLE_GENAI_USE_GCA=true (the locked settings drop
+          # the user's `security.auth.selectedType`, so non-interactive gemini would otherwise refuse
+          # OAuth). Gating on "no env auth" matters because GCA takes precedence over an API key, so a
+          # stale ~/.gemini would otherwise break an otherwise valid GEMINI_API_KEY run. An
+          # INHERITED GOOGLE_GENAI_USE_GCA is dropped for the child (see the `-u` below) rather than
+          # honoured: gemini gives GCA priority over both an API key and Vertex, and the branch below
+          # deliberately does not copy credentials when env auth is selected — so an exported GCA
+          # would win the auth race and then have nothing to authenticate with. `env` applies -u
+          # before NAME=value, so opting in below still works.
+          local realhome="${HOME:-}" gca_env=""
+          [ -n "$realhome" ] || realhome="$(cd ~ 2>/dev/null && pwd)"
+          # Vertex counts as SELECTED only when the flag is accompanied by credentials it can
+          # actually use. The flag alone is a common leftover in a shell profile, and treating it as
+          # auth suppressed the OAuth fallback and left the run with nothing — the same failure the
+          # GOOGLE_API_KEY change fixed, arriving by a different door. ADC counts, as does an API key
+          # (Vertex express mode accepts one) and an explicit service-account file.
+          local env_auth="" vertex_ok=""
+          if [ "${GOOGLE_GENAI_USE_VERTEXAI:-}" = "true" ]; then
+            { [ -n "${GOOGLE_API_KEY:-}" ] || [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] \
+              || { [ -n "$realhome" ] && [ -e "${CLOUDSDK_CONFIG:-$realhome/.config/gcloud}/application_default_credentials.json" ]; }; } && vertex_ok=1
+          fi
+          { [ -n "${GEMINI_API_KEY:-}" ] || [ -n "$vertex_ok" ]; } && env_auth=1
+          if [ -z "$env_auth" ] && [ -n "$realhome" ]; then
+            local cf; for cf in oauth_creds.json google_accounts.json; do
+              if [ -e "$realhome/.gemini/$cf" ]; then
+                # Warn (into $errf, surfaced if the reviewer then fails) when a real cred exists but can't
+                # be copied — otherwise an OAuth user just sees an opaque auth failure.
+                if cp -L "$realhome/.gemini/$cf" "$ghome/.gemini/$cf" 2>/dev/null; then
+                  if chmod 600 "$ghome/.gemini/$cf" 2>/dev/null; then
+                    gca_env="GOOGLE_GENAI_USE_GCA=true"
+                  else
+                    # Copy succeeded, tightening did not. Removing it is the only fail-closed move:
+                    # skipping the GCA opt-in alone would leave a credential in the sandbox at the
+                    # source's mode, unused — all of the exposure, none of the benefit.
+                    rm -f "$ghome/.gemini/$cf" 2>/dev/null
+                    echo "warning: copied ~/.gemini/$cf into the isolated home but could not chmod it; the copy was removed and OAuth auth may fail (set GEMINI_API_KEY instead)" >> "$errf"
+                  fi
+                else
+                  echo "warning: could not copy ~/.gemini/$cf into the isolated home; OAuth auth may fail (set GEMINI_API_KEY instead)" >> "$errf"
+                fi
+              fi
+            done
+          fi
+          # $errf is absolute, so the redirect survives the cd.
+          # -u XDG_CONFIG_HOME: defence-in-depth in case a future gemini honors an XDG config path.
+          out=$( cd "$gwork" && printf '%s' "$plan" | run_reviewer env \
+                   -u XDG_CONFIG_HOME \
+                   -u GOOGLE_GENAI_USE_GCA \
+                   -u CODE_ASSIST_ENDPOINT -u GEMINI_BASE_URL -u GOOGLE_GEMINI_BASE_URL \
+                   ${gca_env:+"$gca_env"} \
+                   GEMINI_CLI_HOME="$ghome" \
+                   GEMINI_CLI_SYSTEM_SETTINGS_PATH="$ghome/.gemini/settings.json" \
+                   GEMINI_CLI_SYSTEM_DEFAULTS_PATH="$ghome/.gemini/system-defaults.json" \
+                   gemini -e none -m "$GEMINI_MODEL" -p "$PROMPT" 2>>"$errf" ); rc=$?
+          # APPEND, not truncate. The cred-copy warning above is already in $errf at this point, and
+          # '>' would erase it just as the failure it explains is about to be reported. $errf is
+          # created fresh per reviewer under STATUS_DIR, so there is no stale content to inherit.
+        fi;;
     esac
     if [ -n "$sandbox_unenforced" ]; then
       { printf '  ! %s: read-only sandbox was not enforced — review discarded\n' "$name"
@@ -871,7 +1080,10 @@ have found something serious, write it down before you go looking for the next t
   local IFS_SAVE="$IFS"; set -f; IFS=','; set -- $reviewers; IFS="$IFS_SAVE"; set +f
   for r in "$@"; do
     r="$(printf '%s' "$r" | tr -d '[:space:]')"; [ -z "$r" ] && continue
-    [ "$r" = "agy" ] && r=antigravity
+    # In plan-review, `agy` and `gemini` are aliases of the `antigravity` seat: all three run the
+    # `gemini` CLI, so they must collapse to ONE name or a panel naming two of them would run the
+    # same reviewer twice and call it a quorum.
+    { [ "$r" = "agy" ] || [ "$r" = "gemini" ]; } && r=antigravity
     rk="$(skey "$r")"
     case " $seen " in *" $rk "*) continue;; esac
     seen="$seen $rk"
@@ -917,7 +1129,7 @@ have found something serious, write it down before you go looking for the next t
     if [ "$(cat "$f")" != ok ]; then failed=$((failed + 1)); names="$names ${f##*/k_}"; fi
   done
   if [ "$ran" = 0 ]; then
-    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, kimi3, grok45high (agy, bare opencode, and bare grok are relay-only). Pass --reviewers with a supported agent."
+    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, kimi3, grok45high, antigravity (aliases agy, gemini) — bare opencode and bare grok are relay-only. Pass --reviewers with a supported agent."
   fi
   if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Re-run THIS ROUND. If the SAME reviewer fails a SECOND consecutive attempt, drop that one reviewer, proceed with the rest, and tell the human about the reduced panel before Gate 1 — do not keep retrying it." >&2; return 3; fi
   echo "✔ Plan review done — $ran/$ran reviewer(s) responded (cap: 2 rounds, same full panel both times). READ the findings: no Blocker/plan-qualifying Should-fix → straight to Gate 1. Was this round 1 with a plan-qualifying finding → revise once and re-run. Was this round 2 with a plan-qualifying finding still open → do not run a round 3 on your own — write a disagreement summary (objection, classification, reason) and take it to Gate 1 instead." >&2

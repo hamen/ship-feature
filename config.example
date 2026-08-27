@@ -27,7 +27,31 @@ SHIP_FEATURE_EXCLUDE_MARKER=.claude/
 # Optional: a DIFFERENT (usually smaller) default panel for `ship-feature plan-review` — the cheap
 # read-only plan gate often wants fewer reviewers than the full PR cross-review. Falls back to
 # SHIP_FEATURE_REVIEWERS when unset. Override per-run with `--reviewers`.
-# SHIP_FEATURE_PLAN_REVIEWERS=claude,codex
+# `antigravity` (aliases: agy, gemini) is a supported read-only plan reviewer too — it runs the `gemini`
+# CLI. (In `relay`, `antigravity` still runs `agy`; only `gemini` has a read-only mode for the plan gate.)
+# SHIP_FEATURE_PLAN_REVIEWERS=claude,codex,antigravity
+
+# Model for the antigravity/gemini plan reviewer (the `gemini` CLI). Default gemini-3.1-pro-preview,
+# because the CLI's own built-in default is a retired model that 404s. Env wins over this file, and
+# MODEL_gemini in pr-review-relay's config is the last fallback (see the model pins below).
+# SHIP_FEATURE_GEMINI_MODEL=gemini-3.1-pro-preview
+
+# The gemini-cli releases whose TOOL REGISTRY the antigravity seat has been audited against, as
+# EXACT versions, space- or comma-separated. Default 0.26.0.
+#
+# This is a security tripwire, not a compatibility hint. The seat locks gemini down with a
+# `tools.core` ALLOWLIST, but that filter does not cover every tool gemini registers —
+# `delegate_to_agent` in v0.26.0 sits outside it and is stopped only by the `tools.exclude`
+# blocklist. A future release that registered another write-capable tool the same way would pass
+# both controls, and the seat would go on advertising a read-only guarantee it no longer had.
+# There is no gemini command that dumps the active tool registry, so the seat refuses to run
+# against a version nobody has looked at, rather than assuming.
+#
+# The match is EXACT, deliberately. A patch release can add a tool outside `tools.core` as easily as
+# a minor one, so "0.26.1 is close enough to the 0.26.0 we read" is the assumption this gate exists to
+# refuse. Every gemini update, patch releases included, fails this seat until someone audits the new
+# release's tools and lists it here. That is the intended cost. Do not widen it to silence a failure.
+# SHIP_FEATURE_GEMINI_TESTED_VERSIONS=0.26.0
 
 # Path to a PRIVATE, newline-delimited deny-list for scripts/scan-personal-data.sh. Each line is a
 # literal string that must NEVER appear in the public repo (real project slugs, bundle-id prefixes,
@@ -51,8 +75,8 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # ---------------------------------------------------------------------------------------------
 # The model pins. Three sources, highest first: the environment, THIS file, and finally
 # pr-review-relay's own config (~/.config/pr-review-relay/config, or $PR_RELAY_CONFIG),
-# whose seat-named keys MODEL_kimi3 / MODEL_cursor / MODEL_grok45high are read as the last
-# fallback.
+# whose seat-named keys MODEL_kimi3 / MODEL_cursor / MODEL_grok45high / MODEL_gemini are read as
+# the last fallback.
 #
 # That last source is where a pin normally belongs: both tools drive the same seats on the same
 # accounts, so which model a seat runs is a property of the machine, not of whichever tool is
@@ -61,6 +85,13 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 #
 # MODEL_opencode is NOT read here: that seat is pr-review-relay's own, and the relay reads it
 # from its own file.
+#
+# MODEL_gemini, NOT MODEL_antigravity, is the key for the gemini plan-review seat. The relay already
+# maps MODEL_antigravity onto its own `antigravity` seat, which runs the `agy` binary — a different
+# CLI that accepts different model ids. One key for both would mean one of the two silently getting
+# a model name its own CLI rejects. Same reason MODEL_grok and MODEL_grok45high stay apart.
+# Its value lands in SHIP_FEATURE_GEMINI_MODEL above, which is why that pin keeps the
+# SHIP_FEATURE_ prefix while the four below do not: no other tool reads it.
 #
 # These four are the only keys here without a SHIP_FEATURE_ prefix, and the names are not this
 # tool's to choose: pr-review-relay reads CURSOR_REVIEW_MODEL and PR_RELAY_OPENCODE_MODEL too,
