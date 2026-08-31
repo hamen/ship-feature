@@ -51,9 +51,9 @@ ship-feature plan-review ~/.config/ship-feature/plans/<repo>-<slug>.md
 ```
 
 **Do not type the panel.** With no `--reviewers` it uses `SHIP_FEATURE_PLAN_REVIEWERS`, then
-`SHIP_FEATURE_REVIEWERS` (your quorum). Either is taken from `~/.config/ship-feature/config` when
-set there, and otherwise from `PLAN_REVIEWERS` / `REVIEWERS` in `~/.config/pr-review-relay/config`
-— **set them in ONE of the two.** The shared file is the usual home, because it is where seats are
+`SHIP_FEATURE_REVIEWERS` (your quorum). Either is taken from the **environment** first, then
+`~/.config/ship-feature/config`, and otherwise `PLAN_REVIEWERS` / `REVIEWERS` in
+`~/.config/pr-review-relay/config` — **set them in ONE place.** An exported `SHIP_FEATURE_PLAN_REVIEWERS` / `SHIP_FEATURE_REVIEWERS` beats BOTH files, so a stale one in your shell profile reproduces the very reduced panel this rule prevents — check the environment first when a round comes back the wrong size. The shared file is the usual home, because it is where seats are
 added and swapped for both tools; a value in ship-feature's own config wins over it silently, which
 is the same stale-copy problem one level up. A list typed into a command is a copy of that file that stops
 being true the day it changes, and nothing announces the difference: the round simply comes back
@@ -178,9 +178,9 @@ ship-feature relay --author <self> \
 ```
 
 **Do not pass `--reviewers` here either.** `relay` injects `SHIP_FEATURE_REVIEWERS` when you omit
-it — from `~/.config/ship-feature/config` if set there, else your `REVIEWERS` line in
-`~/.config/pr-review-relay/config` — so the config is the panel and there is nothing to keep in
-sync. The failure this prevents is quiet: an agent carrying
+it — from the environment if exported there, else `~/.config/ship-feature/config`, else your
+`REVIEWERS` line in `~/.config/pr-review-relay/config` — so the config is the panel and there is
+nothing to keep in sync. An exported `SHIP_FEATURE_PLAN_REVIEWERS` / `SHIP_FEATURE_REVIEWERS` beats BOTH files, so a stale one in your shell profile reproduces the very reduced panel this rule prevents — check the environment first when a round comes back the wrong size. The failure this prevents is quiet: an agent carrying
 last month's list runs a smaller panel than the one you configured, every round exits `0`, and the
 reviews read as complete. Pass the flag for the **narrow** rounds described below, where a subset
 is the point, and to override on purpose. And read the startup lines every round: a benched
@@ -216,8 +216,8 @@ PR thread, where the human reads them at Gate 2.
 - `4` — the round cap was hit. Escalate to the human.
 
 **Quorum:** set it once — `SHIP_FEATURE_REVIEWERS` in `~/.config/ship-feature/config`, or
-`REVIEWERS` in `~/.config/pr-review-relay/config`, not both — and then **do not pass a list on the
-command line**. `relay` injects the configured quorum when you omit `--reviewers`, which is a hard
+`REVIEWERS` in `~/.config/pr-review-relay/config`, not both, and not exported stale in your shell
+profile, which wins over either — and then **do not pass a list on the command line**. `relay` injects the configured quorum when you omit `--reviewers`, which is a hard
 failure on a missing agent in exactly the way a typed list is, and cannot go stale the way a typed
 list does. A partial pass must not read as consensus, so also read each round's startup lines: a
 benched (out-of-quota) seat is dropped and the round still exits `0`.

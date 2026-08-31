@@ -1805,13 +1805,16 @@ sf_clause "omit --reviewers: the config is the panel" 'no .?--reviewers.?|do not
 # prompted it kept "(explicit list = the agents you have, e.g. claude,codex,cursor)" three lines
 # under the new rule, and matched anyway. A doc that says both things teaches the old one, because
 # the old one is the concrete instruction. So: the old advice must be ABSENT, not merely outvoted.
+# Best-effort by construction: this is a blacklist of the phrasings that have actually appeared, so
+# a NEW way of saying the same thing would slip past it. The positive clauses above carry the load;
+# this one stops the exact regressions we have already seen twice.
 sf_absent() {  # sf_absent <label> <extended-regex>
   local label="$1" re="$2" f hit=""
   for f in $SF_ADAPTERS; do
     tr '\n' ' ' < "$HERE/../$f" | tr -s ' ' | grep -Eqi -- "$re" && hit="$hit $f"
   done
   [ -z "$hit" ] \
-    && { echo "  ok   [-] no adapter states: $label"; PASS=$((PASS+1)); } \
+    && { echo "  ok   [-] no guarded file states: $label"; PASS=$((PASS+1)); } \
     || { echo "  FAIL adapter consistency: '$label' still present in$hit"; FAIL=$((FAIL+1)); }
 }
 # Every phrasing of the old advice that has actually appeared, not just the ones containing
@@ -1819,6 +1822,11 @@ sf_absent() {  # sf_absent <label> <extended-regex>
 # was one that never mentions it — "(explicit list = the agents you have…)" under the new rule in
 # two adapters, then "always pass an explicit reviewer list" in WORKFLOW's Quorum paragraph, which
 # the suite passed over while the file three lines up said the opposite.
+# The counterpart is pinned too, and for the reason this whole block exists: an edit that KEEPS
+# "no --reviewers" while dropping the benched-seat caveat passes the positive clause and brings back
+# the exact silent thinning the rule is there to prevent. Omitting the flag fixes a stale list; only
+# reading the output catches a seat that dropped out.
+sf_clause "read each round's startup lines" 'startup lines.{0,200}(actually ran|benched|relay-only|exits .?0)'
 sf_absent "type the panel yourself" 'explicit list = the agents|name the reviewers you have|--reviewers <your|pass an .{0,10}explicit reviewer list|always pass an explicit'
 sf_clause "a clean round 1 IS the closing round"      'round 1 was already clean|clean initial round is the closing round'
 sf_clause "exit 0 = DISPATCHED, and benched still exits 0" '(dispatched reviewer ran|supposed to dispatch).{0,200}.{0,200}benched'
@@ -1932,7 +1940,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=315
+EXPECTED=316
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
