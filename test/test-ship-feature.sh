@@ -1788,6 +1788,11 @@ sf_clause "the closing round is the full quorum"      'closing.{0,140}full quoru
 sf_clause "a new closing finding restarts the cycle" '(closing|final).{0,120}(new qualifying|raises).{0,140}initial|initial round of another cycle'
 sf_clause "never publish the derived context file"   '(never|not) .{0,20}(gh pr edit|re-publish).{0,120}derived|derived file to the pr body'
 sf_clause "exit 4 = escalate, never --reset"          'exit .?4.?.{0,120}(escalat|stop)'
+# The pattern matches "no --reviewers" / "do not pass --reviewers" and NOT the old advice, which
+# read "name the reviewers you have — the quorum". An adapter that reverts to typing the panel
+# stops matching, which is the point: the reversal is exactly what this clause exists to catch, and
+# a grep run once at PR time does not survive the next edit.
+sf_clause "omit --reviewers: the config is the panel" '(no|not|never|dont|do not)[^.]{0,40}--reviewers'
 sf_clause "a clean round 1 IS the closing round"      'round 1 was already clean|clean initial round is the closing round'
 sf_clause "exit 0 = DISPATCHED, and benched still exits 0" '(dispatched reviewer ran|supposed to dispatch).{0,200}.{0,200}benched'
 sf_clause "non-qualifying findings are left unfixed"  'non-qualifying findings are recorded and left unfixed'
@@ -1900,7 +1905,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=313
+EXPECTED=314
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

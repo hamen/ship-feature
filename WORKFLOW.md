@@ -45,12 +45,23 @@ Have a second agent — or a panel — review the plan before writing code. Use 
 which fans the plan out to your reviewer panel read-only and prints each review:
 
 ```
-ship-feature plan-review ~/.config/ship-feature/plans/<repo>-<slug>.md --reviewers codex,kimi3
+ship-feature plan-review ~/.config/ship-feature/plans/<repo>-<slug>.md
+# to override the panel on purpose:  … --reviewers codex,kimi3
 # or pipe it: cat ~/.config/ship-feature/plans/<repo>-<slug>.md | ship-feature plan-review
 ```
 
-With no `--reviewers` it uses `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS` (your quorum);
-with no file and no stdin it reads
+**Do not type the panel.** With no `--reviewers` it uses `SHIP_FEATURE_PLAN_REVIEWERS`, then
+`SHIP_FEATURE_REVIEWERS` (your quorum) — both filled from `~/.config/pr-review-relay/config`, which
+is where seats are added and swapped. A list typed into a command is a copy of that file that stops
+being true the day it changes, and nothing announces the difference: the round simply comes back
+smaller and reads as complete. Pass the flag to override deliberately, not to restate the config.
+
+**Read the startup lines and say which reviewers actually ran.** Omitting the flag fixes a stale
+list; it cannot tell you a seat dropped out. Here, bare `opencode` and bare `grok` are relay-only
+names — if your panel falls back to `SHIP_FEATURE_REVIEWERS` and contains them, they are skipped
+with a warning and the round still exits `0`.
+
+With no file and no stdin it reads
 `./plan.md` when nothing is named — convenient, and NOT where a plan should live: see §1. Reviewers run **read-only** and nothing is written or posted — supported: `claude`
 (`--permission-mode plan --safe-mode`), `codex` (`--sandbox read-only`), `cursor` (ask mode, pinned to
 `$CURSOR_REVIEW_MODEL` — default `composer-2.5`, Cursor's own model — so Cursor's `Auto` cannot
@@ -114,8 +125,8 @@ exists, not a **PR** under cross-review, so "plan-qualifying" below is a distinc
   step 5's initial or closing round is the human's call, not a silent substitution. **If dropping the
   reviewer leaves zero reviewers, that is not a completed round at all** — stop and take the failure
   itself to Gate 1 (a plan nobody reviewed is not "the agreed plan").
-- **Cap: 2 rounds.** Round 1 is the full configured panel (`SHIP_FEATURE_PLAN_REVIEWERS`, or your
-  `--reviewers`). If round 1 raises no Blocker and no plan-qualifying Should-fix, **stop — go straight
+- **Cap: 2 rounds.** Round 1 is the full configured panel (`SHIP_FEATURE_PLAN_REVIEWERS`, or a
+  `--reviewers` override). If round 1 raises no Blocker and no plan-qualifying Should-fix, **stop — go straight
   to Gate 1.** Do not spend a second round confirming an already-clean plan. If round 1 raised a
   plan-qualifying finding, revise **once** and run round 2 against **the same full panel — never a
   narrowed one.** A plan-review panel is 2–3 reviewers, too small to narrow the way step 5 narrows a PR
@@ -157,11 +168,19 @@ Hand the PR to the **other** agents for review, and run the full test suite / CI
 head.
 
 ```
-# Name the reviewers YOU actually run — adjust the list to the agents you have installed.
+# Do NOT name the reviewers: `relay` injects your configured quorum. See below.
 # ALWAYS pass the plan: reviewers that cannot see the intent can only find bugs.
-ship-feature relay --author <self> --reviewers <your reviewer set> \
+ship-feature relay --author <self> \
   --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md
 ```
+
+**Do not pass `--reviewers` here either.** `relay` injects `SHIP_FEATURE_REVIEWERS` — your
+`REVIEWERS` line from `~/.config/pr-review-relay/config` — when you omit it, so the config is the
+panel and there is nothing to keep in sync. The failure this prevents is quiet: an agent carrying
+last month's list runs a smaller panel than the one you configured, every round exits `0`, and the
+reviews read as complete. Pass the flag for the **narrow** rounds described below, where a subset
+is the point, and to override on purpose. And read the startup lines every round: a benched
+(out-of-quota) seat is dropped and the run still exits `0`.
 
 **Always pass the plan with `--context-file`.** The plan already exists — §2 wrote it for the plan
 review — and the flag prepends it as a document every reviewer must verify the PR *against*.

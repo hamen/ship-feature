@@ -18,10 +18,14 @@ The essentials you must honor:
 1. **Plan** it into `~/.config/ship-feature/plans/<repo>-<slug>.md` (`mkdir -p` it if missing) — **never** the repo, **never** a session
    scratchpad (`/tmp` is tmpfs on many setups: a reboot destroys it, and the plan has to outlive every
    review round) — then **review the plan** with a panel:
-   `ship-feature plan-review <that file> --reviewers <your agents>`
-   (defaults to `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; read-only; exit `0` means every
-   reviewer responded — not that the reviews are clean, `3` re-run). A single reviewer via
-   `codex exec --sandbox read-only` still works.
+   `ship-feature plan-review <that file>`
+   (**no `--reviewers`** — it takes `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`, both
+   filled from your config; a typed list is a copy of that config that goes stale the day a seat is
+   added. Pass the flag only to override on purpose. Read-only; exit `0` means every reviewer
+   responded — not that the reviews are clean, `3` re-run). **Read the startup lines and say which
+   reviewers actually ran**: bare `opencode` and bare `grok` are relay-only names here, so if your
+   panel falls back to `SHIP_FEATURE_REVIEWERS` they are skipped with a warning and the round still
+   exits `0`. A single reviewer via `codex exec --sandbox read-only` still works.
    **Plan-review has its own 2-round cap**, distinct from the cross-review loop below — its
    **plan-qualifying** term is not the same as, and must not be conflated with, the "qualifying
    Should-fix" used in cross-review. A round is one
@@ -44,17 +48,21 @@ The essentials you must honor:
    to the source repository before that.
 3. Implement in a **git worktree** (never the main tree), stage explicit paths, open a **PR**. Run
    `ship-feature preflight` first.
-4. Run the **cross-review**: `ship-feature relay --author <self> --reviewers <your agents> --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md`
-   (name the reviewers you have — the quorum — so a missing one fails rather than thinning the panel;
-   e.g. `claude,codex,cursor`). **Always pass the plan** with `--context-file`: a reviewer that cannot
-   see the intent can find bugs but not *"this is not what we agreed to build"*.
+4. Run the **cross-review**: `ship-feature relay --author <self> --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md`
+   (**no `--reviewers`** — `relay` injects your configured quorum from
+   `~/.config/pr-review-relay/config`. Typing the list buys nothing and can only be staler than the
+   file: a seat added there is one an agent still naming last month's panel will silently leave out.
+   Pass the flag only for the narrow rounds below, where a deliberate subset is the point.)
+   **Always pass the plan** with `--context-file`: a reviewer that cannot see the intent can find
+   bugs but not *"this is not what we agreed to build"*.
    The **plan file is the source** the PR body is generated from, and is **immutable once approved** —
    write and revise it freely before Gate 1, never after; for later rounds point `--context-file` at a
    derived copy (plan + dispositions), which is generated, never hand-edited.
    Iterate only for a **Blocker** or a **qualifying** Should-fix — a material problem of correctness,
    safety, deployability, or verification. Round 1 is the full quorum (**every configured reviewer except the author** — the relay skips the
-   author, so the examples above list it too); rounds 2+ are **narrow** (only
-   reviewers with a stake in an open finding, plus any whose finding you downgraded); the **closing**
+   author, so leaving it in your config costs nothing); rounds 2+ are **narrow** (only
+   reviewers with a stake in an open finding, plus any whose finding you downgraded — this is where
+   `--reviewers` is passed on purpose); the **closing**
    round is the full quorum again, on the SHA that will merge — **unless round 1 was already clean**,
    in which case it IS the closing round and a second full panel is waste. Branch on the exit code —
    `0` means every DISPATCHED reviewer ran, **not** that everyone ran and not that reviews are clean:
