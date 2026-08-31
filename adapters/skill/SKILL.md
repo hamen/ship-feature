@@ -21,11 +21,11 @@ The essentials you must honor:
    `ship-feature plan-review <that file>`
    (**no `--reviewers`** — it takes `SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`, both
    filled from your config; a typed list is a copy of that config that goes stale the day a seat is
-   added. Pass the flag only to override on purpose. Read-only; exit `0` means every reviewer
-   responded — not that the reviews are clean, `3` re-run). **Read the startup lines and say which
-   reviewers actually ran**: bare `opencode` and bare `grok` are relay-only names here, so if your
-   panel falls back to `SHIP_FEATURE_REVIEWERS` they are skipped with a warning and the round still
-   exits `0`. A single reviewer via `codex exec --sandbox read-only` still works.
+   added. Pass the flag only to override on purpose. Read-only; exit `0` means every reviewer that
+   RAN responded — not that the reviews are clean, and not that everyone ran, `3` re-run). **Read
+   the startup lines and say which reviewers actually ran**: bare `opencode` and bare `grok` are
+   relay-only names here, so if your panel falls back to `SHIP_FEATURE_REVIEWERS` they are skipped
+   with a warning and the round still exits `0`. A single reviewer via `codex exec --sandbox read-only` still works.
    **Plan-review has its own 2-round cap**, distinct from the cross-review loop below — its
    **plan-qualifying** term is not the same as, and must not be conflated with, the "qualifying
    Should-fix" used in cross-review. A round is one
@@ -49,7 +49,8 @@ The essentials you must honor:
 3. Implement in a **git worktree** (never the main tree), stage explicit paths, open a **PR**. Run
    `ship-feature preflight` first.
 4. Run the **cross-review**: `ship-feature relay --author <self> --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md`
-   (**no `--reviewers`** — `relay` injects your configured quorum from
+   (**no `--reviewers`** — `relay` injects your configured quorum, `SHIP_FEATURE_REVIEWERS`, which
+   ship-feature's own config can set and otherwise takes from `REVIEWERS` in
    `~/.config/pr-review-relay/config`. Typing the list buys nothing and can only be staler than the
    file: a seat added there is one an agent still naming last month's panel will silently leave out.
    Pass the flag only for the narrow rounds below, where a deliberate subset is the point.)

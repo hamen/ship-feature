@@ -34,10 +34,12 @@ Non-negotiable points:
   an updated disagreement summary and returns to Gate 1 again.
 - Implement in a **git worktree**, stage explicit paths, open a PR.
 - Cross-review with `ship-feature relay --author codex --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md`
-  — **no `--reviewers`**: `relay` injects your configured quorum from
-  `~/.config/pr-review-relay/config`, and a typed list can only be staler than that file.
+  — **no `--reviewers`**: `relay` injects your configured quorum, `SHIP_FEATURE_REVIEWERS` (set in
+  ship-feature's config, else `REVIEWERS` in `~/.config/pr-review-relay/config`), and a typed list
+  can only be staler than that file.
   Pass the flag only for the narrow rounds below.
-  (explicit list = the agents you have, e.g. claude,codex,cursor). **Always pass the plan** with
+  **Read each round's startup lines and say which reviewers actually ran**: a benched
+  (out-of-quota) seat is dropped and the run still exits `0`. **Always pass the plan** with
   `--context-file`: a reviewer that cannot see the intent can find bugs but not "this is not what we
   agreed to build". The **plan file is the source** the PR body is generated from, and is **immutable once approved** —
   write and revise it freely before Gate 1, never after; for later rounds point `--context-file` at a

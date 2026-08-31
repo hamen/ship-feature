@@ -46,7 +46,7 @@ which fans the plan out to your reviewer panel read-only and prints each review:
 
 ```
 ship-feature plan-review ~/.config/ship-feature/plans/<repo>-<slug>.md
-# to override the panel on purpose:  … --reviewers codex,kimi3
+# to override the panel on purpose, append: --reviewers codex,kimi3
 # or pipe it: cat ~/.config/ship-feature/plans/<repo>-<slug>.md | ship-feature plan-review
 ```
 

@@ -178,7 +178,7 @@ ship-feature skill for any feature/fix.
   list is a copy of that config that goes stale the day a seat is added. A supported reviewer whose
   CLI is missing **fails** the round rather than thinning it — but a **relay-only** name in the set
   (bare `opencode`, bare `grok`) is skipped with a warning and the round still exits `0`, so read
-  the startup lines. Exit `0` = every reviewer responded, `3` = one failed/timed out/returned empty (re-run),
+  the startup lines. Exit `0` = every reviewer that RAN responded — not that everyone ran, `3` = one failed/timed out/returned empty (re-run),
   `1` = usage error. Per-reviewer timeout resolves highest-first: `SHIP_FEATURE_PLAN_TIMEOUT` (the
   environment, then `~/.config/ship-feature/config`), then `PR_RELAY_AGENT_TIMEOUT` from the
   environment, then **`AGENT_TIMEOUT` in `~/.config/pr-review-relay/config`** — the one place to set
@@ -189,7 +189,9 @@ ship-feature skill for any feature/fix.
   everyone ran, since a benched (out-of-quota) seat is dropped and still exits `0` — and not "clean";
   `3` = re-run; `4` = escalate. It injects your configured reviewer quorum when you omit
   `--reviewers` — **which is how it should normally be run**: the config is the panel, and a typed
-  list can only be staler than it. Pass the flag for a narrow follow-up round, or to override.
+  list can only be staler than it. Pass the flag for a narrow follow-up round, or to override. Read
+  each round's startup lines either way: omitting the flag fixes a stale list, it cannot tell you a
+  seat dropped out.
 
 State/resume (`new`/`status`) is intentionally deferred — the CLI stays a thin helper; the agent drives
 the process from `WORKFLOW.md`.

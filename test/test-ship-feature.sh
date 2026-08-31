@@ -1789,10 +1789,28 @@ sf_clause "a new closing finding restarts the cycle" '(closing|final).{0,120}(ne
 sf_clause "never publish the derived context file"   '(never|not) .{0,20}(gh pr edit|re-publish).{0,120}derived|derived file to the pr body'
 sf_clause "exit 4 = escalate, never --reset"          'exit .?4.?.{0,120}(escalat|stop)'
 # The pattern matches "no --reviewers" / "do not pass --reviewers" and NOT the old advice, which
-# read "name the reviewers you have — the quorum". An adapter that reverts to typing the panel
-# stops matching, which is the point: the reversal is exactly what this clause exists to catch, and
-# a grep run once at PR time does not survive the next edit.
-sf_clause "omit --reviewers: the config is the panel" '(no|not|never|dont|do not)[^.]{0,40}--reviewers'
+# read "name the reviewers you have — the quorum". `sf_clause` requires EVERY file in SF_ADAPTERS to
+# match, so one adapter reverting fails the suite; verified by reverting the phrasing in each of the
+# three adapters in turn and watching this clause fail on each. A grep run once at PR time does not
+# survive the next edit; this does.
+#
+# No `dont` alternative: it can never match "don't", and a dead branch in a guard reads as coverage
+# that is not there.
+sf_clause "omit --reviewers: the config is the panel" '(no|not|never|do not)[^.]{0,40}--reviewers'
+# The POSITIVE clause alone is not enough, which round 1 of the cross-review caught: the file that
+# prompted it kept "(explicit list = the agents you have, e.g. claude,codex,cursor)" three lines
+# under the new rule, and matched anyway. A doc that says both things teaches the old one, because
+# the old one is the concrete instruction. So: the old advice must be ABSENT, not merely outvoted.
+sf_absent() {  # sf_absent <label> <extended-regex>
+  local label="$1" re="$2" f hit=""
+  for f in $SF_ADAPTERS; do
+    tr '\n' ' ' < "$HERE/../$f" | tr -s ' ' | grep -Eqi -- "$re" && hit="$hit $f"
+  done
+  [ -z "$hit" ] \
+    && { echo "  ok   [-] no adapter states: $label"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL adapter consistency: '$label' still present in$hit"; FAIL=$((FAIL+1)); }
+}
+sf_absent "type the panel yourself" 'explicit list = the agents|name the reviewers you have|--reviewers <your'
 sf_clause "a clean round 1 IS the closing round"      'round 1 was already clean|clean initial round is the closing round'
 sf_clause "exit 0 = DISPATCHED, and benched still exits 0" '(dispatched reviewer ran|supposed to dispatch).{0,200}.{0,200}benched'
 sf_clause "non-qualifying findings are left unfixed"  'non-qualifying findings are recorded and left unfixed'
@@ -1905,7 +1923,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=314
+EXPECTED=315
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
