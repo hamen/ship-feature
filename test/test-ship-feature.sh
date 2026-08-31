@@ -1817,7 +1817,11 @@ sf_panel_clause() {  # sf_panel_clause <label> <extended-regex>
 }
 # `\bno\b`, not bare `no`: without the boundary "know --reviewers" or "into --reviewers" satisfies
 # the pin without the rule being stated at all.
-sf_panel_clause "omit --reviewers: the config is the panel" '\bno\b .?--reviewers.?|do not pass .?--reviewers|omit .?--reviewers|without .?--reviewers|WITHOUT that flag|injects (your|it as|.?SHIP_FEATURE_REVIEWERS)'
+# EVERY alternative is a NEGATION. An `injects your configured quorum` alternative was tried and
+# removed: `config.example` said "injects it as --reviewers" BEFORE this change, so a revert that
+# dropped "run WITHOUT that flag" would still have matched. A pin that the old text satisfies is not
+# a pin.
+sf_panel_clause "omit --reviewers: the config is the panel" '\bno\b .?--reviewers.?|do not pass .?--reviewers|omit .?--reviewers|without .?--reviewers|WITHOUT that flag'
 # The POSITIVE clause alone is not enough, which round 1 of the cross-review caught: the file that
 # prompted it kept "(explicit list = the agents you have, e.g. claude,codex,cursor)" three lines
 # under the new rule, and matched anyway. A doc that says both things teaches the old one, because

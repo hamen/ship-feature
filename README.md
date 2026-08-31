@@ -176,7 +176,7 @@ ship-feature skill for any feature/fix.
   (`SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`). Each resolves from the
   **environment** first, then `~/.config/ship-feature/config`, then `PLAN_REVIEWERS` / `REVIEWERS`
   in `~/.config/pr-review-relay/config`. Set them in ONE place: an exported value beats both files,
-  so a stale one in a shell profile silently reduces the panel. pass the flag only to override on purpose, because a typed
+  so a stale one in a shell profile silently reduces the panel. Pass the flag only to override on purpose, because a typed
   list is a copy of that config that goes stale the day a seat is added. A supported reviewer whose
   CLI is missing **fails** the round rather than thinning it — but a **relay-only** name in the set
   (bare `opencode`, bare `grok`) is skipped with a warning and the round still exits `0`, so read
