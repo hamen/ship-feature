@@ -173,10 +173,10 @@ ship-feature skill for any feature/fix.
   all-allow `build` agent — only the `kimi3` reviewer pins the read-only opencode `plan` agent; bare
   `grok` is the PR-relay name — use `grok45high` here). The
   panel is your quorum — **omit `--reviewers` and it is taken from your config**
-  (`SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; each from the **environment**
-  first, then `~/.config/ship-feature/config`, else `PLAN_REVIEWERS` / `REVIEWERS` in
-  `~/.config/pr-review-relay/config` — set them in ONE place, and note an exported value beats both
-  files, so a stale one in a shell profile silently reduces the panel); pass the flag only to override on purpose, because a typed
+  (`SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`). Each resolves from the
+  **environment** first, then `~/.config/ship-feature/config`, then `PLAN_REVIEWERS` / `REVIEWERS`
+  in `~/.config/pr-review-relay/config`. Set them in ONE place: an exported value beats both files,
+  so a stale one in a shell profile silently reduces the panel. pass the flag only to override on purpose, because a typed
   list is a copy of that config that goes stale the day a seat is added. A supported reviewer whose
   CLI is missing **fails** the round rather than thinning it — but a **relay-only** name in the set
   (bare `opencode`, bare `grok`) is skipped with a warning and the round still exits `0`, so read
@@ -194,7 +194,8 @@ ship-feature skill for any feature/fix.
   `--reviewers` — **which is how it should normally be run**: the config is the panel, and a typed
   list can only be staler than it. Pass the flag for a narrow follow-up round, or to override. Read
   each round's startup lines either way: omitting the flag fixes a stale list, it cannot tell you a
-  seat dropped out.
+  seat dropped out — a **benched** (out-of-quota) reviewer is skipped and the round still exits
+  `0`.
 
 State/resume (`new`/`status`) is intentionally deferred — the CLI stays a thin helper; the agent drives
 the process from `WORKFLOW.md`.

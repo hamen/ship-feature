@@ -36,7 +36,8 @@ Non-negotiable points:
 - Cross-review with `ship-feature relay --author codex --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md`
   — **no `--reviewers`**: `relay` injects your configured quorum, `SHIP_FEATURE_REVIEWERS` (set in
   ship-feature's config, else `REVIEWERS` in `~/.config/pr-review-relay/config`), and a typed list
-  can only be staler than that file.
+  can only be staler than that file. An **exported** `SHIP_FEATURE_REVIEWERS` beats both configs,
+  so check your shell profile when a round comes back the wrong size.
   Pass the flag only for the narrow rounds below.
   **Read each round's startup lines and say which reviewers actually ran**: a benched
   (out-of-quota) seat is dropped and the run still exits `0`. **Always pass the plan** with

@@ -51,7 +51,8 @@ The essentials you must honor:
 4. Run the **cross-review**: `ship-feature relay --author <self> --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md`
    (**no `--reviewers`** — `relay` injects your configured quorum, `SHIP_FEATURE_REVIEWERS`, which
    ship-feature's own config can set and otherwise takes from `REVIEWERS` in
-   `~/.config/pr-review-relay/config`. Typing the list buys nothing and can only be staler than the
+   `~/.config/pr-review-relay/config`. An **exported** `SHIP_FEATURE_REVIEWERS` beats both configs,
+   so check your shell profile when a round comes back the wrong size. Typing the list buys nothing and can only be staler than the
    file: a seat added there is one an agent still naming last month's panel will silently leave out.
    Pass the flag only for the narrow rounds below, where a deliberate subset is the point.)
    **Read each round's startup lines and say which reviewers actually ran**: a benched

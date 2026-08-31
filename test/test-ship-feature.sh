@@ -1800,7 +1800,24 @@ sf_clause "exit 4 = escalate, never --reset"          'exit .?4.?.{0,120}(escala
 # that is not there.
 # Anchored on a stable PHRASE, not on a negation word: `(no|not|never)` also matches "note" and
 # "another", so that pattern could pass on text that never states the rule at all.
-sf_clause "omit --reviewers: the config is the panel" 'no .?--reviewers.?|do not pass .?--reviewers|injects your configured quorum|injects .?SHIP_FEATURE_REVIEWERS'
+# `SF_PANEL_DOCS` = the adapters and WORKFLOW.md that SF_ADAPTERS already covers, PLUS README.md
+# and config.example, which this rule also lives in. They are NOT in SF_ADAPTERS because every other
+# clause in this block is asserted against all of it and neither file states those rules — README is
+# reference prose and config.example is a template. The panel clauses below are the ones that do
+# apply to all five, and a revert in either file is exactly as damaging as one in an adapter.
+SF_PANEL_DOCS="$SF_ADAPTERS README.md config.example"
+sf_panel_clause() {  # sf_panel_clause <label> <extended-regex>
+  local label="$1" re="$2" f miss=""
+  for f in $SF_PANEL_DOCS; do
+    tr '\n' ' ' < "$HERE/../$f" | tr -s ' ' | grep -Eqi -- "$re" || miss="$miss $f"
+  done
+  [ -z "$miss" ] \
+    && { echo "  ok   [-] every panel doc states: $label"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL panel doc consistency: '$label' missing from$miss"; FAIL=$((FAIL+1)); }
+}
+# `\bno\b`, not bare `no`: without the boundary "know --reviewers" or "into --reviewers" satisfies
+# the pin without the rule being stated at all.
+sf_panel_clause "omit --reviewers: the config is the panel" '\bno\b .?--reviewers.?|do not pass .?--reviewers|omit .?--reviewers|without .?--reviewers|WITHOUT that flag|injects (your|it as|.?SHIP_FEATURE_REVIEWERS)'
 # The POSITIVE clause alone is not enough, which round 1 of the cross-review caught: the file that
 # prompted it kept "(explicit list = the agents you have, e.g. claude,codex,cursor)" three lines
 # under the new rule, and matched anyway. A doc that says both things teaches the old one, because
@@ -1808,14 +1825,14 @@ sf_clause "omit --reviewers: the config is the panel" 'no .?--reviewers.?|do not
 # Best-effort by construction: this is a blacklist of the phrasings that have actually appeared, so
 # a NEW way of saying the same thing would slip past it. The positive clauses above carry the load;
 # this one stops the exact regressions we have already seen twice.
-sf_absent() {  # sf_absent <label> <extended-regex>
+sf_panel_absent() {  # sf_panel_absent <label> <extended-regex>
   local label="$1" re="$2" f hit=""
-  for f in $SF_ADAPTERS; do
+  for f in $SF_PANEL_DOCS; do
     tr '\n' ' ' < "$HERE/../$f" | tr -s ' ' | grep -Eqi -- "$re" && hit="$hit $f"
   done
   [ -z "$hit" ] \
-    && { echo "  ok   [-] no guarded file states: $label"; PASS=$((PASS+1)); } \
-    || { echo "  FAIL adapter consistency: '$label' still present in$hit"; FAIL=$((FAIL+1)); }
+    && { echo "  ok   [-] no panel doc states: $label"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL panel doc consistency: '$label' still present in$hit"; FAIL=$((FAIL+1)); }
 }
 # Every phrasing of the old advice that has actually appeared, not just the ones containing
 # `--reviewers`: the flag name is exactly what a grep finds, and twice now the surviving sentence
@@ -1826,8 +1843,8 @@ sf_absent() {  # sf_absent <label> <extended-regex>
 # "no --reviewers" while dropping the benched-seat caveat passes the positive clause and brings back
 # the exact silent thinning the rule is there to prevent. Omitting the flag fixes a stale list; only
 # reading the output catches a seat that dropped out.
-sf_clause "read each round's startup lines" 'startup lines.{0,200}(actually ran|benched|relay-only|exits .?0)'
-sf_absent "type the panel yourself" 'explicit list = the agents|name the reviewers you have|--reviewers <your|pass an .{0,10}explicit reviewer list|always pass an explicit'
+sf_panel_clause "read each round's startup lines" 'startup lines.{0,200}(actually ran|benched|relay-only|exits .?0)'
+sf_panel_absent "type the panel yourself" 'explicit list = the agents|name the reviewers you have|--reviewers <your|pass an .{0,10}explicit reviewer list|always pass an explicit'
 sf_clause "a clean round 1 IS the closing round"      'round 1 was already clean|clean initial round is the closing round'
 sf_clause "exit 0 = DISPATCHED, and benched still exits 0" '(dispatched reviewer ran|supposed to dispatch).{0,200}.{0,200}benched'
 sf_clause "non-qualifying findings are left unfixed"  'non-qualifying findings are recorded and left unfixed'
