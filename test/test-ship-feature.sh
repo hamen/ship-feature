@@ -1790,9 +1790,11 @@ sf_clause "never publish the derived context file"   '(never|not) .{0,20}(gh pr 
 sf_clause "exit 4 = escalate, never --reset"          'exit .?4.?.{0,120}(escalat|stop)'
 # The pattern matches "no --reviewers" / "do not pass --reviewers" and NOT the old advice, which
 # read "name the reviewers you have — the quorum". `sf_clause` requires EVERY file in SF_ADAPTERS to
-# match, so one adapter reverting fails the suite; verified by reverting the phrasing in each of the
-# three adapters in turn and watching this clause fail on each. A grep run once at PR time does not
-# survive the next edit; this does.
+# match — the three adapters AND `WORKFLOW.md`, which is the source they compress — so one file
+# reverting fails the suite; verified by reverting the phrasing in each adapter in turn and watching
+# this clause fail on each. A grep run once at PR time does not survive the next edit; this does.
+# (Two reviewers read the old wording here as "adapters only" and filed WORKFLOW.md as unguarded.
+# It is guarded; the wording was not.)
 #
 # No `dont` alternative: it can never match "don't", and a dead branch in a guard reads as coverage
 # that is not there.
@@ -1812,7 +1814,12 @@ sf_absent() {  # sf_absent <label> <extended-regex>
     && { echo "  ok   [-] no adapter states: $label"; PASS=$((PASS+1)); } \
     || { echo "  FAIL adapter consistency: '$label' still present in$hit"; FAIL=$((FAIL+1)); }
 }
-sf_absent "type the panel yourself" 'explicit list = the agents|name the reviewers you have|--reviewers <your'
+# Every phrasing of the old advice that has actually appeared, not just the ones containing
+# `--reviewers`: the flag name is exactly what a grep finds, and twice now the surviving sentence
+# was one that never mentions it — "(explicit list = the agents you have…)" under the new rule in
+# two adapters, then "always pass an explicit reviewer list" in WORKFLOW's Quorum paragraph, which
+# the suite passed over while the file three lines up said the opposite.
+sf_absent "type the panel yourself" 'explicit list = the agents|name the reviewers you have|--reviewers <your|pass an .{0,10}explicit reviewer list|always pass an explicit'
 sf_clause "a clean round 1 IS the closing round"      'round 1 was already clean|clean initial round is the closing round'
 sf_clause "exit 0 = DISPATCHED, and benched still exits 0" '(dispatched reviewer ran|supposed to dispatch).{0,200}.{0,200}benched'
 sf_clause "non-qualifying findings are left unfixed"  'non-qualifying findings are recorded and left unfixed'

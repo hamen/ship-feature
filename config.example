@@ -35,6 +35,9 @@ SHIP_FEATURE_EXCLUDE_MARKER=.claude/
 # `antigravity` (aliases: agy, gemini) is a supported read-only plan reviewer too — it runs the `gemini`
 # CLI. (In `relay`, `antigravity` still runs `agy`; only `gemini` has a read-only mode for the plan gate.)
 # SHIP_FEATURE_PLAN_REVIEWERS=claude,codex,antigravity
+# Same rule as the quorum above: set the plan panel HERE or as PLAN_REVIEWERS in
+# ~/.config/pr-review-relay/config, not both — this file wins, silently. And whichever you set,
+# run `ship-feature plan-review` WITHOUT --reviewers so the config is the panel.
 
 # Model for the antigravity/gemini plan reviewer (the `gemini` CLI). Default gemini-3.1-pro-preview,
 # because the CLI's own built-in default is a retired model that 404s. Env wins over this file, and

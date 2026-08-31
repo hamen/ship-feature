@@ -215,9 +215,12 @@ PR thread, where the human reads them at Gate 2.
 - `3` — the round is not trustworthy (a reviewer failed / SHA unreadable / HEAD moved). Re-run.
 - `4` — the round cap was hit. Escalate to the human.
 
-**Quorum:** always pass an **explicit reviewer list** (the agents you have) so a missing one is a hard
-failure rather than a silently thinned panel — a partial pass must not read as consensus. Set it once in
-`~/.config/ship-feature/config` via `SHIP_FEATURE_REVIEWERS` for convenience.
+**Quorum:** set it once — `SHIP_FEATURE_REVIEWERS` in `~/.config/ship-feature/config`, or
+`REVIEWERS` in `~/.config/pr-review-relay/config`, not both — and then **do not pass a list on the
+command line**. `relay` injects the configured quorum when you omit `--reviewers`, which is a hard
+failure on a missing agent in exactly the way a typed list is, and cannot go stale the way a typed
+list does. A partial pass must not read as consensus, so also read each round's startup lines: a
+benched (out-of-quota) seat is dropped and the round still exits `0`.
 
 **Loop-termination rule.** Iterating on *every* Should-fix produced eight full-quorum rounds on one
 PR where the last five found no Blocker. The loop now has **three named phases**:
