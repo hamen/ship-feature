@@ -19,8 +19,10 @@ SHIP_FEATURE_EXCLUDE_MARKER=.claude/
 # ship-feature differ from the relay on purpose.
 
 # The cross-review quorum: the agents you actually have installed. When set, `ship-feature relay`
-# injects it as --reviewers, so run the relay WITHOUT that flag and this line is the panel — a list
-# typed into a command is a copy of this file that goes stale the day you add a seat. A missing
+# injects it as --reviewers, so run the relay WITHOUT that flag and your config is the panel — a
+# list typed into a command is a copy of that config that goes stale the day you add a seat. Set it
+# HERE only to make ship-feature differ from the relay on purpose: this file WINS over REVIEWERS in
+# ~/.config/pr-review-relay/config, silently, which is the same stale-copy trap one level up. A missing
 # agent then fails the round rather than thinning it; a BENCHED (out-of-quota) one is still dropped
 # with the round exiting 0, so read the startup lines.
 # LEFT UNSET by default on purpose — uncomment and list ONLY the agents you have, or a fresh install

@@ -1796,7 +1796,9 @@ sf_clause "exit 4 = escalate, never --reset"          'exit .?4.?.{0,120}(escala
 #
 # No `dont` alternative: it can never match "don't", and a dead branch in a guard reads as coverage
 # that is not there.
-sf_clause "omit --reviewers: the config is the panel" '(no|not|never|do not)[^.]{0,40}--reviewers'
+# Anchored on a stable PHRASE, not on a negation word: `(no|not|never)` also matches "note" and
+# "another", so that pattern could pass on text that never states the rule at all.
+sf_clause "omit --reviewers: the config is the panel" 'no .?--reviewers.?|do not pass .?--reviewers|injects your configured quorum|injects .?SHIP_FEATURE_REVIEWERS'
 # The POSITIVE clause alone is not enough, which round 1 of the cross-review caught: the file that
 # prompted it kept "(explicit list = the agents you have, e.g. claude,codex,cursor)" three lines
 # under the new rule, and matched anyway. A doc that says both things teaches the old one, because

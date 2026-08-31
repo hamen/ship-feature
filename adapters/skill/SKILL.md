@@ -54,6 +54,8 @@ The essentials you must honor:
    `~/.config/pr-review-relay/config`. Typing the list buys nothing and can only be staler than the
    file: a seat added there is one an agent still naming last month's panel will silently leave out.
    Pass the flag only for the narrow rounds below, where a deliberate subset is the point.)
+   **Read each round's startup lines and say which reviewers actually ran**: a benched
+   (out-of-quota) seat is dropped and the run still exits `0`.
    **Always pass the plan** with `--context-file`: a reviewer that cannot see the intent can find
    bugs but not *"this is not what we agreed to build"*.
    The **plan file is the source** the PR body is generated from, and is **immutable once approved** —

@@ -51,8 +51,11 @@ ship-feature plan-review ~/.config/ship-feature/plans/<repo>-<slug>.md
 ```
 
 **Do not type the panel.** With no `--reviewers` it uses `SHIP_FEATURE_PLAN_REVIEWERS`, then
-`SHIP_FEATURE_REVIEWERS` (your quorum) — both filled from `~/.config/pr-review-relay/config`, which
-is where seats are added and swapped. A list typed into a command is a copy of that file that stops
+`SHIP_FEATURE_REVIEWERS` (your quorum). Either is taken from `~/.config/ship-feature/config` when
+set there, and otherwise from `PLAN_REVIEWERS` / `REVIEWERS` in `~/.config/pr-review-relay/config`
+— **set them in ONE of the two.** The shared file is the usual home, because it is where seats are
+added and swapped for both tools; a value in ship-feature's own config wins over it silently, which
+is the same stale-copy problem one level up. A list typed into a command is a copy of that file that stops
 being true the day it changes, and nothing announces the difference: the round simply comes back
 smaller and reads as complete. Pass the flag to override deliberately, not to restate the config.
 
@@ -174,9 +177,10 @@ ship-feature relay --author <self> \
   --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md
 ```
 
-**Do not pass `--reviewers` here either.** `relay` injects `SHIP_FEATURE_REVIEWERS` — your
-`REVIEWERS` line from `~/.config/pr-review-relay/config` — when you omit it, so the config is the
-panel and there is nothing to keep in sync. The failure this prevents is quiet: an agent carrying
+**Do not pass `--reviewers` here either.** `relay` injects `SHIP_FEATURE_REVIEWERS` when you omit
+it — from `~/.config/ship-feature/config` if set there, else your `REVIEWERS` line in
+`~/.config/pr-review-relay/config` — so the config is the panel and there is nothing to keep in
+sync. The failure this prevents is quiet: an agent carrying
 last month's list runs a smaller panel than the one you configured, every round exits `0`, and the
 reviews read as complete. Pass the flag for the **narrow** rounds described below, where a subset
 is the point, and to override on purpose. And read the startup lines every round: a benched

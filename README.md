@@ -173,12 +173,14 @@ ship-feature skill for any feature/fix.
   all-allow `build` agent — only the `kimi3` reviewer pins the read-only opencode `plan` agent; bare
   `grok` is the PR-relay name — use `grok45high` here). The
   panel is your quorum — **omit `--reviewers` and it is taken from your config**
-  (`SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`, both filled from
-  `~/.config/pr-review-relay/config`); pass the flag only to override on purpose, because a typed
+  (`SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`; each from
+  `~/.config/ship-feature/config` when set there, else from `PLAN_REVIEWERS` / `REVIEWERS` in
+  `~/.config/pr-review-relay/config` — set them in one of the two, not both); pass the flag only to override on purpose, because a typed
   list is a copy of that config that goes stale the day a seat is added. A supported reviewer whose
   CLI is missing **fails** the round rather than thinning it — but a **relay-only** name in the set
   (bare `opencode`, bare `grok`) is skipped with a warning and the round still exits `0`, so read
-  the startup lines. Exit `0` = every reviewer that RAN responded — not that everyone ran, `3` = one failed/timed out/returned empty (re-run),
+  the startup lines. Exit `0` = every reviewer that RAN responded (which is not the same as
+  everyone running), `3` = one failed/timed out/returned empty (re-run),
   `1` = usage error. Per-reviewer timeout resolves highest-first: `SHIP_FEATURE_PLAN_TIMEOUT` (the
   environment, then `~/.config/ship-feature/config`), then `PR_RELAY_AGENT_TIMEOUT` from the
   environment, then **`AGENT_TIMEOUT` in `~/.config/pr-review-relay/config`** — the one place to set

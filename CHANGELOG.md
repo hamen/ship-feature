@@ -23,7 +23,8 @@ All notable changes to **ship-feature** are documented here. This project follow
   benched (out-of-quota) seat and still exits `0`, and `plan-review` skips the relay-only names
   (bare `opencode`, bare `grok`) with a warning and still exits `0`.
 
-Documentation only — no change to `bin/ship-feature`. **Re-run `./install.sh`**: the Codex adapter
+Touches `adapters/{skill,cursor,codex}`, `WORKFLOW.md`, `README.md`, `config.example` and the
+adapter-consistency clauses in `test/`. Documentation only — no change to `bin/ship-feature`. **Re-run `./install.sh`**: the Codex adapter
 is copied into `~/.codex/AGENTS.md`, not symlinked like the Cursor and skill adapters, so a `git
 pull` alone leaves Codex reading the old advice.
 
