@@ -19,7 +19,12 @@ SHIP_FEATURE_EXCLUDE_MARKER=.claude/
 # ship-feature differ from the relay on purpose.
 
 # The cross-review quorum: the agents you actually have installed. When set, `ship-feature relay`
-# injects it as --reviewers (so a missing agent fails the round instead of silently thinning the panel).
+# injects it as --reviewers, so run the relay WITHOUT that flag and your config is the panel — a
+# list typed into a command is a copy of that config that goes stale the day you add a seat. Set it
+# HERE only to make ship-feature differ from the relay on purpose: this file WINS over REVIEWERS in
+# ~/.config/pr-review-relay/config, silently, which is the same stale-copy trap one level up. A missing
+# agent then fails the round rather than thinning it; a BENCHED (out-of-quota) one is still dropped
+# with the round exiting 0, so read the startup lines.
 # LEFT UNSET by default on purpose — uncomment and list ONLY the agents you have, or a fresh install
 # would force a quorum you can't satisfy and every review round would fail.
 # SHIP_FEATURE_REVIEWERS=claude,codex,cursor
@@ -30,6 +35,11 @@ SHIP_FEATURE_EXCLUDE_MARKER=.claude/
 # `antigravity` (aliases: agy, gemini) is a supported read-only plan reviewer too — it runs the `gemini`
 # CLI. (In `relay`, `antigravity` still runs `agy`; only `gemini` has a read-only mode for the plan gate.)
 # SHIP_FEATURE_PLAN_REVIEWERS=claude,codex,antigravity
+# Same rule as the quorum above: set the plan panel HERE or as PLAN_REVIEWERS in
+# ~/.config/pr-review-relay/config, not both — this file wins, silently, and an EXPORTED value in
+# your shell beats both. And whichever you set, run `ship-feature plan-review` WITHOUT --reviewers
+# so the config is the panel. Then read the startup lines: bare `opencode` and bare `grok` are
+# relay-only names in plan-review, skipped with a warning while the round still exits 0.
 
 # Model for the antigravity/gemini plan reviewer (the `gemini` CLI). Default gemini-3.1-pro-preview,
 # because the CLI's own built-in default is a retired model that 404s. Env wins over this file, and

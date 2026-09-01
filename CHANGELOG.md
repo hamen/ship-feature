@@ -6,6 +6,28 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
+### Changed
+
+- **Every adapter and WORKFLOW.md now say to run `relay` and `plan-review` WITHOUT `--reviewers`.**
+  They used to say the opposite — "name the reviewers you have — the quorum — so a missing one
+  fails rather than thinning the panel" — and that advice makes the cross-review quietly weaker.
+  `relay` already injects `SHIP_FEATURE_REVIEWERS`, and `plan-review` already falls back to
+  `SHIP_FEATURE_PLAN_REVIEWERS` then `SHIP_FEATURE_REVIEWERS`, all filled from
+  `~/.config/pr-review-relay/config`. A list typed into a command is a copy of that file that stops
+  being true the day a seat is added, and nothing announces the difference: the round comes back
+  smaller and reads as complete. That happened on three PRs in one day before this change.
+  `--reviewers` is unchanged and stays the way to override — including for the narrow rounds 2+,
+  where a deliberate subset is the point.
+- The docs now also say to **read each round's startup lines** and state which reviewers actually
+  ran. Omitting the flag fixes a stale list; it cannot tell you a seat dropped out. `relay` drops a
+  benched (out-of-quota) seat and still exits `0`, and `plan-review` skips the relay-only names
+  (bare `opencode`, bare `grok`) with a warning and still exits `0`.
+
+Touches `adapters/{skill,cursor,codex}`, `WORKFLOW.md`, `README.md`, `config.example` and the
+adapter-consistency clauses in `test/`. Documentation only — no change to `bin/ship-feature`. **Re-run `./install.sh`**: the Codex adapter
+is copied into `~/.codex/AGENTS.md`, not symlinked like the Cursor and skill adapters, so a `git
+pull` alone leaves Codex reading the old advice.
+
 ## [0.5.0] — 2026-08-27
 
 ### Added

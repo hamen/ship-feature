@@ -1788,6 +1788,67 @@ sf_clause "the closing round is the full quorum"      'closing.{0,140}full quoru
 sf_clause "a new closing finding restarts the cycle" '(closing|final).{0,120}(new qualifying|raises).{0,140}initial|initial round of another cycle'
 sf_clause "never publish the derived context file"   '(never|not) .{0,20}(gh pr edit|re-publish).{0,120}derived|derived file to the pr body'
 sf_clause "exit 4 = escalate, never --reset"          'exit .?4.?.{0,120}(escalat|stop)'
+# The pattern matches "no --reviewers" / "do not pass --reviewers" and NOT the old advice, which
+# read "name the reviewers you have — the quorum". `sf_clause` requires EVERY file in SF_ADAPTERS to
+# match — the three adapters AND `WORKFLOW.md`, which is the source they compress — so one file
+# reverting fails the suite; verified by reverting the phrasing in each adapter in turn and watching
+# this clause fail on each. A grep run once at PR time does not survive the next edit; this does.
+# (Two reviewers read the old wording here as "adapters only" and filed WORKFLOW.md as unguarded.
+# It is guarded; the wording was not.)
+#
+# No `dont` alternative: it can never match "don't", and a dead branch in a guard reads as coverage
+# that is not there.
+# Anchored on a stable PHRASE, not on a negation word: `(no|not|never)` also matches "note" and
+# "another", so that pattern could pass on text that never states the rule at all.
+# `SF_PANEL_DOCS` = the adapters and WORKFLOW.md that SF_ADAPTERS already covers, PLUS README.md
+# and config.example, which this rule also lives in. They are NOT in SF_ADAPTERS because every other
+# clause in this block is asserted against all of it and neither file states those rules — README is
+# reference prose and config.example is a template. The panel clauses below are the ones that do
+# apply to all five, and a revert in either file is exactly as damaging as one in an adapter.
+SF_PANEL_DOCS="$SF_ADAPTERS README.md config.example"
+sf_panel_clause() {  # sf_panel_clause <label> <extended-regex>
+  local label="$1" re="$2" f miss=""
+  for f in $SF_PANEL_DOCS; do
+    tr '\n' ' ' < "$HERE/../$f" | tr -s ' ' | grep -Eqi -- "$re" || miss="$miss $f"
+  done
+  [ -z "$miss" ] \
+    && { echo "  ok   [-] every panel doc states: $label"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL panel doc consistency: '$label' missing from$miss"; FAIL=$((FAIL+1)); }
+}
+# `\bno\b`, not bare `no`: without the boundary "know --reviewers" or "into --reviewers" satisfies
+# the pin without the rule being stated at all.
+# EVERY alternative is a NEGATION. An `injects your configured quorum` alternative was tried and
+# removed: `config.example` said "injects it as --reviewers" BEFORE this change, so a revert that
+# dropped "run WITHOUT that flag" would still have matched. A pin that the old text satisfies is not
+# a pin.
+sf_panel_clause "omit --reviewers: the config is the panel" '\bno\b .?--reviewers.?|do not pass .?--reviewers|omit .?--reviewers|without .?--reviewers|WITHOUT that flag'
+# The POSITIVE clause alone is not enough, which round 1 of the cross-review caught: the file that
+# prompted it kept "(explicit list = the agents you have, e.g. claude,codex,cursor)" three lines
+# under the new rule, and matched anyway. A doc that says both things teaches the old one, because
+# the old one is the concrete instruction. So: the old advice must be ABSENT, not merely outvoted.
+# Best-effort by construction: this is a blacklist of the phrasings that have actually appeared, so
+# a NEW way of saying the same thing would slip past it. The positive clauses above carry the load;
+# this one stops the exact regressions we have already seen twice.
+sf_panel_absent() {  # sf_panel_absent <label> <extended-regex>
+  local label="$1" re="$2" f hit=""
+  for f in $SF_PANEL_DOCS; do
+    tr '\n' ' ' < "$HERE/../$f" | tr -s ' ' | grep -Eqi -- "$re" && hit="$hit $f"
+  done
+  [ -z "$hit" ] \
+    && { echo "  ok   [-] no panel doc states: $label"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL panel doc consistency: '$label' still present in$hit"; FAIL=$((FAIL+1)); }
+}
+# Every phrasing of the old advice that has actually appeared, not just the ones containing
+# `--reviewers`: the flag name is exactly what a grep finds, and twice now the surviving sentence
+# was one that never mentions it — "(explicit list = the agents you have…)" under the new rule in
+# two adapters, then "always pass an explicit reviewer list" in WORKFLOW's Quorum paragraph, which
+# the suite passed over while the file three lines up said the opposite.
+# The counterpart is pinned too, and for the reason this whole block exists: an edit that KEEPS
+# "no --reviewers" while dropping the benched-seat caveat passes the positive clause and brings back
+# the exact silent thinning the rule is there to prevent. Omitting the flag fixes a stale list; only
+# reading the output catches a seat that dropped out.
+sf_panel_clause "read each round's startup lines" 'startup lines.{0,200}(actually ran|benched|relay-only|exits .?0)'
+sf_panel_absent "type the panel yourself" 'explicit list = the agents|name the reviewers you have|--reviewers <your|pass an .{0,10}explicit reviewer list|always pass an explicit'
 sf_clause "a clean round 1 IS the closing round"      'round 1 was already clean|clean initial round is the closing round'
 sf_clause "exit 0 = DISPATCHED, and benched still exits 0" '(dispatched reviewer ran|supposed to dispatch).{0,200}.{0,200}benched'
 sf_clause "non-qualifying findings are left unfixed"  'non-qualifying findings are recorded and left unfixed'
@@ -1900,7 +1961,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=313
+EXPECTED=316
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

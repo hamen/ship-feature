@@ -33,16 +33,23 @@ Non-negotiable points:
   human-authorized extra round is not a third autonomous round: it either resolves cleanly, or produces
   an updated disagreement summary and returns to Gate 1 again.
 - Implement in a **git worktree**, stage explicit paths, open a PR.
-- Cross-review with `ship-feature relay --author codex --reviewers <your agents> --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md`
-  (explicit list = the agents you have, e.g. claude,codex,cursor). **Always pass the plan** with
+- Cross-review with `ship-feature relay --author codex --context-file ~/.config/ship-feature/plans/<repo>-<slug>.md`
+  — **no `--reviewers`**: `relay` injects your configured quorum, `SHIP_FEATURE_REVIEWERS` (set in
+  ship-feature's config, else `REVIEWERS` in `~/.config/pr-review-relay/config`), and a typed list
+  can only be staler than that file. An **exported** `SHIP_FEATURE_REVIEWERS` beats both configs,
+  so check your shell profile when a round comes back the wrong size.
+  Pass the flag only for the narrow rounds below.
+  **Read each round's startup lines and say which reviewers actually ran**: a benched
+  (out-of-quota) seat is dropped and the run still exits `0`. **Always pass the plan** with
   `--context-file`: a reviewer that cannot see the intent can find bugs but not "this is not what we
   agreed to build". The **plan file is the source** the PR body is generated from, and is **immutable once approved** —
   write and revise it freely before Gate 1, never after; for later rounds point `--context-file` at a
   derived copy (plan + dispositions), which is generated, never hand-edited.
 - Iterate only for a **Blocker** or a **qualifying** Should-fix — a material problem of correctness,
   safety, deployability, or verification. Round 1 is the full quorum (**every configured reviewer except the author** — the relay skips the
-  author, so the examples above list it too); rounds 2+ are **narrow** (only
-  reviewers with a stake in an open finding, plus any whose finding you downgraded); the **closing**
+  author, so leaving it in your config costs nothing); rounds 2+ are **narrow** (only
+  reviewers with a stake in an open finding, plus any whose finding you downgraded — this is where
+  `--reviewers` is passed on purpose); the **closing**
   round is the full quorum again, on the SHA that will merge — **unless round 1 was already clean**,
   in which case it IS the closing round and a second full panel is waste. Exit `0` means every
   DISPATCHED reviewer ran, NOT that everyone ran and NOT that the reviews are clean: a **benched**

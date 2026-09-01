@@ -172,8 +172,16 @@ ship-feature skill for any feature/fix.
   relay-only and skipped with a warning (a plain `opencode run` uses the
   all-allow `build` agent — only the `kimi3` reviewer pins the read-only opencode `plan` agent; bare
   `grok` is the PR-relay name — use `grok45high` here). The
-  panel is your quorum — a supported reviewer whose CLI is missing **fails** the round rather than
-  thinning it. Exit `0` = every reviewer responded, `3` = one failed/timed out/returned empty (re-run),
+  panel is your quorum — **omit `--reviewers` and it is taken from your config**
+  (`SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`). Each resolves from the
+  **environment** first, then `~/.config/ship-feature/config`, then `PLAN_REVIEWERS` / `REVIEWERS`
+  in `~/.config/pr-review-relay/config`. Set them in ONE place: an exported value beats both files,
+  so a stale one in a shell profile silently reduces the panel. Pass the flag only to override on purpose, because a typed
+  list is a copy of that config that goes stale the day a seat is added. A supported reviewer whose
+  CLI is missing **fails** the round rather than thinning it — but a **relay-only** name in the set
+  (bare `opencode`, bare `grok`) is skipped with a warning and the round still exits `0`, so read
+  the startup lines. Exit `0` = every reviewer that RAN responded (which is not the same as
+  everyone running), `3` = one failed/timed out/returned empty (re-run),
   `1` = usage error. Per-reviewer timeout resolves highest-first: `SHIP_FEATURE_PLAN_TIMEOUT` (the
   environment, then `~/.config/ship-feature/config`), then `PR_RELAY_AGENT_TIMEOUT` from the
   environment, then **`AGENT_TIMEOUT` in `~/.config/pr-review-relay/config`** — the one place to set
@@ -182,7 +190,12 @@ ship-feature skill for any feature/fix.
   [`pr-review-relay`](https://github.com/hamen/pr-review-relay) that preserves its stdout and exact exit
   code, and reminds you what each code means: `0` = every **dispatched** reviewer ran — not that
   everyone ran, since a benched (out-of-quota) seat is dropped and still exits `0` — and not "clean";
-  `3` = re-run; `4` = escalate. It injects your configured reviewer quorum when you omit `--reviewers`.
+  `3` = re-run; `4` = escalate. It injects your configured reviewer quorum when you omit
+  `--reviewers` — **which is how it should normally be run**: the config is the panel, and a typed
+  list can only be staler than it. Pass the flag for a narrow follow-up round, or to override. Read
+  each round's startup lines either way: omitting the flag fixes a stale list, it cannot tell you a
+  seat dropped out — a **benched** (out-of-quota) reviewer is skipped and the round still exits
+  `0`.
 
 State/resume (`new`/`status`) is intentionally deferred — the CLI stays a thin helper; the agent drives
 the process from `WORKFLOW.md`.
