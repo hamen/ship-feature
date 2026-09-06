@@ -42,6 +42,23 @@ kill_tree() {
   kill -TERM "$pid" 2>/dev/null || true
 }
 
+# Stale spellings of the `glm` seat that were seen while loading config, recorded here and
+# reported by cmd_plan_review. GLOBAL on purpose: every variable inside the two loaders is
+# `local`, so a recorder declared there would be gone by the time anything could print it.
+#
+# Recorded, never honoured. A config that names the seat by its old name must not quietly work —
+# that silent fallback is the exact defect this rename exists to remove, and honouring the old
+# name here would rebuild it one level down.
+#
+# Reported by `plan-review` ONLY, not by `relay` or `preflight`. Both of those also call
+# load_config, and a deprecation notice about a plan-review seat has no business printing on a
+# cross-review run.
+SF_DEPRECATED_SEAT_KEYS=""
+sf_note_deprecated() {
+  case " $SF_DEPRECATED_SEAT_KEYS " in *" $1 "*) return 0;; esac   # once per key, not once per line
+  SF_DEPRECATED_SEAT_KEYS="${SF_DEPRECATED_SEAT_KEYS:+$SF_DEPRECATED_SEAT_KEYS }$1"
+}
+
 # Where WORKFLOW.md §1 says plans live. One canonical path, matching install.sh
 # by construction — a reviewer found the alternative: deriving it from
 # SHIP_FEATURE_CONFIG made the two disagree for anyone with a custom config, and
@@ -70,6 +87,10 @@ load_config() {
   # pr-review-relay configured and no ship-feature config at all, and the early return below
   # would otherwise skip the fallback entirely. Found by the test that asserts the shared file is
   # read, running with SHIP_FEATURE_CONFIG=/dev/null.
+  # The ENVIRONMENT spelling, checked BEFORE the early return below. Neither loader ever reads a
+  # variable — they parse files — so an env-only stale key would otherwise be seen by nothing at
+  # all, and on a machine with no ship-feature config this function returns two lines down.
+  [ -n "${KIMI3_REVIEW_MODEL:-}" ] && sf_note_deprecated env:KIMI3_REVIEW_MODEL
   [ -f "$cfg" ] || { load_shared_panel_config; return 0; }
   # `|| [ -n "$key$val" ]` so a file with NO FINAL NEWLINE does not lose its last line. Without
   # it, `read` returns non-zero on that line and the loop exits before the case runs —
@@ -128,7 +149,12 @@ load_config() {
       # all. Treating it as "defined" would let `CURSOR_REVIEW_MODEL=` block both this file and
       # the shared one, leaving ship-feature on its built-in default while pr-review-relay used
       # the configured value — the same inputs, two different models.
-      KIMI3_REVIEW_MODEL) [ -n "${KIMI3_REVIEW_MODEL:-}" ] || export KIMI3_REVIEW_MODEL="$val" ;;
+      GLM_REVIEW_MODEL) [ -n "${GLM_REVIEW_MODEL:-}" ] || export GLM_REVIEW_MODEL="$val" ;;
+      # The seat's old name. Recorded and DROPPED, never assigned: `load_config` has no `*)` arm,
+      # so without this line the key would fall through in silence and the seat would run the
+      # built-in default while the file plainly named a model — the same silent drop that
+      # renaming this seat was meant to end.
+      KIMI3_REVIEW_MODEL) sf_note_deprecated file:KIMI3_REVIEW_MODEL ;;
       CURSOR_REVIEW_MODEL) [ -n "${CURSOR_REVIEW_MODEL:-}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
       GROK45HIGH_REVIEW_MODEL) [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
       PR_RELAY_OPENCODE_MODEL) [ -n "${PR_RELAY_OPENCODE_MODEL:-}" ] || export PR_RELAY_OPENCODE_MODEL="$val" ;;
@@ -162,9 +188,10 @@ load_config() {
 #
 # Both tools review with the same seats on the same accounts, so which model a seat runs is a
 # property of the machine, not of the tool that happens to be invoking it. pr-review-relay
-# already keeps that in one place, keyed by SEAT name, and it has carried `MODEL_kimi3` since
+# already keeps that in one place, keyed by SEAT name, and it has carried this seat's key since
 # 2026-08-14 with a comment saying it would take effect once ship-feature learned to read this
-# file. This is that.
+# file. This is that. (The key was `MODEL_kimi3` until the seat was renamed; see the deprecated
+# arm in the parser below.)
 #
 # Keyed by seat means keyed by seat: the relay's `grok` seat and plan-review's `grok45high` seat
 # are DIFFERENT seats — same vendor, different effort — so `MODEL_grok` is not read here and
@@ -190,9 +217,13 @@ load_shared_panel_config() {
   # valid file handing the two tools different panels, which is exactly what reading one file is
   # meant to prevent. These flags say "a HIGHER source already provided this", which is the thing
   # that must not be overwritten; a later line of this same file may.
-  local from_env_kimi3=1 from_env_cursor=1 from_env_grok=1 from_env_rev=1 from_env_plan=1 from_env_timeout=1
+  local from_env_glm=1 from_env_cursor=1 from_env_grok=1 from_env_rev=1 from_env_plan=1 from_env_timeout=1
   local from_env_gemini=1
-  [ -n "${KIMI3_REVIEW_MODEL:-}" ] || from_env_kimi3=0
+  # GLM_REVIEW_MODEL and nothing else. Arming this from the seat's OLD name would let a stale
+  # KIMI3_REVIEW_MODEL left in a shell profile mark the pin as "already provided by a higher
+  # source", so MODEL_glm in the shared file would be skipped — the silent drop this rename
+  # exists to remove, rebuilt inside the fix for it.
+  [ -n "${GLM_REVIEW_MODEL:-}" ] || from_env_glm=0
   [ -n "${CURSOR_REVIEW_MODEL:-}" ] || from_env_cursor=0
   [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || from_env_grok=0
   [ -n "${SHIP_FEATURE_GEMINI_MODEL:-}" ] || from_env_gemini=0
@@ -207,7 +238,7 @@ load_shared_panel_config() {
   [ -f "$cfg" ] || return 0
   while IFS='=' read -r key val || [ -n "$key$val" ]; do
     # Strip a leading UTF-8 BOM, as pr-review-relay's own parser does (lib-panel.sh). Without it
-    # the first key of a BOM'd file reads as "\ufeffMODEL_kimi3" here and as "MODEL_kimi3" there:
+    # the first key of a BOM'd file reads as "\ufeffMODEL_glm" here and as "MODEL_glm" there:
     # one file, two different models, which is the whole failure this change removes.
     key="${key#$'\xef\xbb\xbf'}"
     case "$key" in ''|\#*) continue;; esac
@@ -220,7 +251,11 @@ load_shared_panel_config() {
     # leave ship-feature on its built-in default while pr-review-relay used the shared value: the
     # same inputs, two different models.
     case "$key" in
-      MODEL_kimi3)      [ "$from_env_kimi3" = 1 ] || export KIMI3_REVIEW_MODEL="$val" ;;
+      MODEL_glm)        [ "$from_env_glm" = 1 ] || export GLM_REVIEW_MODEL="$val" ;;
+      # The seat's old key. Recorded and DROPPED — see the KIMI3_REVIEW_MODEL arm in load_config.
+      # pr-review-relay still lists `kimi3` in its own PANEL_SEATS, so this key stays valid THERE
+      # until that repo's follow-up lands; it just no longer configures anything here.
+      MODEL_kimi3)      sf_note_deprecated shared:MODEL_kimi3 ;;
       MODEL_cursor)     [ "$from_env_cursor" = 1 ] || export CURSOR_REVIEW_MODEL="$val" ;;
       MODEL_grok45high) [ "$from_env_grok" = 1 ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
       # `MODEL_gemini`, not `MODEL_antigravity`. The relay already maps MODEL_antigravity onto its
@@ -391,8 +426,8 @@ cmd_relay() {
 # text: claude (--permission-mode plan + --safe-mode, so no checkout hooks/plugins/MCP
 # load either), codex (--sandbox read-only), cursor (--mode=ask,
 # Q&A, on a model pinned away from Cursor's Auto — see CURSOR_REVIEW_MODEL below),
-# kimi3 (Kimi K3 via opencode, model pinned away from the bundled default via
-# KIMI3_REVIEW_MODEL — see below — and pinned read-only by OPENCODE_CONFIG_CONTENT — opencode's
+# glm (the opencode runner, model pinned via GLM_REVIEW_MODEL — see below — and pinned
+# read-only by OPENCODE_CONFIG_CONTENT — opencode's
 # highest-precedence config layer — denying `edit`+`bash` so nothing can be written even via
 # shell, reading the checkout unless it carries its own opencode config, plus `--pure` and
 # `--agent plan`), and antigravity via the `gemini` CLI run FAIL-CLOSED (see plan_review_with):
@@ -407,10 +442,12 @@ cmd_relay() {
 # build agent — so if listed they are skipped with a warning, never run. That keeps the
 # "read-only, nothing is written" guarantee true for the whole set that actually runs.
 plan_tool_for() { case "$1" in
-  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; kimi3) echo opencode;;
+  claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; glm) echo opencode;;
   grok45high) echo grok;; antigravity) echo gemini;; *) echo "";; esac; }
-# Named but deliberately not run in plan-review (available in `relay`). Note: `kimi3` IS a
-# supported plan reviewer (read-only plan agent); only the bare `opencode` name is relay-only.
+# Named but deliberately not run in plan-review (available in `relay`). Note: `glm` IS a
+# supported plan reviewer (read-only plan agent) and runs through the same `opencode` binary;
+# only the bare `opencode` name is relay-only, because a bare `opencode run` uses the all-allow
+# build agent.
 # Bare `grok` is the PR-relay reviewer (medium effort in pr-review-relay); plan-review uses
 # `grok45high` (high effort). Listing bare `grok` here is skipped so a
 # SHIP_FEATURE_REVIEWERS fallback that includes `grok` does not fail the plan panel.
@@ -427,7 +464,7 @@ cmd_plan_review() {
     case "$1" in
       # Guard $2 so a trailing `--reviewers` (or one followed by a flag) is a clean usage
       # error, not a `set -u` unbound-variable crash.
-      --reviewers)   [ $# -ge 2 ] || die "--reviewers needs a list (e.g. --reviewers codex,kimi3)."
+      --reviewers)   [ $# -ge 2 ] || die "--reviewers needs a list (e.g. --reviewers codex,glm)."
                      case "$2" in -*) die "--reviewers needs a list, got the flag '$2'.";; esac
                      reviewers="$2"; have_reviewers=1; shift 2;;
       --reviewers=*) die "pass reviewers as two tokens: --reviewers <list> (the --reviewers=... form isn't supported)." ;;
@@ -473,13 +510,29 @@ cmd_plan_review() {
     fi
   fi
 
+  # The seat's old spellings, reported HERE and nowhere else. `load_config` runs for every
+  # command, so warning from inside it would print this on every `ship-feature relay` and
+  # `ship-feature preflight` too — a deprecation notice about a plan-review seat, on a
+  # cross-review run, about a key that pr-review-relay still accepts in its own PANEL_SEATS.
+  # Recorded by the loaders, emitted once each, before the panel is dispatched.
+  # Tokens are `<origin>:<key>` with no spaces, so the word-split below is safe and the origin
+  # survives: a user who has the key in two places needs to be told which one is dead.
+  local _dep
+  for _dep in $SF_DEPRECATED_SEAT_KEYS; do
+    case "$_dep" in
+      env:KIMI3_REVIEW_MODEL)    warn "KIMI3_REVIEW_MODEL is set in the ENVIRONMENT. It is the old name of GLM_REVIEW_MODEL and is IGNORED — the plan-review seat is now 'glm'. Rename it (and check your shell profile), or the seat runs its default model.";;
+      file:KIMI3_REVIEW_MODEL)   warn "KIMI3_REVIEW_MODEL is set in ship-feature's config. It is the old name of GLM_REVIEW_MODEL and is IGNORED — the plan-review seat is now 'glm'. Rename it, or the seat runs its default model.";;
+      shared:MODEL_kimi3)        warn "MODEL_kimi3 is set in the shared panel config. It is the old name of MODEL_glm and is IGNORED HERE — the plan-review seat is now 'glm'. Rename it, or the seat runs its default model. (pr-review-relay still accepts the old key in its own PANEL_SEATS.)";;
+    esac
+  done
+
   # Panel: --reviewers > SHIP_FEATURE_REVIEWERS > refuse. The resolved panel is your
   # QUORUM: every named+supported reviewer is required (a missing CLI fails the round),
   # so a review never silently passes on a thinned panel. agy/opencode are the exception.
   # An explicit but empty `--reviewers ""` is a usage error, not a silent fall-through to
   # the env panel (which would surprise a user who meant to name a list).
   if [ "$have_reviewers" = 1 ]; then
-    [ -n "$reviewers" ] || die "--reviewers was empty — name at least one (e.g. --reviewers codex,kimi3)."
+    [ -n "$reviewers" ] || die "--reviewers was empty — name at least one (e.g. --reviewers codex,glm)."
   else
     # Plan review can want a different (usually smaller) panel than the PR cross-review:
     # SHIP_FEATURE_PLAN_REVIEWERS is preferred, falling back to the shared quorum.
@@ -574,18 +627,23 @@ have found something serious, write it down before you go looking for the next t
   # local, since traps fire once the function has already returned.
   local CURSOR_REVIEW_MODEL="${CURSOR_REVIEW_MODEL:-composer-2.5}"
 
-  # Pin the kimi3 reviewer's model. Same override pattern as CURSOR_REVIEW_MODEL above: config
+  # Pin the glm reviewer's model. Same override pattern as CURSOR_REVIEW_MODEL above: config
   # file or environment, local so the override survives without leaking to global scope. Left
   # unset in BOTH, it falls back to the bundled OpenCode Go tier — put
-  # KIMI3_REVIEW_MODEL=openrouter/<vendor>/<model> in the config file to route through a
-  # pay-as-you-go OpenRouter model instead. This seat is where Kimi K3 and GLM sit, and which
-  # one is better is a property of the code under review, not of the seat: GLM won a measured
+  # GLM_REVIEW_MODEL=openrouter/<vendor>/<model> in the config file to route through a
+  # pay-as-you-go OpenRouter model instead.
+  #
+  # THE SEAT IS THE RUNNER, NOT THE MODEL. `glm` names the opencode runner pinned read-only, and
+  # which model sits on it is this one line. It has carried Kimi K3 and two GLM releases, and
+  # which is better is a property of the code under review, not of the seat: GLM won a measured
   # bake-off on a Kotlin diff, while Rails' own AI evals put Kimi K3 24 points ahead on Rails
-  # tasks. That is a line in a config file, which is the point of it being there.
-  local KIMI3_REVIEW_MODEL="${KIMI3_REVIEW_MODEL:-opencode-go/kimi-k3}"
+  # tasks. That is a line in a config file, which is the point of it being there. The seat was
+  # called `kimi3` until 2026-09 and by then had been running GLM for weeks — a name that lies
+  # about which model reviewed your plan, which is why it was renamed.
+  local GLM_REVIEW_MODEL="${GLM_REVIEW_MODEL:-opencode-go/glm-5.3}"
 
   # Pin the grok45high reviewer's model. Same override pattern as CURSOR_REVIEW_MODEL and
-  # KIMI3_REVIEW_MODEL above: config file or environment, local so the override survives without
+  # GLM_REVIEW_MODEL above: config file or environment, local so the override survives without
   # leaking to global scope. Defaults to grok-4.6 (xAI released it 2026-08-12); set
   # GROK45HIGH_REVIEW_MODEL=grok-<version> in the config file to pin a different one without
   # editing this script.
@@ -620,7 +678,7 @@ have found something serious, write it down before you go looking for the next t
 
   # Does the checkout carry its own opencode configuration?
   #
-  # kimi3 reads the tree it reviews, which means the tree could otherwise reconfigure the
+  # glm reads the tree it reviews, which means the tree could otherwise reconfigure the
   # reviewer — MCP servers, agents, model routing. Permissions are already pinned by
   # OPENCODE_CONFIG_CONTENT and cannot be overridden, but nothing else is, and there is no
   # permission key for "ignore this repo's config". So when one of these exists the seat
@@ -643,7 +701,7 @@ have found something serious, write it down before you go looking for the next t
   # trailing slash, and misses a symlinked $HOME against a physical $PWD — and the cost of
   # missing is not a warning, it is `~/.opencode` matching and every review silently degrading
   # to prose, which is the failure this bound exists to prevent.
-  kimi3_repo_config() {
+  glm_repo_config() {
     local dir f home="" stop="" main=""
     dir="$(cd "$PWD" 2>/dev/null && pwd -P)" || dir="$PWD"
     [ -n "${HOME:-}" ] && home="$(cd "$HOME" 2>/dev/null && pwd -P)"
@@ -677,7 +735,7 @@ have found something serious, write it down before you go looking for the next t
 
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
   # under --parallel neither the reviews nor the failure messages interleave; the caller
-  # emits them in panel order after the barrier. kimi3 cannot modify your working tree: it pins
+  # emits them in panel order after the barrier. glm cannot modify your working tree: it pins
   # read-only through OPENCODE_CONFIG_CONTENT (opencode's highest-precedence config layer, applied
   # last so it wins over any merged global/project config) denying `edit`+`bash`, unsets any
   # inherited OPENCODE_CONFIG* so a hostile env can't pre-seed "allow", and adds --pure +
@@ -693,7 +751,7 @@ have found something serious, write it down before you go looking for the next t
       claude) out=$(printf '%s' "$plan" | run_reviewer claude -p --permission-mode plan --safe-mode "$PROMPT" 2>"$errf"); rc=$?;;
       codex)  out=$(printf '%s' "$plan" | run_reviewer codex exec --sandbox read-only "$PROMPT" 2>"$errf"); rc=$?;;
       cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask --model "$CURSOR_REVIEW_MODEL" 2>"$errf"); rc=$?;;
-      kimi3)  # Pin read-only via OPENCODE_CONFIG_CONTENT — the HIGHEST-precedence config layer
+      glm)    # Pin read-only via OPENCODE_CONFIG_CONTENT — the HIGHEST-precedence config layer
               # (it is applied last, so it wins over any merged global/project/OPENCODE_CONFIG value;
               # verified: it overrides even a project opencode.json that sets edit/bash "allow").
               # Denying `edit`+`bash` removes those tools entirely, so nothing can be written — not
@@ -749,7 +807,7 @@ have found something serious, write it down before you go looking for the next t
               # todowrite, webfetch, websearch) — checked, not guessed, because an unknown key
               # here would be ignored silently and the seat would keep failing the same way.
               ro_cwd=""
-              if repo_opencode_config="$(kimi3_repo_config)"; then
+              if repo_opencode_config="$(glm_repo_config)"; then
                 # FAIL CLOSED. If the isolated dir cannot be created, the alternative is running
                 # in the very checkout whose config we just refused to load — while the note
                 # below tells the reader it was isolated. Skip the seat instead: a missing
@@ -765,7 +823,7 @@ have found something serious, write it down before you go looking for the next t
                     && unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR \
                     && export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","task":"deny","lsp":"deny"}}' \
                     && printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" \
-                       | run_reviewer opencode run --pure --agent plan -m "$KIMI3_REVIEW_MODEL" 2>"$errf"); rc=$?
+                       | run_reviewer opencode run --pure --agent plan -m "$GLM_REVIEW_MODEL" 2>"$errf"); rc=$?
               [ -n "$ro_cwd" ] && rm -rf "$ro_cwd"
               true;;
       grok45high)
@@ -1129,7 +1187,7 @@ have found something serious, write it down before you go looking for the next t
     if [ "$(cat "$f")" != ok ]; then failed=$((failed + 1)); names="$names ${f##*/k_}"; fi
   done
   if [ "$ran" = 0 ]; then
-    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, kimi3, grok45high, antigravity (aliases agy, gemini) — bare opencode and bare grok are relay-only. Pass --reviewers with a supported agent."
+    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, glm, grok45high, antigravity (aliases agy, gemini) — bare opencode and bare grok are relay-only. Pass --reviewers with a supported agent."
   fi
   if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Re-run THIS ROUND. If the SAME reviewer fails a SECOND consecutive attempt, drop that one reviewer, proceed with the rest, and tell the human about the reduced panel before Gate 1 — do not keep retrying it." >&2; return 3; fi
   echo "✔ Plan review done — $ran/$ran reviewer(s) responded (cap: 2 rounds, same full panel both times). READ the findings: no Blocker/plan-qualifying Should-fix → straight to Gate 1. Was this round 1 with a plan-qualifying finding → revise once and re-run. Was this round 2 with a plan-qualifying finding still open → do not run a round 3 on your own — write a disagreement summary (objection, classification, reason) and take it to Gate 1 instead." >&2
