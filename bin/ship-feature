@@ -90,7 +90,14 @@ load_config() {
   # The ENVIRONMENT spelling, checked BEFORE the early return below. Neither loader ever reads a
   # variable — they parse files — so an env-only stale key would otherwise be seen by nothing at
   # all, and on a machine with no ship-feature config this function returns two lines down.
-  [ -n "${KIMI3_REVIEW_MODEL:-}" ] && sf_note_deprecated env:KIMI3_REVIEW_MODEL
+  #
+  # ${VAR+x}, i.e. IS IT SET, not ${VAR:-}, i.e. is it non-empty — the opposite of the convention
+  # every model pin in this file uses. Deliberate: those keys ask "was a model configured", where
+  # empty means no. This one asks "does a dead name still exist in your environment", and
+  # `export KIMI3_REVIEW_MODEL=` is exactly that — a line in a shell profile that will keep
+  # looking like configuration to whoever reads it next. It never pinned anything, so nothing
+  # breaks either way; it is reported so it can be deleted rather than puzzled over.
+  [ -n "${KIMI3_REVIEW_MODEL+x}" ] && sf_note_deprecated env:KIMI3_REVIEW_MODEL
   [ -f "$cfg" ] || { load_shared_panel_config; return 0; }
   # `|| [ -n "$key$val" ]` so a file with NO FINAL NEWLINE does not lose its last line. Without
   # it, `read` returns non-zero on that line and the loop exits before the case runs —
