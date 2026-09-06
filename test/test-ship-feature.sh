@@ -345,7 +345,8 @@ if printf '%s' "$out" | grep -q -- "--reviewers codex,cursor" && ! printf '%s' "
 PBIN="$WORK/pbin"; mkdir -p "$PBIN"
 # The stub also surfaces the OPENCODE_CONFIG_CONTENT env (how glm pins read-only — the
 # highest-precedence config layer), the OPENCODE_CONFIG env (must be empty — glm unsets it),
-# and CWD (must be isolated, outside the checkout). Harmless for reviewers that don't set them.
+# and CWD (the checkout normally; an isolated dir only when the checkout carries its own opencode
+# config). Harmless for reviewers that don't set them.
 make_reviewer() {
   # $1 = review tag, $2 = exit code, $3 = binary name on PATH
   cat > "$PBIN/$3" <<STUB
@@ -834,9 +835,9 @@ dep2=$(printf 'plan\n' | PATH="$PBIN:$PATH" KIMI3_REVIEW_MODEL=openrouter/z-ai/g
 printf '%s' "$dep2" | grep -q 'KIMI3_REVIEW_MODEL is set in the ENVIRONMENT' \
   && { echo "  ok   [-] a stale KIMI3_REVIEW_MODEL in the environment is reported"; PASS=$((PASS+1)); } \
   || { echo "  FAIL a stale KIMI3_REVIEW_MODEL in the environment was silent"; FAIL=$((FAIL+1)); }
-printf '%s' "$dep2" | grep 'REVIEW-glm' | grep -q -- "-m openrouter/z-ai/glm-5.2" \
-  && { echo "  FAIL the old environment key still pinned the model"; FAIL=$((FAIL+1)); } \
-  || { echo "  ok   [-] the old environment key does not pin the model"; PASS=$((PASS+1)); }
+printf '%s' "$dep2" | grep 'REVIEW-glm' | grep -q -- "-m opencode-go/glm-5.3" \
+  && { echo "  ok   [-] the old environment key does not pin the model — the seat ran on its default"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the old environment key was honoured, or the seat never dispatched: $(printf '%s' "$dep2" | grep 'REVIEW-glm')"; FAIL=$((FAIL+1)); }
 
 # 3. The old key in ship-feature's OWN config file. A file-only pin never enters the environment,
 # so the check above cannot cover it, and load_config has no `*)` arm to catch it either.
@@ -845,9 +846,9 @@ dep3=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/depreca
 printf '%s' "$dep3" | grep -q "KIMI3_REVIEW_MODEL is set in ship-feature's config" \
   && { echo "  ok   [-] a stale KIMI3_REVIEW_MODEL in the config file is reported"; PASS=$((PASS+1)); } \
   || { echo "  FAIL a stale KIMI3_REVIEW_MODEL in the config file was silent"; FAIL=$((FAIL+1)); }
-printf '%s' "$dep3" | grep 'REVIEW-glm' | grep -q -- "-m openrouter/z-ai/glm-5.2" \
-  && { echo "  FAIL the old config key still pinned the model"; FAIL=$((FAIL+1)); } \
-  || { echo "  ok   [-] the old config key does not pin the model"; PASS=$((PASS+1)); }
+printf '%s' "$dep3" | grep 'REVIEW-glm' | grep -q -- "-m opencode-go/glm-5.3" \
+  && { echo "  ok   [-] the old config key does not pin the model — the seat ran on its default"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the old config key was honoured, or the seat never dispatched: $(printf '%s' "$dep3" | grep 'REVIEW-glm')"; FAIL=$((FAIL+1)); }
 
 # 4. The old key in the SHARED panel file — the exact failure that motivated this rename.
 printf 'MODEL_kimi3=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/deprecated2"
@@ -855,9 +856,9 @@ dep4=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG=/dev/null PR_REL
 printf '%s' "$dep4" | grep -q 'MODEL_kimi3 is set in the shared panel config' \
   && { echo "  ok   [-] a stale MODEL_kimi3 in the shared config is reported"; PASS=$((PASS+1)); } \
   || { echo "  FAIL a stale MODEL_kimi3 in the shared config was silent"; FAIL=$((FAIL+1)); }
-printf '%s' "$dep4" | grep 'REVIEW-glm' | grep -q -- "-m openrouter/z-ai/glm-5.2" \
-  && { echo "  FAIL the old shared key still pinned the model"; FAIL=$((FAIL+1)); } \
-  || { echo "  ok   [-] the old shared key does not pin the model"; PASS=$((PASS+1)); }
+printf '%s' "$dep4" | grep 'REVIEW-glm' | grep -q -- "-m opencode-go/glm-5.3" \
+  && { echo "  ok   [-] the old shared key does not pin the model — the seat ran on its default"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the old shared key was honoured, or the seat never dispatched: $(printf '%s' "$dep4" | grep 'REVIEW-glm')"; FAIL=$((FAIL+1)); }
 
 # 5. MIXED: a stale KIMI3_REVIEW_MODEL in the environment must NOT suppress a valid MODEL_glm in
 # the shared file. from_env_glm keys off GLM_REVIEW_MODEL alone; if it were armed by the old name,
@@ -881,23 +882,38 @@ printf '%s' "$dep5" | grep -q 'KIMI3_REVIEW_MODEL is set in the ENVIRONMENT' \
 # on every command. Caught by mutating load_config to warn unconditionally and watching this block
 # stay green. An absence test without a liveness check is not a test.
 printf '#!/usr/bin/env bash\necho "RELAY-STDOUT-MARKER"\nexit 0\n' > "$BIN/pr-review-relay"; chmod +x "$BIN/pr-review-relay"
-dep6=$(cd "$MAIN/.claude/worktrees/feat" && PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/deprecated1" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" preflight 2>&1)
+# BOTH warning texts have to be exercised, and they share no substring: the shared-key warning
+# says MODEL_kimi3 and never says KIMI3_REVIEW_MODEL. Grepping only the latter would leave the
+# shared arm untested here — move it into load_shared_panel_config and `relay` would print it on
+# every run with this block still green. So each command below is given all three stale spellings
+# at once (environment, ship-feature's own file, and the shared panel file) and is checked against
+# both texts.
+dep6=$(cd "$MAIN/.claude/worktrees/feat" && PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/deprecated1" PR_RELAY_CONFIG="$CFGDIR/deprecated2" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" preflight 2>&1)
 # Liveness marker is preflight's FIRST check, not its verdict: whether preflight passes here
 # depends on what earlier tests did to this worktree, and that is not what this assertion is
 # about. All it has to prove is that the command ran far enough to have loaded config.
 printf '%s' "$dep6" | grep -q 'default branch:' \
   && { echo "  ok   [-] the preflight deprecation check actually ran preflight"; PASS=$((PASS+1)); } \
   || { echo "  FAIL preflight did not run — the absence check below would be vacuous: $dep6"; FAIL=$((FAIL+1)); }
-printf '%s' "$dep6" | grep -q 'KIMI3_REVIEW_MODEL' \
+printf '%s' "$dep6" | grep -qE 'KIMI3_REVIEW_MODEL|MODEL_kimi3' \
   && { echo "  FAIL preflight printed a plan-review deprecation warning"; FAIL=$((FAIL+1)); } \
   || { echo "  ok   [-] preflight prints no plan-review deprecation warning"; PASS=$((PASS+1)); }
-dep7=$(PATH="$BIN:$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/deprecated1" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" relay --author claude 2>&1)
+dep7=$(PATH="$BIN:$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/deprecated1" PR_RELAY_CONFIG="$CFGDIR/deprecated2" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" relay --author claude 2>&1)
 printf '%s' "$dep7" | grep -q 'RELAY-STDOUT-MARKER' \
   && { echo "  ok   [-] the relay deprecation check actually ran relay"; PASS=$((PASS+1)); } \
   || { echo "  FAIL relay did not run — the absence check below would be vacuous: $dep7"; FAIL=$((FAIL+1)); }
-printf '%s' "$dep7" | grep -q 'KIMI3_REVIEW_MODEL' \
+printf '%s' "$dep7" | grep -qE 'KIMI3_REVIEW_MODEL|MODEL_kimi3' \
   && { echo "  FAIL relay printed a plan-review deprecation warning"; FAIL=$((FAIL+1)); } \
   || { echo "  ok   [-] relay prints no plan-review deprecation warning"; PASS=$((PASS+1)); }
+# And prove BOTH texts are reachable at all, or the two absence checks above could be passing
+# because no warning exists to print. Same run, same three stale keys, through plan-review.
+depb=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/deprecated1" PR_RELAY_CONFIG="$CFGDIR/deprecated2" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" plan-review --reviewers glm 2>&1)
+printf '%s' "$depb" | grep -q 'KIMI3_REVIEW_MODEL' && printf '%s' "$depb" | grep -q 'MODEL_kimi3' \
+  && { echo "  ok   [-] plan-review does print both deprecation texts for the same input"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a deprecation text is unreachable — the relay/preflight silence checks are vacuous"; FAIL=$((FAIL+1)); }
+# Restore the stub the relay tests further up installed, so this block cannot decide the outcome
+# of any relay assertion appended below it.
+printf '#!/usr/bin/env bash\necho "ARGS: $*"\nexit 0\n' > "$BIN/pr-review-relay"; chmod +x "$BIN/pr-review-relay"
 
 # GROK45HIGH_REVIEW_MODEL is the documented way to pin grok45high at a different Grok version —
 # same contract as CURSOR_REVIEW_MODEL/GLM_REVIEW_MODEL above: a pin that could not be
@@ -2048,7 +2064,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=330
+EXPECTED=331
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

@@ -22,7 +22,7 @@ All notable changes to **ship-feature** are documented here. This project follow
 
   | old | new | what happens now |
   |---|---|---|
-  | `kimi3` in `SHIP_FEATURE_PLAN_REVIEWERS` / `--reviewers` | `glm` | unknown reviewer — the round **fails** rather than passing on a thinned panel |
+  | `kimi3` in **any** reviewer list — `--reviewers`, `SHIP_FEATURE_PLAN_REVIEWERS`, `SHIP_FEATURE_REVIEWERS`, or `PLAN_REVIEWERS` / `REVIEWERS` in `~/.config/pr-review-relay/config` | `glm` | unknown reviewer — the round **fails** rather than passing on a thinned panel |
   | `KIMI3_REVIEW_MODEL` (environment) | `GLM_REVIEW_MODEL` | warned, ignored |
   | `KIMI3_REVIEW_MODEL` (`~/.config/ship-feature/config`) | `GLM_REVIEW_MODEL` | warned, ignored |
   | `MODEL_kimi3` (`~/.config/pr-review-relay/config`) | `MODEL_glm` | warned, ignored |

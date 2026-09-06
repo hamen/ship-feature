@@ -261,9 +261,18 @@ a dead key while the seat runs something else is the defect the rename removes:
 
 | old | new |
 |---|---|
-| `kimi3` in `SHIP_FEATURE_PLAN_REVIEWERS` / `--reviewers` | `glm` — the old name fails the round as an unknown reviewer |
+| `kimi3` in **any** reviewer list | `glm` — the old name fails the round as an unknown reviewer |
 | `KIMI3_REVIEW_MODEL` (environment or `~/.config/ship-feature/config`) | `GLM_REVIEW_MODEL` |
 | `MODEL_kimi3` in `~/.config/pr-review-relay/config` | `MODEL_glm` |
+
+**"Any reviewer list" means all four sources**, and the panel falls back through them in this
+order — rename `kimi3` in every one you have set, or the round still fails:
+
+1. `--reviewers` on the command line;
+2. `SHIP_FEATURE_PLAN_REVIEWERS` (environment, then `~/.config/ship-feature/config`);
+3. `SHIP_FEATURE_REVIEWERS`, the same two places;
+4. `PLAN_REVIEWERS`, then `REVIEWERS`, in `~/.config/pr-review-relay/config` — **the usual home**,
+   and the one most likely to be the line you actually have to edit.
 
 The warnings are printed by `plan-review` only, not by `relay` or `preflight`. Note that
 `pr-review-relay` still lists `kimi3` among its own seat names, so until that repo catches up it

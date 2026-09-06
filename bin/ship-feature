@@ -523,6 +523,9 @@ cmd_plan_review() {
       env:KIMI3_REVIEW_MODEL)    warn "KIMI3_REVIEW_MODEL is set in the ENVIRONMENT. It is the old name of GLM_REVIEW_MODEL and is IGNORED — the plan-review seat is now 'glm'. Rename it (and check your shell profile), or the seat runs its default model.";;
       file:KIMI3_REVIEW_MODEL)   warn "KIMI3_REVIEW_MODEL is set in ship-feature's config. It is the old name of GLM_REVIEW_MODEL and is IGNORED — the plan-review seat is now 'glm'. Rename it, or the seat runs its default model.";;
       shared:MODEL_kimi3)        warn "MODEL_kimi3 is set in the shared panel config. It is the old name of MODEL_glm and is IGNORED HERE — the plan-review seat is now 'glm'. Rename it, or the seat runs its default model. (pr-review-relay still accepts the old key in its own PANEL_SEATS.)";;
+      # A recorded token with no arm above would be recorded and never reported — silence, which is
+      # the exact failure this whole block exists to end. Fail loud on our own bug too.
+      *)                         warn "internal: no message for deprecated key token '$_dep' — please report this.";;
     esac
   done
 
