@@ -116,7 +116,7 @@ export PR_RELAY_CONFIG=/dev/null
 # come from the shared config. They are knobs people really do export, and an exported one would
 # satisfy the "no config at all -> the built-in default" assertion below: green on this machine,
 # red in CI, for a reason the assertion never mentions.
-unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL KIMI3_REVIEW_MODEL GROK45HIGH_REVIEW_MODEL PR_RELAY_OPENCODE_MODEL SHIP_FEATURE_PLAN_TIMEOUT PR_RELAY_AGENT_TIMEOUT SHIP_FEATURE_GEMINI_MODEL SHIP_FEATURE_GEMINI_TESTED_VERSIONS
+unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL GLM_REVIEW_MODEL KIMI3_REVIEW_MODEL GROK45HIGH_REVIEW_MODEL PR_RELAY_OPENCODE_MODEL SHIP_FEATURE_PLAN_TIMEOUT PR_RELAY_AGENT_TIMEOUT SHIP_FEATURE_GEMINI_MODEL SHIP_FEATURE_GEMINI_TESTED_VERSIONS
 # The gemini seat picks its auth method from the environment, and anyone who actually uses gemini
 # has one of these exported — a working machine is the normal case, not the exotic one. Leave them
 # in place and the seat takes the API-key path on this developer's box and the OAuth path in CI,
@@ -343,9 +343,10 @@ if printf '%s' "$out" | grep -q -- "--reviewers codex,cursor" && ! printf '%s' "
 # plus its argv (so the argv/read-only contract can be asserted). cursor's binary is
 # `cursor-agent`; the rest match their reviewer name.
 PBIN="$WORK/pbin"; mkdir -p "$PBIN"
-# The stub also surfaces the OPENCODE_CONFIG_CONTENT env (how kimi3 pins read-only — the
-# highest-precedence config layer), the OPENCODE_CONFIG env (must be empty — kimi3 unsets it),
-# and CWD (must be isolated, outside the checkout). Harmless for reviewers that don't set them.
+# The stub also surfaces the OPENCODE_CONFIG_CONTENT env (how glm pins read-only — the
+# highest-precedence config layer), the OPENCODE_CONFIG env (must be empty — glm unsets it),
+# and CWD (the checkout normally; an isolated dir only when the checkout carries its own opencode
+# config). Harmless for reviewers that don't set them.
 make_reviewer() {
   # $1 = review tag, $2 = exit code, $3 = binary name on PATH
   cat > "$PBIN/$3" <<STUB
@@ -369,9 +370,9 @@ STUB
 }
 make_reviewer claude 0 claude
 make_reviewer codex  0 codex
-# kimi3 is invoked through the `opencode` binary (opencode run --agent plan), so the stub
-# is named `opencode` but tags its output REVIEW-kimi3.
-make_reviewer kimi3  0 opencode
+# glm is invoked through the `opencode` binary (opencode run --agent plan), so the stub
+# is named `opencode` but tags its output REVIEW-glm.
+make_reviewer glm  0 opencode
 make_reviewer cursor 0 cursor-agent
 # grok45high is invoked through the `grok` binary
 make_reviewer grok45high 0 grok
@@ -462,15 +463,15 @@ GEMINISTUB
 chmod +x "$PBIN/gemini"
 
 # clean run with an explicit panel → exit 0, both reviews on stdout
-out=$(printf 'Step 1: X\nStep 2: Y\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,kimi3 2>/dev/null); rc=$?
+out=$(printf 'Step 1: X\nStep 2: Y\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,glm 2>/dev/null); rc=$?
 check "plan-review clean run exits 0" "$rc" 0
-printf '%s' "$out" | grep -q "REVIEW-codex" && printf '%s' "$out" | grep -q "REVIEW-kimi3" \
+printf '%s' "$out" | grep -q "REVIEW-codex" && printf '%s' "$out" | grep -q "REVIEW-glm" \
   && { echo "  ok   [-] plan-review prints each reviewer's output"; PASS=$((PASS+1)); } \
   || { echo "  FAIL plan-review dropped a reviewer's output"; FAIL=$((FAIL+1)); }
 
 # read-only argv contract: EVERY supported reviewer must carry its read-only flag, so the
 # "nothing is written" guarantee is real. A dropped flag here is a security regression.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,cursor,kimi3 2>/dev/null)
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,cursor,glm 2>/dev/null)
 # claude's own line must carry BOTH --permission-mode plan AND --safe-mode (safe-mode
 # stops checkout hooks/plugins/MCP from loading). Grep claude's line specifically so
 # another reviewer's flags can't satisfy this by accident.
@@ -487,21 +488,21 @@ printf '%s' "$cu" | grep -q -- "--mode=ask"                    && { echo "  ok  
 # CLAUDE one — so the agent that usually wrote the plan would be grading it while the panel reports
 # an independent "Cursor" reviewer. The pin is what keeps the panel honest, so it is asserted.
 printf '%s' "$cu" | grep -q -- "--model composer-2.5"  && { echo "  ok   [-] cursor model is pinned (not Auto)"; PASS=$((PASS+1)); } || { echo "  FAIL cursor model not pinned: $cu"; FAIL=$((FAIL+1)); }
-# kimi3's read-only guarantee: OPENCODE_CONFIG_CONTENT (highest-precedence config layer)
+# glm's read-only guarantee: OPENCODE_CONFIG_CONTENT (highest-precedence config layer)
 # DENIES `edit` AND `bash` (removing both tools — no write, no shell), OPENCODE_CONFIG is
 # unset (empty), it runs --pure, and never the all-allow build agent. The `plan` agent alone
 # denies edit but leaves bash allowed — not enough — so the CONTENT denial is what makes it
-# real. Assert all of it on kimi3's line.
+# real. Assert all of it on glm's line.
 #
-# The cwd is asserted by the PAIR below, not by one line: kimi3 READS THE CHECKOUT, because a
+# The cwd is asserted by the PAIR below, not by one line: glm READS THE CHECKOUT, because a
 # reviewer that cannot open the code can only review prose — it used to run in an empty dir and
 # returned empty reviews twice on 2026-08-14, having spent its turn looking for the repo. It
 # falls back to an isolated dir only when the checkout carries its own opencode config, which is
 # the one thing the permission denial above cannot pin down.
-km=$(printf '%s' "$out" | grep 'REVIEW-kimi3')
-printf '%s' "$km" | grep -q -- "--agent plan" && printf '%s' "$km" | grep -q -- "kimi-k3" && { echo "  ok   [-] kimi3 runs opencode plan agent (kimi-k3)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not on opencode plan agent"; FAIL=$((FAIL+1)); }
-printf '%s' "$km" | grep -q -- "--pure" && { echo "  ok   [-] kimi3 runs --pure (no checkout plugins)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 missing --pure"; FAIL=$((FAIL+1)); }
-printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && { echo "  ok   [-] kimi3 read-only via OPENCODE_CONFIG_CONTENT (edit+bash denied)"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 not hard read-only (OPENCODE_CONFIG_CONTENT must deny edit AND bash)"; FAIL=$((FAIL+1)); }
+km=$(printf '%s' "$out" | grep 'REVIEW-glm')
+printf '%s' "$km" | grep -q -- "--agent plan" && printf '%s' "$km" | grep -q -- "glm-5.3" && { echo "  ok   [-] glm runs opencode plan agent (glm-5.3)"; PASS=$((PASS+1)); } || { echo "  FAIL glm not on opencode plan agent"; FAIL=$((FAIL+1)); }
+printf '%s' "$km" | grep -q -- "--pure" && { echo "  ok   [-] glm runs --pure (no checkout plugins)"; PASS=$((PASS+1)); } || { echo "  FAIL glm missing --pure"; FAIL=$((FAIL+1)); }
+printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && { echo "  ok   [-] glm read-only via OPENCODE_CONFIG_CONTENT (edit+bash denied)"; PASS=$((PASS+1)); } || { echo "  FAIL glm not hard read-only (OPENCODE_CONFIG_CONTENT must deny edit AND bash)"; FAIL=$((FAIL+1)); }
 # The other denials are load-bearing now that the seat reads a tree, and each is one JSON edit
 # away from being dropped in silence:
 #   external_directory   a rejected external read KILLS the run — this is what produced the
@@ -515,16 +516,16 @@ printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"
 #                        denying bash while leaving this on still lets the reviewed tree run code
 for k in external_directory task webfetch websearch lsp; do
   printf '%s' "$km" | grep -q "\"$k\":\"deny\"" \
-    && { echo "  ok   [-] kimi3 denies $k"; PASS=$((PASS+1)); } \
-    || { echo "  FAIL kimi3 does not deny $k"; FAIL=$((FAIL+1)); }
+    && { echo "  ok   [-] glm denies $k"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL glm does not deny $k"; FAIL=$((FAIL+1)); }
 done
-printf '%s' "$km" | grep -q 'OPENCODE_CONFIG=\[\]' && { echo "  ok   [-] kimi3 unsets inherited OPENCODE_CONFIG"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 left OPENCODE_CONFIG set (could weaken perms)"; FAIL=$((FAIL+1)); }
+printf '%s' "$km" | grep -q 'OPENCODE_CONFIG=\[\]' && { echo "  ok   [-] glm unsets inherited OPENCODE_CONFIG"; PASS=$((PASS+1)); } || { echo "  FAIL glm left OPENCODE_CONFIG set (could weaken perms)"; FAIL=$((FAIL+1)); }
 # OPENCODE_CONFIG_DIR is the other half of "unsets any inherited OPENCODE_CONFIG*", and it was
 # only the comment that said so: the code unset one variable. A config DIR carries agents, MCP
 # servers and model settings just as a config file does.
-printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_DIR=\[\]' && { echo "  ok   [-] kimi3 unsets inherited OPENCODE_CONFIG_DIR"; PASS=$((PASS+1)); } || { echo "  FAIL kimi3 left OPENCODE_CONFIG_DIR set (agents/MCP could load)"; FAIL=$((FAIL+1)); }
-kcwd=$(printf '%s' "$km" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p'); case "$kcwd" in "") echo "  FAIL kimi3 cwd not captured"; FAIL=$((FAIL+1));; "$PWD") echo "  ok   [-] kimi3 reads the checkout"; PASS=$((PASS+1));; *) echo "  FAIL kimi3 ran outside the checkout ($kcwd) — it can only review prose from there"; FAIL=$((FAIL+1));; esac
-printf '%s' "$km" | grep -q -- "--agent build"         && { echo "  FAIL kimi3 uses the all-allow build agent"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] kimi3 never uses the all-allow build agent"; PASS=$((PASS+1)); }
+printf '%s' "$km" | grep -q 'OPENCODE_CONFIG_DIR=\[\]' && { echo "  ok   [-] glm unsets inherited OPENCODE_CONFIG_DIR"; PASS=$((PASS+1)); } || { echo "  FAIL glm left OPENCODE_CONFIG_DIR set (agents/MCP could load)"; FAIL=$((FAIL+1)); }
+kcwd=$(printf '%s' "$km" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p'); case "$kcwd" in "") echo "  FAIL glm cwd not captured"; FAIL=$((FAIL+1));; "$PWD") echo "  ok   [-] glm reads the checkout"; PASS=$((PASS+1));; *) echo "  FAIL glm ran outside the checkout ($kcwd) — it can only review prose from there"; FAIL=$((FAIL+1));; esac
+printf '%s' "$km" | grep -q -- "--agent build"         && { echo "  FAIL glm uses the all-allow build agent"; FAIL=$((FAIL+1)); } || { echo "  ok   [-] glm never uses the all-allow build agent"; PASS=$((PASS+1)); }
 # The other half of the cwd contract: a checkout that ships its OWN opencode config must push
 # the seat back into an isolated dir, and must SAY so. Permissions are pinned by the deny above
 # and cannot be overridden, but a repo config also carries MCP servers, agents and model
@@ -532,39 +533,39 @@ printf '%s' "$km" | grep -q -- "--agent build"         && { echo "  FAIL kimi3 u
 # to reconfigure the reviewer reading it.
 ocfg_repo="$WORK/ocfg"; mkdir -p "$ocfg_repo"
 ( cd "$ocfg_repo" && git init -q . && printf '{}\n' > opencode.json )
-ocfg_out=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
-ocfg_cwd=$(printf '%s' "$ocfg_out" | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+ocfg_out=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+ocfg_cwd=$(printf '%s' "$ocfg_out" | grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
 case "$ocfg_cwd" in
-  "$ocfg_repo"|"$ocfg_repo"/*) echo "  FAIL kimi3 read a checkout carrying its own opencode.json ($ocfg_cwd)"; FAIL=$((FAIL+1));;
-  "") echo "  FAIL kimi3 cwd not captured in the repo-config case"; FAIL=$((FAIL+1));;
-  *) echo "  ok   [-] kimi3 falls back to an isolated cwd when the checkout has an opencode config"; PASS=$((PASS+1));;
+  "$ocfg_repo"|"$ocfg_repo"/*) echo "  FAIL glm read a checkout carrying its own opencode.json ($ocfg_cwd)"; FAIL=$((FAIL+1));;
+  "") echo "  FAIL glm cwd not captured in the repo-config case"; FAIL=$((FAIL+1));;
+  *) echo "  ok   [-] glm falls back to an isolated cwd when the checkout has an opencode config"; PASS=$((PASS+1));;
 esac
 printf '%s' "$ocfg_out" | grep -q 'opencode.json would configure the reviewer' \
-  && { echo "  ok   [-] kimi3 announces the degraded review"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL kimi3 degraded silently — a prose-only review must say so"; FAIL=$((FAIL+1)); }
+  && { echo "  ok   [-] glm announces the degraded review"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL glm degraded silently — a prose-only review must say so"; FAIL=$((FAIL+1)); }
 # From a SUBDIRECTORY the config is still found: opencode discovers config by walking up, so a
 # check that only looked at $PWD would miss it and hand the reviewer a config we refused. This
 # is the case the walk-up exists for, and it is also this workflow's normal shape — plan-review
 # usually runs inside .claude/worktrees/<name>.
 mkdir -p "$ocfg_repo/sub/deeper"
-sub_out=$(cd "$ocfg_repo/sub/deeper" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
-sub_cwd=$(printf '%s' "$sub_out" | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+sub_out=$(cd "$ocfg_repo/sub/deeper" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+sub_cwd=$(printf '%s' "$sub_out" | grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
 case "$sub_cwd" in
-  "$ocfg_repo"|"$ocfg_repo"/*) echo "  FAIL kimi3 missed an opencode config in a parent directory ($sub_cwd)"; FAIL=$((FAIL+1));;
-  "") echo "  FAIL kimi3 cwd not captured in the subdirectory case"; FAIL=$((FAIL+1));;
-  *) echo "  ok   [-] kimi3 finds an opencode config above the cwd"; PASS=$((PASS+1));;
+  "$ocfg_repo"|"$ocfg_repo"/*) echo "  FAIL glm missed an opencode config in a parent directory ($sub_cwd)"; FAIL=$((FAIL+1));;
+  "") echo "  FAIL glm cwd not captured in the subdirectory case"; FAIL=$((FAIL+1));;
+  *) echo "  ok   [-] glm finds an opencode config above the cwd"; PASS=$((PASS+1));;
 esac
 printf '%s' "$sub_out" | grep -q 'would configure the reviewer' \
-  && { echo "  ok   [-] kimi3 announces the degraded review from a subdirectory too"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL kimi3 degraded silently from a subdirectory"; FAIL=$((FAIL+1)); }
+  && { echo "  ok   [-] glm announces the degraded review from a subdirectory too"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL glm degraded silently from a subdirectory"; FAIL=$((FAIL+1)); }
 
 # All THREE config names trigger the fallback. The function checks opencode.json, opencode.jsonc
 # and .opencode; only the first was exercised, so a typo in either of the others was free.
 for cfgname in opencode.jsonc .opencode; do
   rm -rf "${ocfg_repo:?}/opencode.json" "${ocfg_repo:?}/opencode.jsonc" "${ocfg_repo:?}/.opencode"
   if [ "$cfgname" = .opencode ]; then mkdir -p "$ocfg_repo/.opencode"; else printf '{}\n' > "$ocfg_repo/$cfgname"; fi
-  n_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null \
-          | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+  n_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null \
+          | grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
   case "$n_cwd" in
     "$ocfg_repo"|"$ocfg_repo"/*|"") echo "  FAIL $cfgname did not trigger the isolated fallback ($n_cwd)"; FAIL=$((FAIL+1));;
     *) echo "  ok   [-] $cfgname triggers the isolated fallback"; PASS=$((PASS+1));;
@@ -580,11 +581,11 @@ rm -rf "${ocfg_repo:?}/.opencode"; printf '{}\n' > "$ocfg_repo/opencode.json"
 wt_main="$WORK/wtmain"; mkdir -p "$wt_main"
 ( cd "$wt_main" && git init -q . && git commit -q --allow-empty -m init && printf '{}\n' > opencode.json \
   && git worktree add -q ".claude/worktrees/w" -b wtprobe >/dev/null 2>&1 )
-wt_cwd=$(cd "$wt_main/.claude/worktrees/w" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null \
-         | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+wt_cwd=$(cd "$wt_main/.claude/worktrees/w" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null \
+         | grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
 case "$wt_cwd" in
-  "$wt_main"/*|"") echo "  FAIL kimi3 missed the MAIN repo's opencode.json from a linked worktree ($wt_cwd)"; FAIL=$((FAIL+1));;
-  *) echo "  ok   [-] kimi3 finds the main checkout's opencode config from a linked worktree"; PASS=$((PASS+1));;
+  "$wt_main"/*|"") echo "  FAIL glm missed the MAIN repo's opencode.json from a linked worktree ($wt_cwd)"; FAIL=$((FAIL+1));;
+  *) echo "  ok   [-] glm finds the main checkout's opencode config from a linked worktree"; PASS=$((PASS+1));;
 esac
 
 # The $HOME bound, which the code comment calls load-bearing: `~/.opencode` exists on any
@@ -593,11 +594,11 @@ esac
 # one, put the checkout beneath it, and the seat must still read the checkout.
 home_probe="$WORK/homeprobe"; mkdir -p "$home_probe/.opencode" "$home_probe/repo"
 ( cd "$home_probe/repo" && git init -q . )
-hp_cwd=$(cd "$home_probe/repo" && printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$home_probe" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null \
-         | grep 'REVIEW-kimi3' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+hp_cwd=$(cd "$home_probe/repo" && printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$home_probe" bash "$CLI" plan-review --reviewers glm 2>/dev/null \
+         | grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
 case "$hp_cwd" in
-  "$home_probe/repo") echo "  ok   [-] kimi3 ignores ~/.opencode and still reads the checkout"; PASS=$((PASS+1));;
-  "") echo "  FAIL kimi3 cwd not captured in the HOME-bound case"; FAIL=$((FAIL+1));;
+  "$home_probe/repo") echo "  ok   [-] glm ignores ~/.opencode and still reads the checkout"; PASS=$((PASS+1));;
+  "") echo "  FAIL glm cwd not captured in the HOME-bound case"; FAIL=$((FAIL+1));;
   *) echo "  FAIL a config at \$HOME degraded the review ($hp_cwd) — every checkout under \$HOME would go prose-only"; FAIL=$((FAIL+1));;
 esac
 
@@ -614,11 +615,11 @@ if [ ! -e "$mkfail/used" ]; then : > "$mkfail/used"; exec /usr/bin/mktemp "\$@";
 exit 1
 STUB
 chmod +x "$mkfail/mktemp"
-fc_out=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$mkfail:$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>&1); fc_rc=$?
-if printf '%s' "$fc_out" | grep -q 'REVIEW-kimi3'; then
+fc_out=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$mkfail:$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>&1); fc_rc=$?
+if printf '%s' "$fc_out" | grep -q 'REVIEW-glm'; then
   echo "  FAIL the seat ran with no isolated cwd — in the checkout it was supposed to avoid"; FAIL=$((FAIL+1))
 else
-  echo "  ok   [-] kimi3 is skipped rather than run in a checkout it must not read"; PASS=$((PASS+1))
+  echo "  ok   [-] glm is skipped rather than run in a checkout it must not read"; PASS=$((PASS+1))
 fi
 printf '%s' "$fc_out" | grep -q 'no isolated cwd could be created' \
   && { echo "  ok   [-] the skipped seat says why"; PASS=$((PASS+1)); } \
@@ -628,14 +629,14 @@ printf '%s' "$fc_out" | grep -q 'no isolated cwd could be created' \
 # The panel used to be described in two places: who sits on it in this file, what they actually
 # run in the shell profile. A seat and its model could then drift apart, and a run with no shell
 # profile (cron, a fresh machine) silently got the bundled default instead of the pinned model.
-printf 'KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/config3"
-mout=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config3" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
+printf 'GLM_REVIEW_MODEL=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/config3"
+mout=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config3" bash "$CLI" plan-review --reviewers glm 2>/dev/null | grep 'REVIEW-glm')
 printf '%s' "$mout" | grep -q -- "-m openrouter/z-ai/glm-5.2" \
-  && { echo "  ok   [-] the config file pins the kimi3 model"; PASS=$((PASS+1)); } \
+  && { echo "  ok   [-] the config file pins the glm model"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the config file's model pin was ignored (seat fell back to the bundled default)"; FAIL=$((FAIL+1)); }
 # Environment still wins over the file, exactly like the SHIP_FEATURE_* keys.
-eout=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config3" KIMI3_REVIEW_MODEL=openrouter/moonshotai/kimi-k3 bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
-printf '%s' "$eout" | grep -q -- "-m openrouter/moonshotai/kimi-k3" \
+eout=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config3" GLM_REVIEW_MODEL=openrouter/z-ai/glm-9.9 bash "$CLI" plan-review --reviewers glm 2>/dev/null | grep 'REVIEW-glm')
+printf '%s' "$eout" | grep -q -- "-m openrouter/z-ai/glm-9.9" \
   && { echo "  ok   [-] the environment still overrides the config file's model pin"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the config file overrode an explicit environment model"; FAIL=$((FAIL+1)); }
 # pr-review-relay is a CHILD PROCESS, so its variable has to be EXPORTED, not merely assigned —
@@ -677,11 +678,11 @@ printf '%s' "$pout2" | grep 'REVIEW-cursor' | grep -q -- "--model composer-2.5]"
 
 # --- the SHARED panel config (pr-review-relay's file) is the last fallback ---------------------
 # Both tools drive the same seats on the same accounts, so the model a seat runs belongs to the
-# machine, not to whichever tool is invoking it. The relay's file has carried MODEL_kimi3 since
+# machine, not to whichever tool is invoking it. The relay's file has carried MODEL_glm since
 # 2026-08-14; reading it here is what makes one file the answer instead of two that drift.
-printf 'MODEL_kimi3=openrouter/moonshotai/kimi-k3\nMODEL_grok45high=grok-9.9\nMODEL_cursor=composer-9.9\n' > "$CFGDIR/shared1"
-sh1=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared1" bash "$CLI" plan-review --reviewers kimi3,grok45high,cursor 2>/dev/null)
-printf '%s' "$sh1" | grep 'REVIEW-kimi3' | grep -q -- "-m openrouter/moonshotai/kimi-k3" \
+printf 'MODEL_glm=openrouter/z-ai/glm-9.9\nMODEL_grok45high=grok-9.9\nMODEL_cursor=composer-9.9\n' > "$CFGDIR/shared1"
+sh1=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared1" bash "$CLI" plan-review --reviewers glm,grok45high,cursor 2>/dev/null)
+printf '%s' "$sh1" | grep 'REVIEW-glm' | grep -q -- "-m openrouter/z-ai/glm-9.9" \
   && printf '%s' "$sh1" | grep 'REVIEW-grok45high' | grep -q -- "-m grok-9.9" \
   && { echo "  ok   [-] the shared relay config pins the models"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the shared relay config was not read"; FAIL=$((FAIL+1)); }
@@ -702,40 +703,40 @@ printf '%s' "$sh6" | grep 'REVIEW-cursor' | grep -q -- "--model composer-9.9" \
   || { echo "  FAIL an empty env pin blocked the shared config"; FAIL=$((FAIL+1)); }
 # A file with NO FINAL NEWLINE keeps its last line. pr-review-relay's parser reads it, so
 # dropping it here would make the same file select different models in the two tools.
-printf 'MODEL_kimi3=openrouter/moonshotai/kimi-k3' > "$CFGDIR/shared5"
-sh7=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared5" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
-printf '%s' "$sh7" | grep 'REVIEW-kimi3' | grep -q -- "-m openrouter/moonshotai/kimi-k3" \
+printf 'MODEL_glm=openrouter/z-ai/glm-9.9' > "$CFGDIR/shared5"
+sh7=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared5" bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+printf '%s' "$sh7" | grep 'REVIEW-glm' | grep -q -- "-m openrouter/z-ai/glm-9.9" \
   && { echo "  ok   [-] a config file with no final newline keeps its last line"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the last line was dropped when the file had no final newline"; FAIL=$((FAIL+1)); }
 # Parser parity with pr-review-relay on a BOM'd file: it strips the BOM, so without this the
-# first key reads as "\ufeffMODEL_kimi3" here and "MODEL_kimi3" there — one file, two models.
-printf '\xef\xbb\xbfMODEL_kimi3=openrouter/moonshotai/kimi-k3\n' > "$CFGDIR/shared6"
-sh8=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared6" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
-printf '%s' "$sh8" | grep 'REVIEW-kimi3' | grep -q -- "-m openrouter/moonshotai/kimi-k3" \
+# first key reads as "\ufeffMODEL_glm" here and "MODEL_glm" there — one file, two models.
+printf '\xef\xbb\xbfMODEL_glm=openrouter/z-ai/glm-9.9\n' > "$CFGDIR/shared6"
+sh8=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared6" bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+printf '%s' "$sh8" | grep 'REVIEW-glm' | grep -q -- "-m openrouter/z-ai/glm-9.9" \
   && { echo "  ok   [-] a UTF-8 BOM does not hide the first key"; PASS=$((PASS+1)); } \
   || { echo "  FAIL a BOM'd shared config was not parsed like the relay parses it"; FAIL=$((FAIL+1)); }
 # HOME unset must not abort the command under `set -u`. A caller that passes both paths
 # explicitly has every right not to have one.
 env -u HOME PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG=/dev/null PR_RELAY_CONFIG="$CFGDIR/shared1" SHIP_FEATURE_PLANS_DIR="$WORK/plans" \
-  bash "$CLI" plan-review --reviewers kimi3 </dev/null >/dev/null 2>&1
+  bash "$CLI" plan-review --reviewers glm </dev/null >/dev/null 2>&1
 [ $? -ne 2 ] && { echo "  ok   [-] an unset HOME does not abort the run"; PASS=$((PASS+1)); } || { echo "  FAIL unset HOME aborted (unbound variable)"; FAIL=$((FAIL+1)); }
 # WHO sits on the panel comes from the shared file too. It was duplicated in both configs —
 # identical today, free to drift tomorrow, and a panel that differs between the plan gate and the
 # PR gate is something you discover from a verdict.
-printf 'REVIEWERS=codex,grok\nPLAN_REVIEWERS=codex,kimi3\n' > "$CFGDIR/shared7"
+printf 'REVIEWERS=codex,grok\nPLAN_REVIEWERS=codex,glm\n' > "$CFGDIR/shared7"
 sh9=$(PATH="$BIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared7" bash "$CLI" relay --author claude 2>/dev/null)
 printf '%s' "$sh9" | grep -q -- "--reviewers codex,grok" \
   && { echo "  ok   [-] the shared file names the relay panel"; PASS=$((PASS+1)); } \
   || { echo "  FAIL REVIEWERS was not read from the shared file"; FAIL=$((FAIL+1)); }
 sh10=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared7" bash "$CLI" plan-review 2>/dev/null)
-printf '%s' "$sh10" | grep -q 'REVIEW-kimi3' && printf '%s' "$sh10" | grep -q 'REVIEW-codex' \
+printf '%s' "$sh10" | grep -q 'REVIEW-glm' && printf '%s' "$sh10" | grep -q 'REVIEW-codex' \
   && ! printf '%s' "$sh10" | grep -q 'REVIEW-grok45high' \
   && { echo "  ok   [-] the shared file names the plan-review panel"; PASS=$((PASS+1)); } \
   || { echo "  FAIL PLAN_REVIEWERS was not read from the shared file"; FAIL=$((FAIL+1)); }
 # ship-feature's own config still wins, so one tool can differ on purpose.
 printf 'SHIP_FEATURE_PLAN_REVIEWERS=codex\n' > "$CFGDIR/shared8"
 sh11=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/shared8" PR_RELAY_CONFIG="$CFGDIR/shared7" bash "$CLI" plan-review 2>/dev/null)
-printf '%s' "$sh11" | grep -q 'REVIEW-codex' && ! printf '%s' "$sh11" | grep -q 'REVIEW-kimi3' \
+printf '%s' "$sh11" | grep -q 'REVIEW-codex' && ! printf '%s' "$sh11" | grep -q 'REVIEW-glm' \
   && { echo "  ok   [-] ship-feature's own panel beats the shared one"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the shared panel overrode ship-feature's own"; FAIL=$((FAIL+1)); }
 # An explicitly EMPTY environment value still disables the injected quorum — that is what the
@@ -747,19 +748,19 @@ printf '%s' "$sh12" | grep -q -- "--reviewers" \
 # LAST value wins within the shared file, as in pr-review-relay's own parser. Guarding only on
 # "is it set" kept the FIRST line here while the relay kept the last — a valid file handing the
 # two tools different panels, which is the thing reading one file is supposed to prevent.
-printf 'REVIEWERS=codex\nMODEL_kimi3=openrouter/z-ai/glm-5.2\nREVIEWERS=codex,grok\nMODEL_kimi3=openrouter/moonshotai/kimi-k3\n' > "$CFGDIR/shared9"
+printf 'REVIEWERS=codex\nMODEL_glm=openrouter/z-ai/glm-5.2\nREVIEWERS=codex,grok\nMODEL_glm=openrouter/z-ai/glm-9.9\n' > "$CFGDIR/shared9"
 sh13=$(PATH="$BIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared9" bash "$CLI" relay --author claude 2>/dev/null)
 printf '%s' "$sh13" | grep -q -- "--reviewers codex,grok" \
   && { echo "  ok   [-] a repeated key takes the LAST value, like the relay"; PASS=$((PASS+1)); } \
   || { echo "  FAIL a repeated key kept the first value (the relay would keep the last)"; FAIL=$((FAIL+1)); }
-sh14=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared9" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
-printf '%s' "$sh14" | grep 'REVIEW-kimi3' | grep -q -- "-m openrouter/moonshotai/kimi-k3" \
+sh14=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared9" bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+printf '%s' "$sh14" | grep 'REVIEW-glm' | grep -q -- "-m openrouter/z-ai/glm-9.9" \
   && { echo "  ok   [-] a repeated model pin takes the LAST value too"; PASS=$((PASS+1)); } \
   || { echo "  FAIL a repeated model pin kept the first value"; FAIL=$((FAIL+1)); }
 # The empty-environment contract, on the OTHER key. PLAN_REVIEWERS is its own line of code, so a
 # typo there would pass every test above.
 sh15=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared7" SHIP_FEATURE_PLAN_REVIEWERS= SHIP_FEATURE_REVIEWERS=codex bash "$CLI" plan-review 2>/dev/null)
-printf '%s' "$sh15" | grep -q 'REVIEW-codex' && ! printf '%s' "$sh15" | grep -q 'REVIEW-kimi3' \
+printf '%s' "$sh15" | grep -q 'REVIEW-codex' && ! printf '%s' "$sh15" | grep -q 'REVIEW-glm' \
   && { echo "  ok   [-] an empty plan panel falls back to the quorum, not to the shared file"; PASS=$((PASS+1)); } \
   || { echo "  FAIL an empty SHIP_FEATURE_PLAN_REVIEWERS did not survive the shared file"; FAIL=$((FAIL+1)); }
 # Closing the 2x2: a SET environment quorum must beat the shared file on the relay side too.
@@ -774,14 +775,14 @@ printf '%s' "$sh5" | grep 'REVIEW-grok45high' | grep -q -- "-m grok-0.0" \
   || { echo "  ok   [-] MODEL_grok is left to the relay's own seat"; PASS=$((PASS+1)); }
 # ship-feature's OWN config wins over the shared one — a per-tool override has to be possible,
 # or consolidating would mean losing the ability to differ on purpose.
-printf 'KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/shared2"
-sh2=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/shared2" PR_RELAY_CONFIG="$CFGDIR/shared1" bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
-printf '%s' "$sh2" | grep 'REVIEW-kimi3' | grep -q -- "-m openrouter/z-ai/glm-5.2" \
+printf 'GLM_REVIEW_MODEL=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/shared2"
+sh2=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/shared2" PR_RELAY_CONFIG="$CFGDIR/shared1" bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+printf '%s' "$sh2" | grep 'REVIEW-glm' | grep -q -- "-m openrouter/z-ai/glm-5.2" \
   && { echo "  ok   [-] ship-feature's own config beats the shared one"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the shared config overrode ship-feature's own"; FAIL=$((FAIL+1)); }
 # And the environment still beats both.
-sh3=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/shared2" PR_RELAY_CONFIG="$CFGDIR/shared1" KIMI3_REVIEW_MODEL=opencode-go/kimi-k3 bash "$CLI" plan-review --reviewers kimi3 2>/dev/null)
-printf '%s' "$sh3" | grep 'REVIEW-kimi3' | grep -q -- "-m opencode-go/kimi-k3" \
+sh3=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/shared2" PR_RELAY_CONFIG="$CFGDIR/shared1" GLM_REVIEW_MODEL=opencode-go/glm-5.3-flash bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+printf '%s' "$sh3" | grep 'REVIEW-glm' | grep -q -- "-m opencode-go/glm-5.3-flash" \
   && { echo "  ok   [-] the environment beats both config files"; PASS=$((PASS+1)); } \
   || { echo "  FAIL a config file overrode an explicit environment model"; FAIL=$((FAIL+1)); }
 # MODEL_opencode is NOT mapped: that seat is pr-review-relay's own, and it reads this same file.
@@ -798,22 +799,147 @@ printf '%s' "$sh4" | grep -q 'PR_RELAY_OPENCODE_MODEL=unset' \
 
 # REGRESSION (Codex round 3): a HOSTILE inherited OPENCODE_CONFIG_CONTENT that re-enables
 # edit/bash must be overridden by our deny (we own the highest-precedence layer).
-hostile=$(printf 'plan\n' | PATH="$PBIN:$PATH" OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"allow","bash":"allow"}}' bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
-printf '%s' "$hostile" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && ! printf '%s' "$hostile" | grep -q '"edit":"allow"' && { echo "  ok   [-] kimi3 overrides a hostile inherited OPENCODE_CONFIG_CONTENT"; PASS=$((PASS+1)); } || { echo "  FAIL a hostile OPENCODE_CONFIG_CONTENT survived (read-only bypass)"; FAIL=$((FAIL+1)); }
+hostile=$(printf 'plan\n' | PATH="$PBIN:$PATH" OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"allow","bash":"allow"}}' bash "$CLI" plan-review --reviewers glm 2>/dev/null | grep 'REVIEW-glm')
+printf '%s' "$hostile" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' && ! printf '%s' "$hostile" | grep -q '"edit":"allow"' && { echo "  ok   [-] glm overrides a hostile inherited OPENCODE_CONFIG_CONTENT"; PASS=$((PASS+1)); } || { echo "  FAIL a hostile OPENCODE_CONFIG_CONTENT survived (read-only bypass)"; FAIL=$((FAIL+1)); }
 
 # CURSOR_REVIEW_MODEL is the documented way out if Cursor retires the pinned id, so it is part of
 # the contract rather than a convenience: a pin that could not be overridden would be a dead end.
 cuo=$(printf 'plan\n' | PATH="$PBIN:$PATH" CURSOR_REVIEW_MODEL=cursor-grok-4.5-high bash "$CLI" plan-review --reviewers cursor 2>/dev/null | grep 'REVIEW-cursor')
 printf '%s' "$cuo" | grep -q -- "--model cursor-grok-4.5-high" && { echo "  ok   [-] CURSOR_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL CURSOR_REVIEW_MODEL ignored: $cuo"; FAIL=$((FAIL+1)); }
 
-# KIMI3_REVIEW_MODEL is the documented way to route kimi3 at a pay-as-you-go model (e.g. an
+# GLM_REVIEW_MODEL is the documented way to route glm at a pay-as-you-go model (e.g. an
 # OpenRouter id) instead of the bundled OpenCode Go tier — same contract as CURSOR_REVIEW_MODEL
 # above: a pin that could not be overridden would be a dead end.
-kmo=$(printf 'plan\n' | PATH="$PBIN:$PATH" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" plan-review --reviewers kimi3 2>/dev/null | grep 'REVIEW-kimi3')
-printf '%s' "$kmo" | grep -q -- "-m openrouter/z-ai/glm-5.2" && { echo "  ok   [-] KIMI3_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL KIMI3_REVIEW_MODEL ignored: $kmo"; FAIL=$((FAIL+1)); }
+kmo=$(printf 'plan\n' | PATH="$PBIN:$PATH" GLM_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" plan-review --reviewers glm 2>/dev/null | grep 'REVIEW-glm')
+printf '%s' "$kmo" | grep -q -- "-m openrouter/z-ai/glm-5.2" && { echo "  ok   [-] GLM_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL GLM_REVIEW_MODEL ignored: $kmo"; FAIL=$((FAIL+1)); }
+
+# --- the seat's OLD name is dead, and dies LOUDLY ----------------------------------------------
+# This seat was `kimi3` until 2026-09. Renaming it in a config file alone is what motivated the
+# rename in code: `MODEL_glm` used to hit no case arm at all, get dropped in silence, and leave the
+# seat on its built-in default while the config plainly named another model. Every stale spelling
+# must therefore be LOUD. Each assertion below keeps stderr (2>&1) — the surrounding tests use
+# 2>/dev/null, and copying that here would make every one of them pass vacuously.
+
+# 1. The old SEAT name is an unknown reviewer: the round fails rather than passing on a thinned panel.
+dep1=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers kimi3 2>&1); dep1_rc=$?
+printf '%s' "$dep1" | grep -q "unknown reviewer 'kimi3'" \
+  && { echo "  ok   [-] the old seat name 'kimi3' is rejected as unknown"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL 'kimi3' did not fail as an unknown reviewer: $dep1"; FAIL=$((FAIL+1)); }
+[ "$dep1_rc" -ne 0 ] \
+  && { echo "  ok   [-] a panel naming the old seat exits non-zero"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a panel naming 'kimi3' exited 0"; FAIL=$((FAIL+1)); }
+
+# 2. The old key in the ENVIRONMENT: warned about, and NOT honoured. The value below is a real id
+# and is deliberately NOT the new default, so honouring it would be visible in the -m argument.
+dep2=$(printf 'plan\n' | PATH="$PBIN:$PATH" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" plan-review --reviewers glm 2>&1)
+printf '%s' "$dep2" | grep -q 'KIMI3_REVIEW_MODEL is set in the ENVIRONMENT' \
+  && { echo "  ok   [-] a stale KIMI3_REVIEW_MODEL in the environment is reported"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a stale KIMI3_REVIEW_MODEL in the environment was silent"; FAIL=$((FAIL+1)); }
+printf '%s' "$dep2" | grep 'REVIEW-glm' | grep -q -- "-m opencode-go/glm-5.3]" \
+  && { echo "  ok   [-] the old environment key does not pin the model — the seat ran on its default"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the old environment key was honoured, or the seat never dispatched: $(printf '%s' "$dep2" | grep 'REVIEW-glm')"; FAIL=$((FAIL+1)); }
+
+# 3. The old key in ship-feature's OWN config file. A file-only pin never enters the environment,
+# so the check above cannot cover it, and load_config has no `*)` arm to catch it either.
+printf 'KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/deprecated1"
+dep3=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/deprecated1" bash "$CLI" plan-review --reviewers glm 2>&1)
+printf '%s' "$dep3" | grep -q "KIMI3_REVIEW_MODEL is set in ship-feature's config" \
+  && { echo "  ok   [-] a stale KIMI3_REVIEW_MODEL in the config file is reported"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a stale KIMI3_REVIEW_MODEL in the config file was silent"; FAIL=$((FAIL+1)); }
+printf '%s' "$dep3" | grep 'REVIEW-glm' | grep -q -- "-m opencode-go/glm-5.3]" \
+  && { echo "  ok   [-] the old config key does not pin the model — the seat ran on its default"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the old config key was honoured, or the seat never dispatched: $(printf '%s' "$dep3" | grep 'REVIEW-glm')"; FAIL=$((FAIL+1)); }
+
+# 4. The old key in the SHARED panel file — the exact failure that motivated this rename.
+printf 'MODEL_kimi3=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/deprecated2"
+dep4=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG=/dev/null PR_RELAY_CONFIG="$CFGDIR/deprecated2" bash "$CLI" plan-review --reviewers glm 2>&1)
+printf '%s' "$dep4" | grep -q 'MODEL_kimi3 is set in the shared panel config' \
+  && { echo "  ok   [-] a stale MODEL_kimi3 in the shared config is reported"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a stale MODEL_kimi3 in the shared config was silent"; FAIL=$((FAIL+1)); }
+printf '%s' "$dep4" | grep 'REVIEW-glm' | grep -q -- "-m opencode-go/glm-5.3]" \
+  && { echo "  ok   [-] the old shared key does not pin the model — the seat ran on its default"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the old shared key was honoured, or the seat never dispatched: $(printf '%s' "$dep4" | grep 'REVIEW-glm')"; FAIL=$((FAIL+1)); }
+
+# 5. MIXED: a stale KIMI3_REVIEW_MODEL in the environment must NOT suppress a valid MODEL_glm in
+# the shared file. from_env_glm keys off GLM_REVIEW_MODEL alone; if it were armed by the old name,
+# the shared pin would be skipped as "already provided by a higher source" — the very silent drop
+# this rename removes, rebuilt inside the fix for it.
+printf 'MODEL_glm=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/deprecated3"
+dep5=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG=/dev/null PR_RELAY_CONFIG="$CFGDIR/deprecated3" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-9.9 bash "$CLI" plan-review --reviewers glm 2>&1)
+printf '%s' "$dep5" | grep 'REVIEW-glm' | grep -q -- "-m openrouter/z-ai/glm-5.2" \
+  && { echo "  ok   [-] a stale env key does not suppress MODEL_glm from the shared file"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a stale KIMI3_REVIEW_MODEL suppressed the shared MODEL_glm pin: $(printf '%s' "$dep5" | grep 'REVIEW-glm')"; FAIL=$((FAIL+1)); }
+printf '%s' "$dep5" | grep -q 'KIMI3_REVIEW_MODEL is set in the ENVIRONMENT' \
+  && { echo "  ok   [-] and it is still reported"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the stale env key went unreported in the mixed case"; FAIL=$((FAIL+1)); }
+
+# 6. The warnings belong to plan-review ALONE. `relay` and `preflight` also call load_config, and a
+# deprecation notice about a plan-review seat has no business printing on a cross-review run —
+# especially while pr-review-relay still accepts MODEL_kimi3 in its own PANEL_SEATS.
+# Each of these asserts an ABSENCE, so each first proves the command actually RAN. An earlier
+# draft of this test ran `cd "$TMP"` — a variable this suite does not define — so the subshell
+# died, the output was empty, and "no warning present" passed while the warning was being printed
+# on every command. Caught by mutating load_config to warn unconditionally and watching this block
+# stay green. An absence test without a liveness check is not a test.
+printf '#!/usr/bin/env bash\necho "RELAY-STDOUT-MARKER"\nexit 0\n' > "$BIN/pr-review-relay"; chmod +x "$BIN/pr-review-relay"
+# BOTH warning texts have to be exercised, and they share no substring: the shared-key warning
+# says MODEL_kimi3 and never says KIMI3_REVIEW_MODEL. Grepping only the latter would leave the
+# shared arm untested here — move it into load_shared_panel_config and `relay` would print it on
+# every run with this block still green. So each command below is given all three stale spellings
+# at once (environment, ship-feature's own file, and the shared panel file) and is checked against
+# both texts.
+dep6=$(cd "$MAIN/.claude/worktrees/feat" && PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/deprecated1" PR_RELAY_CONFIG="$CFGDIR/deprecated2" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" preflight 2>&1)
+# Liveness marker is preflight's FIRST check, not its verdict: whether preflight passes here
+# depends on what earlier tests did to this worktree, and that is not what this assertion is
+# about. All it has to prove is that the command ran far enough to have loaded config.
+printf '%s' "$dep6" | grep -q 'default branch:' \
+  && { echo "  ok   [-] the preflight deprecation check actually ran preflight"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL preflight did not run — the absence check below would be vacuous: $dep6"; FAIL=$((FAIL+1)); }
+printf '%s' "$dep6" | grep -qE 'KIMI3_REVIEW_MODEL|MODEL_kimi3' \
+  && { echo "  FAIL preflight printed a plan-review deprecation warning"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] preflight prints no plan-review deprecation warning"; PASS=$((PASS+1)); }
+dep7=$(PATH="$BIN:$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/deprecated1" PR_RELAY_CONFIG="$CFGDIR/deprecated2" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" relay --author claude 2>&1)
+printf '%s' "$dep7" | grep -q 'RELAY-STDOUT-MARKER' \
+  && { echo "  ok   [-] the relay deprecation check actually ran relay"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL relay did not run — the absence check below would be vacuous: $dep7"; FAIL=$((FAIL+1)); }
+printf '%s' "$dep7" | grep -qE 'KIMI3_REVIEW_MODEL|MODEL_kimi3' \
+  && { echo "  FAIL relay printed a plan-review deprecation warning"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] relay prints no plan-review deprecation warning"; PASS=$((PASS+1)); }
+# 7. An EXPORTED BUT EMPTY old key is still a dead name in a profile, and is still reported. This
+# inverts the convention every model pin uses (empty means "not configured"), so it gets its own
+# assertion — the check is ${VAR+x}, and a regression to ${VAR:-} would go unnoticed otherwise.
+depe=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG=/dev/null KIMI3_REVIEW_MODEL= bash "$CLI" plan-review --reviewers glm 2>&1)
+printf '%s' "$depe" | grep -q 'KIMI3_REVIEW_MODEL is set in the ENVIRONMENT' \
+  && { echo "  ok   [-] an exported-but-empty old key is still reported"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL an exported-but-empty KIMI3_REVIEW_MODEL was silent"; FAIL=$((FAIL+1)); }
+printf '%s' "$depe" | grep 'REVIEW-glm' | grep -q -- "-m opencode-go/glm-5.3]" \
+  && { echo "  ok   [-] and the seat still runs its default"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the empty old key changed the model, or the seat never dispatched"; FAIL=$((FAIL+1)); }
+
+# 8. The realistic MIGRATION STATE: one shared file carrying BOTH keys, old and new, as it looks
+# mid-rename. The new one must win and the old one must still be reported — the arms are
+# independent, but this is the combination a user actually has on disk.
+printf 'MODEL_kimi3=openrouter/z-ai/glm-9.9\nMODEL_glm=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/deprecated4"
+depm=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG=/dev/null PR_RELAY_CONFIG="$CFGDIR/deprecated4" bash "$CLI" plan-review --reviewers glm 2>&1)
+printf '%s' "$depm" | grep 'REVIEW-glm' | grep -q -- "-m openrouter/z-ai/glm-5.2" \
+  && { echo "  ok   [-] with both keys in one file, MODEL_glm wins"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL MODEL_kimi3 beat MODEL_glm, or neither applied: $(printf '%s' "$depm" | grep 'REVIEW-glm')"; FAIL=$((FAIL+1)); }
+printf '%s' "$depm" | grep -q 'MODEL_kimi3 is set in the shared panel config' \
+  && { echo "  ok   [-] and the old key is still reported alongside it"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the old key went unreported when the new one was present"; FAIL=$((FAIL+1)); }
+
+# And prove BOTH texts are reachable at all, or the two absence checks above could be passing
+# because no warning exists to print. Same run, same three stale keys, through plan-review.
+depb=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/deprecated1" PR_RELAY_CONFIG="$CFGDIR/deprecated2" KIMI3_REVIEW_MODEL=openrouter/z-ai/glm-5.2 bash "$CLI" plan-review --reviewers glm 2>&1)
+printf '%s' "$depb" | grep -q 'KIMI3_REVIEW_MODEL' && printf '%s' "$depb" | grep -q 'MODEL_kimi3' \
+  && { echo "  ok   [-] plan-review does print both deprecation texts for the same input"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a deprecation text is unreachable — the relay/preflight silence checks are vacuous"; FAIL=$((FAIL+1)); }
+# Restore the stub the relay tests further up installed, so this block cannot decide the outcome
+# of any relay assertion appended below it.
+printf '#!/usr/bin/env bash\necho "ARGS: $*"\nexit 0\n' > "$BIN/pr-review-relay"; chmod +x "$BIN/pr-review-relay"
 
 # GROK45HIGH_REVIEW_MODEL is the documented way to pin grok45high at a different Grok version —
-# same contract as CURSOR_REVIEW_MODEL/KIMI3_REVIEW_MODEL above: a pin that could not be
+# same contract as CURSOR_REVIEW_MODEL/GLM_REVIEW_MODEL above: a pin that could not be
 # overridden would be a dead end when xAI ships the next model.
 gmo=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok GROK45HIGH_REVIEW_MODEL=grok-4.7 bash "$CLI" plan-review --reviewers grok45high 2>/dev/null | grep 'REVIEW-grok45high')
 printf '%s' "$gmo" | grep -q -- "-m grok-4.7" && { echo "  ok   [-] GROK45HIGH_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL GROK45HIGH_REVIEW_MODEL ignored: $gmo"; FAIL=$((FAIL+1)); }
@@ -1294,7 +1420,7 @@ printf '%s' "$out" | grep -q "REVIEW-claude" && printf '%s' "$out" | grep -q "RE
 
 # SHIP_FEATURE_PLAN_REVIEWERS overrides the shared quorum for plan-review (a smaller panel
 # than the PR cross-review). When both are set, the plan-specific one wins.
-out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,codex,cursor,kimi3 SHIP_FEATURE_PLAN_REVIEWERS=claude,codex bash "$CLI" plan-review 2>/dev/null); rc=$?
+out=$(printf 'a plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS=claude,codex,cursor,glm SHIP_FEATURE_PLAN_REVIEWERS=claude,codex bash "$CLI" plan-review 2>/dev/null); rc=$?
 check "plan-review prefers SHIP_FEATURE_PLAN_REVIEWERS" "$rc" 0
 if printf '%s' "$out" | grep -q "REVIEW-claude" && printf '%s' "$out" | grep -q "REVIEW-codex" && ! printf '%s' "$out" | grep -q "REVIEW-cursor"; then
   echo "  ok   [-] the plan-specific panel wins over the quorum"; PASS=$((PASS+1))
@@ -1302,7 +1428,7 @@ else echo "  FAIL plan-review did not prefer SHIP_FEATURE_PLAN_REVIEWERS"; FAIL=
 
 # a reviewer that returns an EMPTY review → not clean (exit 3)
 printf '#!/usr/bin/env bash\nexit 0\n' > "$PBIN/codex"; chmod +x "$PBIN/codex"
-( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,kimi3 >/dev/null 2>&1 ); check "plan-review empty review → not clean (3)" $? 3
+( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,glm >/dev/null 2>&1 ); check "plan-review empty review → not clean (3)" $? 3
 make_reviewer codex 0 codex   # restore
 
 # a NON-ZERO reviewer exit → not clean (exit 3)
@@ -1388,7 +1514,7 @@ done
 # Counting reviews cannot tell the two apart — a sequential run prints the same three. Three
 # reviewers that each sleep 1s take ~1s together and ~3s one after another, so the wall clock is
 # the only honest witness. Generous bounds: this must not go flaky on a loaded machine.
-# NB: the `kimi3` reviewer runs the `opencode` binary — stub the tool names, not the seat names.
+# NB: the `glm` reviewer runs the `opencode` binary — stub the tool names, not the seat names.
 OVERLAP_LOG="$WORK/overlap.log"
 for _slow in claude codex opencode; do
   cat > "$PBIN/$_slow" <<SLOWSTUB
@@ -1410,7 +1536,7 @@ done
 # is; it only needs the dispatch loop to start three processes within one stub's sleep.
 overlap_run() {   # $1 = extra args; echoes the run's stdout, leaves the log in $OVERLAP_LOG
   : > "$OVERLAP_LOG"
-  printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 $1 2>/dev/null
+  printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,glm $1 2>/dev/null
 }
 
 out=$(overlap_run "")
@@ -1433,29 +1559,29 @@ out=$(overlap_run "--parallel --sequential")
 shape=$(tr '\n' ' ' < "$OVERLAP_LOG")
 check "plan-review --parallel --sequential ends up sequential" "$shape" "start end start end start end "
 
-make_reviewer claude 0 claude; make_reviewer codex 0 codex; make_reviewer kimi3 0 opencode   # restore
+make_reviewer claude 0 claude; make_reviewer codex 0 codex; make_reviewer glm 0 opencode   # restore
 
 # Parallel is the DEFAULT, so the flagless run must behave like the --parallel one: reviews are
 # buffered and emitted in panel order after the barrier, and the banner does not say "sequential".
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 2>&1); rc=$?
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,glm 2>&1); rc=$?
 check "plan-review runs the panel in parallel with no flag (0)" "$rc" 0
 n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review (default) ran all three reviewers" "$n" 3
 n=$(printf '%s' "$out" | grep -c -- "— sequential"); check "plan-review (default) does not announce sequential" "$n" 0
 
 # --sequential is the opt-out: still clean, still every reviewer, and it says so on the banner.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 --sequential 2>&1); rc=$?
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,glm --sequential 2>&1); rc=$?
 check "plan-review --sequential clean run exits 0" "$rc" 0
 n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review --sequential ran all three reviewers" "$n" 3
 n=$(printf '%s' "$out" | grep -c -- "— sequential"); check "plan-review --sequential announces the mode" "$n" 1
 
 # --parallel: clean run exits 0 and prints every reviewer (order-independent)
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 --parallel 2>/dev/null); rc=$?
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,glm --parallel 2>/dev/null); rc=$?
 check "plan-review --parallel clean run exits 0" "$rc" 0
 n=$(printf '%s' "$out" | grep -c "REVIEW-"); check "plan-review --parallel ran all three reviewers" "$n" 3
 
 # --parallel is still fail-closed: one empty reviewer fails the whole round (3)
 printf '#!/usr/bin/env bash\nexit 0\n' > "$PBIN/codex"; chmod +x "$PBIN/codex"
-( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,kimi3 --parallel >/dev/null 2>&1 ); check "plan-review --parallel stays fail-closed (3)" $? 3
+( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex,glm --parallel >/dev/null 2>&1 ); check "plan-review --parallel stays fail-closed (3)" $? 3
 make_reviewer codex 0 codex   # restore
 
 # The EXIT trap must actually delete STATUS_DIR. It expands "$STATUS_DIR" when it fires, which is
@@ -1464,7 +1590,7 @@ make_reviewer codex 0 codex   # restore
 # each reviewer's buffered review in it) behind forever. That regression is invisible except for a
 # stderr line, which is why it survived ~310 leaks a day until someone counted /tmp.
 # Give the CLI its own TMPDIR so this measures only what plan-review created, and keep the panel to
-# codex: kimi3 forces TMPDIR=/tmp for its own isolated cwd, which would muddy the count.
+# codex: glm forces TMPDIR=/tmp for its own isolated cwd, which would muddy the count.
 leakdir="$WORK/leak"; mkdir -p "$leakdir"
 leakerr="$WORK/leak.err"
 ( printf 'plan\n' | PATH="$PBIN:$PATH" TMPDIR="$leakdir" bash "$CLI" plan-review --reviewers codex >/dev/null 2>"$leakerr" ); leakrc=$?
@@ -1961,7 +2087,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=316
+EXPECTED=335
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

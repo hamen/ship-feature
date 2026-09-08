@@ -46,7 +46,7 @@ which fans the plan out to your reviewer panel read-only and prints each review:
 
 ```
 ship-feature plan-review ~/.config/ship-feature/plans/<repo>-<slug>.md
-# to override the panel on purpose, append: --reviewers codex,kimi3
+# to override the panel on purpose, append: --reviewers codex,glm
 # or pipe it: cat ~/.config/ship-feature/plans/<repo>-<slug>.md | ship-feature plan-review
 ```
 
@@ -69,11 +69,11 @@ With no file and no stdin it reads
 (`--permission-mode plan --safe-mode`), `codex` (`--sandbox read-only`), `cursor` (ask mode, pinned to
 `$CURSOR_REVIEW_MODEL` — default `composer-2.5`, Cursor's own model — so Cursor's `Auto` cannot
 quietly route the review to a Claude model and have Claude grade a plan Claude wrote, and so the
-seat stays out of `grok45high`'s family too), `kimi3`
-(Kimi K3 via opencode, model pinned to `$KIMI3_REVIEW_MODEL` — default `opencode-go/kimi-k3`, the
+seat stays out of `grok45high`'s family too), `glm`
+(the opencode runner, model pinned to `$GLM_REVIEW_MODEL` — default `opencode-go/glm-5.3`, the
 bundled OpenCode Go tier, overridable to a pay-as-you-go model — pinned read-only by
 `OPENCODE_CONFIG_CONTENT` — the highest-precedence config
-layer — denying `edit`+`bash`, with inherited `OPENCODE_CONFIG*` unset, an isolated cwd, plus `--pure`
+layer — denying `edit`+`bash`, with inherited `OPENCODE_CONFIG*` unset, plus `--pure`
 and `--agent plan`), `grok45high` (Grok 4.6 high effort, model pinned to `$GROK45HIGH_REVIEW_MODEL` —
 default `grok-4.6` — via `grok --prompt-file`, running in your
 checkout with a read-only tool allowlist `--tools read_file,list_dir,grep`, the MCP bridge removed
@@ -94,17 +94,23 @@ run is fully isolated, gemini reviews the plan text only — it has no access to
 CLI **here** but to `agy` in `relay` — only `gemini` has a read-only mode. Bare `opencode` and bare
 `grok` are relay-only and skipped with a warning (use `grok45high` for plan review).
 
-Reviewers that run in the checkout — `claude`, `codex`, `cursor`, `grok45high` — can read the tree, so
-they check the plan against the code (a stale line number, a test the change would turn red). `kimi3`
-stays isolated. `grok45high` needs a working OS sandbox to read the tree: where one cannot be applied
-(Linux without bubblewrap) it degrades to an isolated, text-only review and says so above its output.
+Reviewers that run in the checkout — `claude`, `codex`, `cursor`, `glm`, `grok45high` — can read the
+tree, so they check the plan against the code (a stale line number, a test the change would turn red).
+`glm` has three states, in this order: it runs in the checkout; it falls back to an isolated empty
+directory when the checkout carries its own opencode config (`opencode.json`, `opencode.jsonc`,
+`.opencode`), because that config could otherwise reconfigure the reviewer, and it says so above its
+output; and it is **skipped entirely** if that isolated directory cannot be created, rather than
+running against a tree it cannot vouch for. `grok45high` needs a working OS sandbox to read the tree:
+where one cannot be applied (Linux without bubblewrap) it degrades to an isolated, text-only review and
+says so above its output.
 
 What "read-only" means here, precisely: each reviewer is pinned to its CLI's read-only mode and none of
 them is given a way to write your checkout or post anywhere. It is not a sandbox escape proof. Except for
 `claude --safe-mode`, an in-checkout reviewer loads that checkout's own agent config (`CLAUDE.md`,
 `AGENTS.md`, `.cursor`, `.grok`) and whatever hooks or plugins it declares — the same trust you already
-extend by opening the repo in that agent. Review a plan for a repository you do not trust with `kimi3`,
-or not at all.
+extend by opening the repo in that agent. `glm` is in that group too — it reads the checkout. The one
+seat that never does is `antigravity`/`gemini`, which is fully isolated and sees the plan text only, so
+review a plan for a repository you do not trust with that seat, or not at all.
 Exit `0` = every reviewer responded, `3` = a
 reviewer failed/timed out/returned empty (re-run — see the two-consecutive-failure rule below), `1` =
 usage error. The single-reviewer default still works too:

@@ -8,6 +8,48 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Changed
 
+- **BREAKING — the plan-review seat `kimi3` is now `glm`.** The old name was a lie and had been one
+  since 2026-08-11: the seat is the **opencode runner pinned read-only**, and which model sits on it
+  is one config line. It ran GLM 5.2 for a week, then Kimi K3, then GLM 5.3, while the panel header
+  kept naming a model that had not reviewed anything.
+
+  What forced the rename into code rather than config: renaming the key in a config file alone
+  **silently downgraded the seat**. `MODEL_glm` matched no case arm in `load_shared_panel_config`,
+  was dropped without a word, and the seat fell back to its built-in default — exit 0, no warning,
+  a plan reviewed by a different model than the config named.
+
+  Every old spelling is now loud. None is silently honoured:
+
+  | old | new | what happens now |
+  |---|---|---|
+  | `kimi3` in **any** reviewer list — `--reviewers`, `SHIP_FEATURE_PLAN_REVIEWERS`, `SHIP_FEATURE_REVIEWERS`, or `PLAN_REVIEWERS` / `REVIEWERS` in `~/.config/pr-review-relay/config` | `glm` | unknown reviewer — the round **fails** rather than passing on a thinned panel |
+  | `KIMI3_REVIEW_MODEL` (environment) | `GLM_REVIEW_MODEL` | warned, ignored |
+  | `KIMI3_REVIEW_MODEL` (`~/.config/ship-feature/config`) | `GLM_REVIEW_MODEL` | warned, ignored |
+  | `MODEL_kimi3` (`~/.config/pr-review-relay/config`) | `MODEL_glm` | warned, ignored |
+
+  The warnings are printed by `plan-review` only — never by `relay` or `preflight`, which also load
+  config and have no business reporting a plan-review seat.
+
+- **BREAKING — this seat's default model is now `opencode-go/glm-5.3`** (was `opencode-go/kimi-k3`).
+  Same bundled OpenCode Go tier, so nothing new needs paying for. This affects users who have **no**
+  stale spelling to be warned about: if you never pinned this seat, it changes model. Pin
+  `GLM_REVIEW_MODEL` to keep Kimi K3. A seat named `glm` that defaulted to a Moonshot model would
+  have rebuilt the exact defect the rename removes.
+
+- Corrected four long-standing false statements about this seat in `README.md` and `WORKFLOW.md`.
+  They said it runs isolated, outside the checkout; it has read the checkout since v0.5.0, and the
+  test suite has asserted so for as long. The docs now describe its three real states: it runs in
+  the checkout; it falls back to an isolated empty directory when the checkout carries its own
+  opencode config; and it is skipped entirely, fail-closed, if that directory cannot be created.
+
+  Note for anyone who followed the old advice to "review a plan for a repository you do not trust
+  with `kimi3`": that was wrong. The fully isolated seat is `antigravity`/`gemini`.
+
+- **Transitional noise, expected, not a bug:** `pr-review-relay` still lists `kimi3` among its own
+  `PANEL_SEATS`, so once you rename the key to `MODEL_glm` it prints one
+  `warning: no reviewer seat named 'glm'` line per run until that repo catches up. It is cosmetic —
+  the relay never read this key.
+
 - **Every adapter and WORKFLOW.md now say to run `relay` and `plan-review` WITHOUT `--reviewers`.**
   They used to say the opposite — "name the reviewers you have — the quorum — so a missing one
   fails rather than thinning the panel" — and that advice makes the cross-review quietly weaker.

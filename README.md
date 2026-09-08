@@ -144,10 +144,11 @@ ship-feature skill for any feature/fix.
   written or posted. Supported reviewers
   are the ones that can actually be constrained: `claude` (`--permission-mode plan --safe-mode`), `codex`
   (`--sandbox read-only`), `cursor` (ask/Q&A mode, pinned to `--model composer-2.5`; see
-  [Why the Cursor model is pinned](#why-the-cursor-model-is-pinned)), `kimi3` (Kimi K3 via opencode: `OPENCODE_CONFIG_CONTENT`
+  [Why the Cursor model is pinned](#why-the-cursor-model-is-pinned)), `glm` (the opencode runner: `OPENCODE_CONFIG_CONTENT`
   — opencode's highest-precedence config layer — denies the `edit`+`bash` permissions so it can't write
   even via shell and can't be overridden by a merged global/checkout config; inherited `OPENCODE_CONFIG*`
-  are unset, it runs in an isolated cwd outside the checkout, plus `--pure` and `--agent plan`),
+  are unset, plus `--pure` and `--agent plan`. It reads the checkout, falls back to an isolated cwd when
+  the checkout carries its own opencode config, and is skipped entirely if that cwd cannot be created),
   `grok45high` (Grok 4.6 high effort — pin with `GROK45HIGH_REVIEW_MODEL`, from the config file or the
   environment, same contract as `CURSOR_REVIEW_MODEL` below: `grok --prompt-file` — headless Grok ignores stdin — running in
   your checkout like `claude`/`codex`/`cursor`, held read-only by a tool **allowlist**
@@ -170,7 +171,7 @@ ship-feature skill for any feature/fix.
   `--safe-mode` on claude also stops any hooks/plugins/MCP in the checkout from loading.
   Bare `opencode` and bare `grok` are
   relay-only and skipped with a warning (a plain `opencode run` uses the
-  all-allow `build` agent — only the `kimi3` reviewer pins the read-only opencode `plan` agent; bare
+  all-allow `build` agent — only the `glm` reviewer pins the read-only opencode `plan` agent; bare
   `grok` is the PR-relay name — use `grok45high` here). The
   panel is your quorum — **omit `--reviewers` and it is taken from your config**
   (`SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`). Each resolves from the
@@ -185,7 +186,7 @@ ship-feature skill for any feature/fix.
   `1` = usage error. Per-reviewer timeout resolves highest-first: `SHIP_FEATURE_PLAN_TIMEOUT` (the
   environment, then `~/.config/ship-feature/config`), then `PR_RELAY_AGENT_TIMEOUT` from the
   environment, then **`AGENT_TIMEOUT` in `~/.config/pr-review-relay/config`** — the one place to set
-  it for this tool and `pr-review-relay` at once — then `500`s. Lets you say "review this plan with codex and kimi3" as one command.
+  it for this tool and `pr-review-relay` at once — then `500`s. Lets you say "review this plan with codex and glm" as one command.
 - `ship-feature relay [args…]` — a **transparent** wrapper over
   [`pr-review-relay`](https://github.com/hamen/pr-review-relay) that preserves its stdout and exact exit
   code, and reminds you what each code means: `0` = every **dispatched** reviewer ran — not that
@@ -231,21 +232,51 @@ single setting should configure both. It **is** read from config (and exported w
 relay child process sees it). Three sources, highest first: the environment,
 `~/.config/ship-feature/config`, and finally `pr-review-relay`'s own config as `MODEL_cursor`.
 
-## Overriding the kimi3 model
+## Overriding the glm model
 
-`plan-review` invokes the `kimi3` reviewer with `opencode run --pure --agent plan -m
-"$KIMI3_REVIEW_MODEL"` (default `opencode-go/kimi-k3`, the bundled OpenCode Go tier). Override with
-`KIMI3_REVIEW_MODEL` to route it at a different model instead — for example a pay-as-you-go
-OpenRouter id (`openrouter/z-ai/glm-5.2`) if you want kimi3 off the bundled subscription tier
+`plan-review` invokes the `glm` reviewer with `opencode run --pure --agent plan -m
+"$GLM_REVIEW_MODEL"` (default `opencode-go/glm-5.3`, the bundled OpenCode Go tier). Override with
+`GLM_REVIEW_MODEL` to route it at a different model instead — for example a pay-as-you-go
+OpenRouter id (`openrouter/z-ai/glm-5.3`) if you want the seat off the bundled subscription tier
 without waiting on its quota reset. `opencode models` lists what your account can reach.
+
+**The seat is the runner, not the model.** `glm` names the opencode runner pinned read-only, and the
+model is this one setting. That is also why the seat was renamed: it was called `kimi3` until
+2026-09, by which point it had been running GLM for weeks, and the panel header named a model that
+had not reviewed anything. If you pin this seat back at a Moonshot id the seat name will lie again —
+the name records what it usually runs, not a guarantee.
 
 Same convention as `CURSOR_REVIEW_MODEL`: no `SHIP_FEATURE_` prefix, read from
 `~/.config/ship-feature/config` with the environment winning, and from `pr-review-relay`'s own
-config as `MODEL_kimi3` below that — which is normally where a pin belongs, since both tools drive
+config as `MODEL_glm` below that — which is normally where a pin belongs, since both tools drive
 the same seats on the same accounts. The config SOURCE is shared; the SEAT is not — unlike `CURSOR_REVIEW_MODEL`, this reviewer has no counterpart in
 `pr-review-relay` — that tool's opencode reviewer has its own separate override,
 `PR_RELAY_OPENCODE_MODEL`, for a different code path (the relay's `opencode` seat, not
-plan-review's `kimi3` seat).
+plan-review's `glm` seat).
+
+### Migrating from `kimi3`
+
+The old names are **ignored, with a warning** — never silently honoured, because a config that names
+a dead key while the seat runs something else is the defect the rename removes:
+
+| old | new |
+|---|---|
+| `kimi3` in **any** reviewer list | `glm` — the old name fails the round as an unknown reviewer |
+| `KIMI3_REVIEW_MODEL` (environment or `~/.config/ship-feature/config`) | `GLM_REVIEW_MODEL` |
+| `MODEL_kimi3` in `~/.config/pr-review-relay/config` | `MODEL_glm` |
+
+**"Any reviewer list" means all four sources**, and the panel falls back through them in this
+order — rename `kimi3` in every one you have set, or the round still fails:
+
+1. `--reviewers` on the command line;
+2. `SHIP_FEATURE_PLAN_REVIEWERS` (environment, then `~/.config/ship-feature/config`);
+3. `SHIP_FEATURE_REVIEWERS`, the same two places;
+4. `PLAN_REVIEWERS`, then `REVIEWERS`, in `~/.config/pr-review-relay/config` — **the usual home**,
+   and the one most likely to be the line you actually have to edit.
+
+The warnings are printed by `plan-review` only, not by `relay` or `preflight`. Note that
+`pr-review-relay` still lists `kimi3` among its own seat names, so until that repo catches up it
+prints one `no reviewer seat named 'glm'` warning per run for a `MODEL_glm` key it does not read.
 
 ## Running the tests
 
