@@ -27,6 +27,25 @@ each driver agent (Claude, Codex, Cursor) gets a thin adapter that points at it,
 
 ## 🆕 What's new
 
+**v0.6.0** — **every plan-review seat is pinned from the one shared config, and the seat names stop
+lying.** `claude` and `codex` ran bare in plan-review, so `MODEL_claude`, `MODEL_codex` and
+`EFFORT_codex` in `~/.config/pr-review-relay/config` pinned the PR review and not the plan review —
+codex ran whatever `~/.codex/config.toml` happened to say. They now take `--model` / `--effort` and
+`-m` / `-c model_reasoning_effort=…` from the same keys the relay reads, with the environment still
+winning; unpinned, they get no extra argument. Each seat's dispatch line now shows what it resolved
+to: `→ grok reviewing… (model=grok-4.7, effort=medium)`.
+
+Two seats are renamed because their names described something they no longer ran. **`grok45high` is
+now `grok`**: the same seat as the relay's, pinned by `MODEL_grok` / `EFFORT_grok`, at a
+configurable effort instead of a hardcoded `high` (the old name still runs `grok`, with a warning).
+**`kimi3` is now `glm`** — the opencode runner, which had been carrying GLM for weeks while its
+header said Kimi. Old keys are reported and ignored, never silently honoured. See the CHANGELOG for
+the full rename tables and one behaviour change on upgrade: a plan panel that falls back to a
+`REVIEWERS` list containing `grok` now runs it, and needs the `grok` CLI installed.
+
+Pairs with **pr-review-relay v1.7.0**, which runs its reviewers in parallel by default, prints the
+same resolved-pin line, and stops warning about the `glm` seat.
+
 **v0.5.0** — **one file configures the whole panel, and the panel gains a Gemini seat.** The seats,
 their models and the per-reviewer timeout were spread across two config files that were free to
 disagree, and nothing complained when they did: `ship-feature` and `pr-review-relay` could run the
