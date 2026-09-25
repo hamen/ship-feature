@@ -98,7 +98,8 @@ All notable changes to **ship-feature** are documented here. This project follow
 - The docs now also say to **read each round's startup lines** and state which reviewers actually
   ran. Omitting the flag fixes a stale list; it cannot tell you a seat dropped out. `relay` drops a
   benched (out-of-quota) seat and still exits `0`, and `plan-review` skips the relay-only names
-  (bare `opencode`, bare `grok`) with a warning and still exits `0`.
+  (bare `opencode`, and — until the rename above made it a plan seat — bare `grok`) with a warning
+  and still exits `0`.
 
 Touches `adapters/{skill,cursor,codex}`, `WORKFLOW.md`, `README.md`, `config.example` and the
 adapter-consistency clauses in `test/`. Documentation only — no change to `bin/ship-feature`. **Re-run `./install.sh`**: the Codex adapter

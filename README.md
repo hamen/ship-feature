@@ -40,8 +40,9 @@ now `grok`**: the same seat as the relay's, pinned by `MODEL_grok` / `EFFORT_gro
 configurable effort instead of a hardcoded `high` (the old name still runs `grok`, with a warning).
 **`kimi3` is now `glm`** — the opencode runner, which had been carrying GLM for weeks while its
 header said Kimi. Old keys are reported and ignored, never silently honoured. See the CHANGELOG for
-the full rename tables and one behaviour change on upgrade: a plan panel that falls back to a
-`REVIEWERS` list containing `grok` now runs it, and needs the `grok` CLI installed.
+the full rename tables and two behaviour changes on upgrade: an **unpinned** `glm` seat now runs
+`opencode-go/glm-5.3` (it was Kimi K3 — pin `GLM_REVIEW_MODEL` to keep it), and a plan panel that
+falls back to a `REVIEWERS` list containing `grok` now runs it, and needs the `grok` CLI installed.
 
 Pairs with **pr-review-relay v1.7.0**, which runs its reviewers in parallel by default, prints the
 same resolved-pin line, and stops warning about the `glm` seat.
@@ -298,9 +299,9 @@ order — rename `kimi3` in every one you have set, or the round still fails:
 4. `PLAN_REVIEWERS`, then `REVIEWERS`, in `~/.config/pr-review-relay/config` — **the usual home**,
    and the one most likely to be the line you actually have to edit.
 
-The warnings are printed by `plan-review` only, not by `relay` or `preflight`. Note that
-`pr-review-relay` still lists `kimi3` among its own seat names, so until that repo catches up it
-prints one `no reviewer seat named 'glm'` warning per run for a `MODEL_glm` key it does not read.
+The warnings are printed by `plan-review` only, not by `relay` or `preflight`. `pr-review-relay`
+before v1.7.0 printed one `no reviewer seat named 'glm'` warning per run for a `MODEL_glm` key it does
+not read; v1.7.0 knows the seat, so upgrade both together.
 
 ## Running the tests
 
