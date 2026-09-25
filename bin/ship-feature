@@ -98,6 +98,10 @@ load_config() {
   # looking like configuration to whoever reads it next. It never pinned anything, so nothing
   # breaks either way; it is reported so it can be deleted rather than puzzled over.
   [ -n "${KIMI3_REVIEW_MODEL+x}" ] && sf_note_deprecated env:KIMI3_REVIEW_MODEL
+  # Same for the grok seat's old name (`grok45high`, renamed to `grok` in 2026-09). Here, before
+  # the early return, for the reason above: with no ship-feature config this function returns on
+  # the next line, and a probe inside the loop would never see a stale export.
+  [ -n "${GROK45HIGH_REVIEW_MODEL+x}" ] && sf_note_deprecated env:GROK45HIGH_REVIEW_MODEL
   [ -f "$cfg" ] || { load_shared_panel_config; return 0; }
   # `|| [ -n "$key$val" ]` so a file with NO FINAL NEWLINE does not lose its last line. Without
   # it, `read` returns non-zero on that line and the loop exits before the case runs —
@@ -163,7 +167,15 @@ load_config() {
       # renaming this seat was meant to end.
       KIMI3_REVIEW_MODEL) sf_note_deprecated file:KIMI3_REVIEW_MODEL ;;
       CURSOR_REVIEW_MODEL) [ -n "${CURSOR_REVIEW_MODEL:-}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
-      GROK45HIGH_REVIEW_MODEL) [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
+      # The grok seat's old key. Recorded and DROPPED, like KIMI3_REVIEW_MODEL above: the seat is
+      # `grok` now and takes MODEL_grok / EFFORT_grok from the shared panel config.
+      GROK45HIGH_REVIEW_MODEL) sf_note_deprecated file:GROK45HIGH_REVIEW_MODEL ;;
+      # The claude, codex and grok pins are read from the SHARED panel config and the environment
+      # only — never from this file. They are the relay's own names, one global file is the point,
+      # and a third place is how they drifted in the first place. Recorded so the value is
+      # reported rather than dropped in silence (this loop has no `*)` arm).
+      CLAUDE_REVIEW_MODEL|CLAUDE_REVIEW_EFFORT|CODEX_REVIEW_MODEL|CODEX_REVIEW_EFFORT|GROK_REVIEW_MODEL|GROK_REVIEW_EFFORT)
+        sf_note_deprecated "file:$key" ;;
       PR_RELAY_OPENCODE_MODEL) [ -n "${PR_RELAY_OPENCODE_MODEL:-}" ] || export PR_RELAY_OPENCODE_MODEL="$val" ;;
       # The gemini seat's pins live in the SHIP_FEATURE_* namespace, NOT the vendor-shaped
       # <SEAT>_REVIEW_MODEL shape of the pins above, and deliberately so. Those names are
@@ -171,7 +183,7 @@ load_config() {
       # The relay has no gemini seat — its `antigravity` seat runs the `agy` binary and takes
       # AGY_REVIEW_MODEL — so a vendor-shaped name here would buy nothing and would invite the two
       # to be pinned as if they were one seat. They are not: different binaries, different accepted
-      # model ids. Same reason MODEL_grok and MODEL_grok45high stay apart.
+      # model ids.
       # NON-EMPTY (${VAR:-}) like the model pins above, not ${VAR+x}: an empty model pin means
       # nothing at all, so it must not count as "defined" and block the shared file.
       SHIP_FEATURE_GEMINI_MODEL) [ -n "${SHIP_FEATURE_GEMINI_MODEL:-}" ] || SHIP_FEATURE_GEMINI_MODEL="$val" ;;
@@ -200,10 +212,10 @@ load_config() {
 # file. This is that. (The key was `MODEL_kimi3` until the seat was renamed; see the deprecated
 # arm in the parser below.)
 #
-# Keyed by seat means keyed by seat: the relay's `grok` seat and plan-review's `grok45high` seat
-# are DIFFERENT seats — same vendor, different effort — so `MODEL_grok` is not read here and
-# `MODEL_grok45high` is the key for this one. Mapping the relay's key onto this seat would
-# silently give a high-effort plan review the relay's medium-effort pin.
+# Keyed by seat means keyed by seat. `grok` is ONE seat in both tools since 2026-09 (plan-review
+# called it `grok45high` and ran it at a hardcoded high effort until then), so `MODEL_grok` /
+# `EFFORT_grok` pin it for the plan review and the PR review alike. The same holds for `claude`
+# and `codex`, whose plan-review calls used to take no pin at all.
 #
 # Without it the pin lives in two files at once and they drift: whichever one you edit, the
 # other keeps its old value and nothing complains, because both are valid config.
@@ -224,15 +236,25 @@ load_shared_panel_config() {
   # valid file handing the two tools different panels, which is exactly what reading one file is
   # meant to prevent. These flags say "a HIGHER source already provided this", which is the thing
   # that must not be overwritten; a later line of this same file may.
-  local from_env_glm=1 from_env_cursor=1 from_env_grok=1 from_env_rev=1 from_env_plan=1 from_env_timeout=1
+  local from_env_glm=1 from_env_cursor=1 from_env_rev=1 from_env_plan=1 from_env_timeout=1
   local from_env_gemini=1
+  local from_env_claude_m=1 from_env_claude_e=1 from_env_codex_m=1 from_env_codex_e=1 from_env_grok_m=1 from_env_grok_e=1
   # GLM_REVIEW_MODEL and nothing else. Arming this from the seat's OLD name would let a stale
   # KIMI3_REVIEW_MODEL left in a shell profile mark the pin as "already provided by a higher
   # source", so MODEL_glm in the shared file would be skipped — the silent drop this rename
   # exists to remove, rebuilt inside the fix for it.
   [ -n "${GLM_REVIEW_MODEL:-}" ] || from_env_glm=0
   [ -n "${CURSOR_REVIEW_MODEL:-}" ] || from_env_cursor=0
-  [ -n "${GROK45HIGH_REVIEW_MODEL:-}" ] || from_env_grok=0
+  # The relay's own environment names (pr-review-relay, lib-grok.sh), so one export pins the seat
+  # in both tools. Each flag is armed from its NEW name only — never from GROK45HIGH_REVIEW_MODEL:
+  # a stale export of the old name would otherwise mark MODEL_grok as "already provided" and the
+  # shared pin would be skipped without a word, the trap the glm comment above describes.
+  [ -n "${CLAUDE_REVIEW_MODEL:-}" ] || from_env_claude_m=0
+  [ -n "${CLAUDE_REVIEW_EFFORT:-}" ] || from_env_claude_e=0
+  [ -n "${CODEX_REVIEW_MODEL:-}" ] || from_env_codex_m=0
+  [ -n "${CODEX_REVIEW_EFFORT:-}" ] || from_env_codex_e=0
+  [ -n "${GROK_REVIEW_MODEL:-}" ] || from_env_grok_m=0
+  [ -n "${GROK_REVIEW_EFFORT:-}" ] || from_env_grok_e=0
   [ -n "${SHIP_FEATURE_GEMINI_MODEL:-}" ] || from_env_gemini=0
   [ -n "${SHIP_FEATURE_REVIEWERS+x}" ] || from_env_rev=0
   [ -n "${SHIP_FEATURE_PLAN_REVIEWERS+x}" ] || from_env_plan=0
@@ -264,7 +286,21 @@ load_shared_panel_config() {
       # until that repo's follow-up lands; it just no longer configures anything here.
       MODEL_kimi3)      sf_note_deprecated shared:MODEL_kimi3 ;;
       MODEL_cursor)     [ "$from_env_cursor" = 1 ] || export CURSOR_REVIEW_MODEL="$val" ;;
-      MODEL_grok45high) [ "$from_env_grok" = 1 ] || export GROK45HIGH_REVIEW_MODEL="$val" ;;
+      # The seat's old key, recorded and DROPPED like MODEL_kimi3 above. Honouring it as a fallback
+      # would keep two keys alive for one seat, and the next edit would change only one of them.
+      MODEL_grok45high) sf_note_deprecated shared:MODEL_grok45high ;;
+      # claude, codex and grok. NOT exported, unlike the pins above, for the reason AGENT_TIMEOUT
+      # gives below: pr-review-relay reads these same keys from this same file, and an environment
+      # value pushed at the `relay` child would sit on top of its own config. They only have to
+      # reach cmd_plan_review, in this process. `export -n` in the copying branch only, because a
+      # plain assignment keeps an inherited export attribute — an exported EMPTY
+      # `CODEX_REVIEW_MODEL=` would otherwise carry this file's value into the child.
+      MODEL_claude)  [ "$from_env_claude_m" = 1 ] || { export -n CLAUDE_REVIEW_MODEL 2>/dev/null || true; CLAUDE_REVIEW_MODEL="$val"; } ;;
+      EFFORT_claude) [ "$from_env_claude_e" = 1 ] || { export -n CLAUDE_REVIEW_EFFORT 2>/dev/null || true; CLAUDE_REVIEW_EFFORT="$val"; } ;;
+      MODEL_codex)   [ "$from_env_codex_m" = 1 ] || { export -n CODEX_REVIEW_MODEL 2>/dev/null || true; CODEX_REVIEW_MODEL="$val"; } ;;
+      EFFORT_codex)  [ "$from_env_codex_e" = 1 ] || { export -n CODEX_REVIEW_EFFORT 2>/dev/null || true; CODEX_REVIEW_EFFORT="$val"; } ;;
+      MODEL_grok)    [ "$from_env_grok_m" = 1 ] || { export -n GROK_REVIEW_MODEL 2>/dev/null || true; GROK_REVIEW_MODEL="$val"; } ;;
+      EFFORT_grok)   [ "$from_env_grok_e" = 1 ] || { export -n GROK_REVIEW_EFFORT 2>/dev/null || true; GROK_REVIEW_EFFORT="$val"; } ;;
       # `MODEL_gemini`, not `MODEL_antigravity`. The relay already maps MODEL_antigravity onto its
       # own agy seat; this one is the `gemini` binary. One key for two binaries would mean one of
       # them silently getting a model id its CLI does not accept. NOT exported, unlike the pins
@@ -445,21 +481,22 @@ cmd_relay() {
 # whereas in `relay` `antigravity` maps to `agy`. TRADEOFF: because the run is fully isolated,
 # gemini reviews the PLAN TEXT ONLY and cannot read the checkout; deep codebase fact-checking is the
 # PR cross-review stage's job, not this cheap plan gate.
-# Bare `opencode` and bare `grok` are RELAY-ONLY here — a bare `opencode run` uses the all-allow
-# build agent — so if listed they are skipped with a warning, never run. That keeps the
-# "read-only, nothing is written" guarantee true for the whole set that actually runs.
+# Bare `opencode` is RELAY-ONLY here — a bare `opencode run` uses the all-allow build agent — so if
+# listed it is skipped with a warning, never run. That keeps the "read-only, nothing is written"
+# guarantee true for the whole set that actually runs.
 plan_tool_for() { case "$1" in
   claude) echo claude;; codex) echo codex;; cursor) echo cursor-agent;; glm) echo opencode;;
-  grok45high) echo grok;; antigravity) echo gemini;; *) echo "";; esac; }
+  grok) echo grok;; antigravity) echo gemini;; *) echo "";; esac; }
 # Named but deliberately not run in plan-review (available in `relay`). Note: `glm` IS a
 # supported plan reviewer (read-only plan agent) and runs through the same `opencode` binary;
 # only the bare `opencode` name is relay-only, because a bare `opencode run` uses the all-allow
 # build agent.
-# Bare `grok` is the PR-relay reviewer (medium effort in pr-review-relay); plan-review uses
-# `grok45high` (high effort). Listing bare `grok` here is skipped so a
-# SHIP_FEATURE_REVIEWERS fallback that includes `grok` does not fail the plan panel.
+# Bare `grok` is NOT relay-only any more: since 2026-09 it is one seat in both tools, pinned by
+# MODEL_grok / EFFORT_grok. Plan-review called it `grok45high` and ran it at a hardcoded high
+# effort; that name is now a deprecated alias (see the dispatch loop). A SHIP_FEATURE_REVIEWERS
+# fallback that includes `grok` therefore RUNS it here, and needs the grok CLI installed.
 # `antigravity`/`agy` are NO LONGER relay-only: they run here as the isolated `gemini` seat above.
-plan_relay_only() { case "$1" in opencode|grok) return 0;; *) return 1;; esac; }
+plan_relay_only() { case "$1" in opencode) return 0;; *) return 1;; esac; }
 
 cmd_plan_review() {
   load_config
@@ -530,6 +567,13 @@ cmd_plan_review() {
       env:KIMI3_REVIEW_MODEL)    warn "KIMI3_REVIEW_MODEL is set in the ENVIRONMENT. It is the old name of GLM_REVIEW_MODEL and is IGNORED — the plan-review seat is now 'glm'. Rename it (and check your shell profile), or the seat runs its default model.";;
       file:KIMI3_REVIEW_MODEL)   warn "KIMI3_REVIEW_MODEL is set in ship-feature's config. It is the old name of GLM_REVIEW_MODEL and is IGNORED — the plan-review seat is now 'glm'. Rename it, or the seat runs its default model.";;
       shared:MODEL_kimi3)        warn "MODEL_kimi3 is set in the shared panel config. It is the old name of MODEL_glm and is IGNORED HERE — the plan-review seat is now 'glm'. Rename it, or the seat runs its default model. (pr-review-relay still accepts the old key in its own PANEL_SEATS.)";;
+      env:GROK45HIGH_REVIEW_MODEL)  warn "GROK45HIGH_REVIEW_MODEL is set in the ENVIRONMENT. It is the old name of GROK_REVIEW_MODEL and is IGNORED — the plan-review seat is now 'grok'. Rename it (and check your shell profile), or set MODEL_grok in the shared panel config.";;
+      file:GROK45HIGH_REVIEW_MODEL) warn "GROK45HIGH_REVIEW_MODEL is set in ship-feature's config. It is the old name of the grok pin and is IGNORED — the plan-review seat is now 'grok'. Set MODEL_grok in the shared panel config instead.";;
+      shared:MODEL_grok45high)   warn "MODEL_grok45high is set in the shared panel config. It is the old name of MODEL_grok and is IGNORED — the plan-review seat is now 'grok', and MODEL_grok / EFFORT_grok pin it in both tools. Delete it.";;
+      # Not deprecated names — right names in the wrong file. These pins are read from the shared
+      # panel config and the environment only (see load_config).
+      file:CLAUDE_REVIEW_MODEL|file:CLAUDE_REVIEW_EFFORT|file:CODEX_REVIEW_MODEL|file:CODEX_REVIEW_EFFORT|file:GROK_REVIEW_MODEL|file:GROK_REVIEW_EFFORT)
+                                 warn "${_dep#file:} is set in ship-feature's config and is IGNORED there. Set MODEL_<seat> / EFFORT_<seat> in the shared panel config (${PR_RELAY_CONFIG:-~/.config/pr-review-relay/config}), or export ${_dep#file:} in the environment.";;
       # A recorded token with no arm above would be recorded and never reported — silence, which is
       # the exact failure this whole block exists to end. Fail loud on our own bug too.
       *)                         warn "internal: no message for deprecated key token '$_dep' — please report this.";;
@@ -554,8 +598,9 @@ cmd_plan_review() {
   # (stock macOS ships neither) — a missing timeout must never break the reviewer.
   local TIMEOUT_BIN; TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
   # 500, matching pr-review-relay's own default. The panel runs reasoning models at high
-  # effort; 300 was tuned when it did not, and an ordinary plan no longer fits — grok45high
-  # timed out three times in one session on a plan whose only fault was being thorough.
+  # effort; 300 was tuned when it did not, and an ordinary plan no longer fits — grok (then
+  # `grok45high`, at high effort) timed out three times in one session on a plan whose only
+  # fault was being thorough.
   #
   # The ladder, highest first: this variable (environment, then ~/.config/ship-feature/config),
   # then PR_RELAY_AGENT_TIMEOUT from the environment, then AGENT_TIMEOUT from
@@ -652,12 +697,55 @@ have found something serious, write it down before you go looking for the next t
   # about which model reviewed your plan, which is why it was renamed.
   local GLM_REVIEW_MODEL="${GLM_REVIEW_MODEL:-opencode-go/glm-5.3}"
 
-  # Pin the grok45high reviewer's model. Same override pattern as CURSOR_REVIEW_MODEL and
-  # GLM_REVIEW_MODEL above: config file or environment, local so the override survives without
-  # leaking to global scope. Defaults to grok-4.6 (xAI released it 2026-08-12); set
-  # GROK45HIGH_REVIEW_MODEL=grok-<version> in the config file to pin a different one without
-  # editing this script.
-  local GROK45HIGH_REVIEW_MODEL="${GROK45HIGH_REVIEW_MODEL:-grok-4.6}"
+  # Pin the claude, codex and grok seats' model AND effort. Environment first (the relay's own
+  # names, so one export pins both tools), then MODEL_<seat> / EFFORT_<seat> from the shared panel
+  # config (load_shared_panel_config), then the default below.
+  #
+  # claude and codex default to NOTHING: an unpinned seat gets no extra argument and runs whatever
+  # its CLI is configured for, exactly as before these pins existed. grok has always passed a model
+  # and an effort, so it keeps defaults — medium, the relay's default for the same seat, so an
+  # unpinned `grok` runs the same way in both tools. (It was a hardcoded `high` while the seat
+  # was plan-review-only and called `grok45high`.)
+  #
+  # `local`, like the pins above: read here and in plan_review_with, never from a trap.
+  local CLAUDE_REVIEW_MODEL="${CLAUDE_REVIEW_MODEL:-}" CLAUDE_REVIEW_EFFORT="${CLAUDE_REVIEW_EFFORT:-}"
+  local CODEX_REVIEW_MODEL="${CODEX_REVIEW_MODEL:-}" CODEX_REVIEW_EFFORT="${CODEX_REVIEW_EFFORT:-}"
+  local GROK_REVIEW_MODEL="${GROK_REVIEW_MODEL:-grok-4.6}" GROK_REVIEW_EFFORT="${GROK_REVIEW_EFFORT:-medium}"
+  # Every one of these reaches a command line, and is user config. A leading '-' would be parsed as
+  # a FLAG, not a value (the gemini check below says why that matters). An effort is a bare word:
+  # codex's lands inside a TOML string (`model_reasoning_effort="…"`), where a quote would end it.
+  # Only a value that will actually be passed is checked — an unpinned claude/codex effort is empty.
+  # No per-CLI list of accepted levels: the CLIs add them, and a stale list here would refuse a
+  # valid one. A level the CLI rejects fails that seat with the CLI's own error (exit 3, not clean).
+  local _pin _pv
+  for _pin in CLAUDE_REVIEW_MODEL CODEX_REVIEW_MODEL GROK_REVIEW_MODEL; do
+    _pv="${!_pin}"
+    case "$_pv" in -*) die "invalid $_pin: '$_pv' (must not start with '-').";; esac
+  done
+  for _pin in CLAUDE_REVIEW_EFFORT CODEX_REVIEW_EFFORT GROK_REVIEW_EFFORT; do
+    _pv="${!_pin}"
+    [ -z "$_pv" ] && continue
+    case "$_pv" in -*|*[!A-Za-z0-9_-]*) die "invalid $_pin: '$_pv' (want a bare word such as 'medium').";; esac
+  done
+  # Arrays so an unset pin adds NO argument, not an empty one. Expanded with ${A[@]+"${A[@]}"}:
+  # bash 3.2 under `set -u` treats an empty array as unbound.
+  local -a CLAUDE_PIN_ARGS=() CODEX_PIN_ARGS=()
+  [ -n "$CLAUDE_REVIEW_MODEL" ]  && CLAUDE_PIN_ARGS+=(--model "$CLAUDE_REVIEW_MODEL")
+  [ -n "$CLAUDE_REVIEW_EFFORT" ] && CLAUDE_PIN_ARGS+=(--effort "$CLAUDE_REVIEW_EFFORT")
+  [ -n "$CODEX_REVIEW_MODEL" ]   && CODEX_PIN_ARGS+=(-m "$CODEX_REVIEW_MODEL")
+  [ -n "$CODEX_REVIEW_EFFORT" ]  && CODEX_PIN_ARGS+=(-c "model_reasoning_effort=\"$CODEX_REVIEW_EFFORT\"")
+  # " (model=…, effort=…)" for the dispatch line. "cli default" when a pin adds no argument, so an
+  # unpinned seat reads as unpinned rather than as a value nobody chose.
+  plan_seat_pins() {
+    case "$1" in
+      claude) printf ' (model=%s, effort=%s)' "${CLAUDE_REVIEW_MODEL:-cli default}" "${CLAUDE_REVIEW_EFFORT:-cli default}";;
+      codex)  printf ' (model=%s, effort=%s)' "${CODEX_REVIEW_MODEL:-cli default}" "${CODEX_REVIEW_EFFORT:-cli default}";;
+      grok)   printf ' (model=%s, effort=%s)' "$GROK_REVIEW_MODEL" "$GROK_REVIEW_EFFORT";;
+      cursor) printf ' (model=%s)' "$CURSOR_REVIEW_MODEL";;
+      glm)    printf ' (model=%s)' "$GLM_REVIEW_MODEL";;
+      antigravity) printf ' (model=%s)' "$GEMINI_MODEL";;
+    esac
+  }
 
   # Pin the gemini reviewer's model. The CLI's own built-in default is a retired model that 404s,
   # so this is not merely a preference — left unpinned the seat does not run at all. Override with
@@ -758,8 +846,8 @@ have found something serious, write it down before you go looking for the next t
     key="$(skey "$name")"; errf="$STATUS_DIR/err_$key"       # in STATUS_DIR so it can't leak
     Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
     case "$name" in
-      claude) out=$(printf '%s' "$plan" | run_reviewer claude -p --permission-mode plan --safe-mode "$PROMPT" 2>"$errf"); rc=$?;;
-      codex)  out=$(printf '%s' "$plan" | run_reviewer codex exec --sandbox read-only "$PROMPT" 2>"$errf"); rc=$?;;
+      claude) out=$(printf '%s' "$plan" | run_reviewer claude -p --permission-mode plan --safe-mode ${CLAUDE_PIN_ARGS[@]+"${CLAUDE_PIN_ARGS[@]}"} "$PROMPT" 2>"$errf"); rc=$?;;
+      codex)  out=$(printf '%s' "$plan" | run_reviewer codex exec --sandbox read-only ${CODEX_PIN_ARGS[@]+"${CODEX_PIN_ARGS[@]}"} "$PROMPT" 2>"$errf"); rc=$?;;
       cursor) out=$(printf '%s\n\n---\n%s' "$PROMPT" "$plan" | run_reviewer cursor-agent -p --mode=ask --model "$CURSOR_REVIEW_MODEL" 2>"$errf"); rc=$?;;
       glm)    # Pin read-only via OPENCODE_CONFIG_CONTENT — the HIGHEST-precedence config layer
               # (it is applied last, so it wins over any merged global/project/OPENCODE_CONFIG value;
@@ -769,7 +857,7 @@ have found something serious, write it down before you go looking for the next t
               # hostile environment can't pre-seed an "allow". `--pure` skips external plugins;
               # `--agent plan` is defense in depth.
               #
-              # RUNS IN THE CHECKOUT, like claude, codex, cursor and grok45high — and that is a
+              # RUNS IN THE CHECKOUT, like claude, codex, cursor and grok — and that is a
               # change. It used to run in an empty dir outside any checkout, which made the seat
               # useless in practice: with no tree to read, the model spends its turn hunting for
               # the repo, hits `permission requested: external_directory (…); auto-rejecting`, and
@@ -780,7 +868,7 @@ have found something serious, write it down before you go looking for the next t
               # The isolation existed for one concrete reason: a repo's own opencode.json would be
               # discovered from the cwd. That reason is kept, not dropped — when the checkout ships
               # its own opencode config we fall back to the isolated empty dir and SAY SO in the
-              # panel output, exactly as grok45high degrades when its sandbox cannot be enforced.
+              # panel output, exactly as grok degrades when its sandbox cannot be enforced.
               # So the tree being reviewed can never reconfigure the reviewer reading it.
               #
               # Note the denial is belt and braces even in the checkout: the hostile-env test
@@ -836,7 +924,7 @@ have found something serious, write it down before you go looking for the next t
                        | run_reviewer opencode run --pure --agent plan -m "$GLM_REVIEW_MODEL" 2>"$errf"); rc=$?
               [ -n "$ro_cwd" ] && rm -rf "$ro_cwd"
               true;;
-      grok45high)
+      grok)
               # Grok headless ignores stdin: plan goes in --prompt-file (kept in STATUS_DIR, never
               # in the checkout, so it can't show up in anyone's `git status`).
               #
@@ -868,7 +956,8 @@ have found something serious, write it down before you go looking for the next t
               # --permission-mode plan overrides machine always-approve; --sandbox read-only
               # is the OS write barrier (needs a working sandbox / bwrap on Linux). Note it can
               # warn and continue unenforced if setup fails, so it is a layer, not the guarantee.
-              # High effort is the plan-review posture; PR relay uses bare `grok` (medium).
+              # Model and effort are the seat's pins (GROK_REVIEW_MODEL / GROK_REVIEW_EFFORT, or
+              # MODEL_grok / EFFORT_grok) — the same pins the relay's grok seat reads.
               # PREVENTION, not just detection. Grok's own docs: a BUILT-IN profile that fails to
               # apply "logs a warning and continues without enforcement" — and by the time that
               # warning reaches us the checkout's hooks and plugins have already run. Discarding
@@ -897,13 +986,13 @@ have found something serious, write it down before you go looking for the next t
                   fi;;
               esac
               if [ -n "$why" ]; then
-                ro_cwd="$(mktemp -d "$STATUS_DIR/iso-grok45high.XXXXXX")" || {
+                ro_cwd="$(mktemp -d "$STATUS_DIR/iso-grok.XXXXXX")" || {
                   printf '  ! %s: cannot create isolated cwd (mktemp failed)\n' "$name" > "$STATUS_DIR/diag_$key"
                   echo fail > "$STATUS_DIR/$key"; return 0
                 }
                 degraded_note="! read-only sandbox cannot be enforced ($why) — this review saw the plan text ONLY, not the checkout"
               fi
-              prompt_file="$STATUS_DIR/prompt_grok45high_$$"
+              prompt_file="$STATUS_DIR/prompt_grok_$$"
               body="$(printf '%s\n\n--- PLAN ---\n~~~~plan\n%s\n~~~~\n--- END PLAN ---\n' "$PROMPT" "$plan")"
               if ! printf '%s' "$body" > "$prompt_file"; then
                 printf '  ! %s: failed to write prompt-file\n' "$name" > "$STATUS_DIR/diag_$key"
@@ -921,8 +1010,8 @@ have found something serious, write it down before you go looking for the next t
                       && run_reviewer grok \
                            --prompt-file "$prompt_file" \
                            --cwd "$ro_cwd" \
-                           -m "$GROK45HIGH_REVIEW_MODEL" \
-                           --reasoning-effort high \
+                           -m "$GROK_REVIEW_MODEL" \
+                           --reasoning-effort "$GROK_REVIEW_EFFORT" \
                            --permission-mode plan \
                            --deny '*' \
                            --verbatim \
@@ -935,8 +1024,8 @@ have found something serious, write it down before you go looking for the next t
               else
                 out=$(run_reviewer grok \
                          --prompt-file "$prompt_file" \
-                         -m "$GROK45HIGH_REVIEW_MODEL" \
-                         --reasoning-effort high \
+                         -m "$GROK_REVIEW_MODEL" \
+                         --reasoning-effort "$GROK_REVIEW_EFFORT" \
                          --permission-mode plan \
                          --sandbox read-only \
                          --tools read_file,list_dir,grep \
@@ -1144,7 +1233,7 @@ have found something serious, write it down before you go looking for the next t
 
   # Dispatch, de-duping the panel. `set -f` guards the word-split from pathname expansion
   # (an unquoted `$reviewers` would otherwise glob a value like `a*`).
-  local r rk tool seen="" order=""
+  local r rk tool seen="" order="" warned_grok45high=0
   local IFS_SAVE="$IFS"; set -f; IFS=','; set -- $reviewers; IFS="$IFS_SAVE"; set +f
   for r in "$@"; do
     r="$(printf '%s' "$r" | tr -d '[:space:]')"; [ -z "$r" ] && continue
@@ -1152,12 +1241,22 @@ have found something serious, write it down before you go looking for the next t
     # `gemini` CLI, so they must collapse to ONE name or a panel naming two of them would run the
     # same reviewer twice and call it a quorum.
     { [ "$r" = "agy" ] || [ "$r" = "gemini" ]; } && r=antigravity
+    # `grok45high` is the grok seat's OLD name (renamed 2026-09, when its effort stopped being a
+    # hardcoded `high`). Collapsed here, before the de-dupe, so `grok,grok45high` runs grok once.
+    # The warning is guarded by its own flag, not by that ordering: `grok45high,grok45high` passes
+    # this line twice and must still warn once.
+    if [ "$r" = grok45high ]; then
+      r=grok
+      if [ "$warned_grok45high" = 0 ]; then
+        warned_grok45high=1
+        warn "'grok45high' is the old name of the plan-review seat 'grok' — running 'grok'. Rename it in PLAN_REVIEWERS / --reviewers; its model and effort now come from MODEL_grok / EFFORT_grok."
+      fi
+    fi
     rk="$(skey "$r")"
     case " $seen " in *" $rk "*) continue;; esac
     seen="$seen $rk"
     if plan_relay_only "$r"; then
-      if [ "$r" = grok ]; then warn "grok is relay-only here — use grok45high for plan-review (high effort); skipping.";
-      else warn "$r is relay-only (no read-only mode / needs file-attach) — not run in plan-review; skipping."; fi
+      warn "$r is relay-only (no read-only mode / needs file-attach) — not run in plan-review; skipping."
       continue
     fi
     tool="$(plan_tool_for "$r")"
@@ -1166,7 +1265,10 @@ have found something serious, write it down before you go looking for the next t
     if [ -z "$tool" ]; then echo fail > "$STATUS_DIR/$rk"; warn "unknown reviewer '$r' → fail"; continue; fi
     if ! command -v "$tool" >/dev/null 2>&1; then echo fail > "$STATUS_DIR/$rk"; warn "$tool not installed (required by the panel) → fail"; continue; fi
     order="$order $rk"
-    echo "  → $r reviewing…" >&2
+    # The resolved pins go on the SAME line, printed by the parent before the seat starts: only a
+    # seat that passed every check above is listed, and nothing here can interleave under
+    # --parallel. Until this line existed a `bash -x` trace was the only way to see them.
+    echo "  → $r reviewing…$(plan_seat_pins "$r")" >&2
     echo pending > "$STATUS_DIR/$rk"
     if [ "$parallel" = 1 ]; then
       plan_review_with "$r" &
@@ -1197,7 +1299,7 @@ have found something serious, write it down before you go looking for the next t
     if [ "$(cat "$f")" != ok ]; then failed=$((failed + 1)); names="$names ${f##*/k_}"; fi
   done
   if [ "$ran" = 0 ]; then
-    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, glm, grok45high, antigravity (aliases agy, gemini) — bare opencode and bare grok are relay-only. Pass --reviewers with a supported agent."
+    die "no supported reviewers ran. plan-review supports: claude, codex, cursor, glm, grok, antigravity (aliases agy, gemini) — bare opencode is relay-only. Pass --reviewers with a supported agent."
   fi
   if [ "$failed" -gt 0 ]; then echo "✖ Plan review NOT clean: $failed/$ran reviewer(s) failed —$names. Re-run THIS ROUND. If the SAME reviewer fails a SECOND consecutive attempt, drop that one reviewer, proceed with the rest, and tell the human about the reduced panel before Gate 1 — do not keep retrying it." >&2; return 3; fi
   echo "✔ Plan review done — $ran/$ran reviewer(s) responded (cap: 2 rounds, same full panel both times). READ the findings: no Blocker/plan-qualifying Should-fix → straight to Gate 1. Was this round 1 with a plan-qualifying finding → revise once and re-run. Was this round 2 with a plan-qualifying finding still open → do not run a round 3 on your own — write a disagreement summary (objection, classification, reason) and take it to Gate 1 instead." >&2
