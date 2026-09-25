@@ -38,8 +38,8 @@ SHIP_FEATURE_EXCLUDE_MARKER=.claude/
 # Same rule as the quorum above: set the plan panel HERE or as PLAN_REVIEWERS in
 # ~/.config/pr-review-relay/config, not both — this file wins, silently, and an EXPORTED value in
 # your shell beats both. And whichever you set, run `ship-feature plan-review` WITHOUT --reviewers
-# so the config is the panel. Then read the startup lines: bare `opencode` and bare `grok` are
-# relay-only names in plan-review, skipped with a warning while the round still exits 0.
+# so the config is the panel. Then read the startup lines: bare `opencode` is a relay-only name in
+# plan-review, skipped with a warning while the round still exits 0.
 
 # Model for the antigravity/gemini plan reviewer (the `gemini` CLI). Default gemini-3.1-pro-preview,
 # because the CLI's own built-in default is a retired model that 404s. Env wins over this file, and
@@ -85,8 +85,15 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # ---------------------------------------------------------------------------------------------
 # The model pins. Three sources, highest first: the environment, THIS file, and finally
 # pr-review-relay's own config (~/.config/pr-review-relay/config, or $PR_RELAY_CONFIG),
-# whose seat-named keys MODEL_glm / MODEL_cursor / MODEL_grok45high / MODEL_gemini are read as
-# the last fallback.
+# whose seat-named keys MODEL_glm / MODEL_cursor / MODEL_gemini are read as the last fallback.
+#
+# The claude, codex and grok seats are pinned in pr-review-relay's config ONLY — MODEL_claude /
+# EFFORT_claude, MODEL_codex / EFFORT_codex, MODEL_grok / EFFORT_grok — or in the environment
+# (CLAUDE_REVIEW_MODEL, CLAUDE_REVIEW_EFFORT, CODEX_REVIEW_MODEL, CODEX_REVIEW_EFFORT,
+# GROK_REVIEW_MODEL, GROK_REVIEW_EFFORT), which wins. They are the relay's own keys, so one line pins
+# the seat for the plan review and the PR review alike. Set here, they are IGNORED with a warning:
+# a third place is how pins drift. Unpinned, claude and codex get no extra argument; grok defaults
+# to grok-4.6 at medium effort.
 #
 # That last source is where a pin normally belongs: both tools drive the same seats on the same
 # accounts, so which model a seat runs is a property of the machine, not of whichever tool is
@@ -99,11 +106,11 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # MODEL_gemini, NOT MODEL_antigravity, is the key for the gemini plan-review seat. The relay already
 # maps MODEL_antigravity onto its own `antigravity` seat, which runs the `agy` binary — a different
 # CLI that accepts different model ids. One key for both would mean one of the two silently getting
-# a model name its own CLI rejects. Same reason MODEL_grok and MODEL_grok45high stay apart.
+# a model name its own CLI rejects.
 # Its value lands in SHIP_FEATURE_GEMINI_MODEL above, which is why that pin keeps the
-# SHIP_FEATURE_ prefix while the four below do not: no other tool reads it.
+# SHIP_FEATURE_ prefix while the three below do not: no other tool reads it.
 #
-# These four are the only keys here without a SHIP_FEATURE_ prefix, and the names are not this
+# These three are the only keys here without a SHIP_FEATURE_ prefix, and the names are not this
 # tool's to choose: pr-review-relay reads CURSOR_REVIEW_MODEL and PR_RELAY_OPENCODE_MODEL too,
 # because they describe your ACCOUNTS rather than either tool, and one setting should configure
 # both. They are exported when read, so the relay — a child process — actually sees them.
@@ -121,7 +128,7 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 # Models" quota instead of the larger Cursor-branded pool.)
 # `cursor-agent --list-models` shows what your account offers. Pick something OUTSIDE the families
 # already on your panel: setting this back to `auto`, to a claude-* id while Claude writes your
-# plans, or to a cursor-grok-* id while grok45high reviews alongside it, all collapse two nominally
+# plans, or to a cursor-grok-* id while grok reviews alongside it, all collapse two nominally
 # independent seats onto one model family. The override is for a retired model id.
 # e.g. CURSOR_REVIEW_MODEL=composer-2.5-fast
 
@@ -147,8 +154,12 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 #   MODEL_kimi3 (in pr-review-relay's config)        ->  MODEL_glm
 #   `kimi3` in a reviewer list                       ->  `glm` (the old name fails the round)
 
-# Model for the `grok45high` plan reviewer. Default: grok-4.6.
-# e.g. GROK45HIGH_REVIEW_MODEL=grok-4.6
+# RENAMED. The `grok45high` plan reviewer is now `grok` (2026-09), pinned by MODEL_grok /
+# EFFORT_grok in pr-review-relay's config (see above). The old spellings are IGNORED, each with a
+# warning from `plan-review`:
+#   GROK45HIGH_REVIEW_MODEL (here or in the environment)  ->  MODEL_grok (shared) or GROK_REVIEW_MODEL (env)
+#   MODEL_grok45high (in pr-review-relay's config)        ->  MODEL_grok
+#   `grok45high` in a reviewer list                       ->  `grok` (the old name still runs grok, with a warning)
 
 # Model for pr-review-relay's `opencode` seat. Same seat family as GLM_REVIEW_MODEL above but a
 # DIFFERENT TOOL and a different code path, so the two are set independently — and they are worth

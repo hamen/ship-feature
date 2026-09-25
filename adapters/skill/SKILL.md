@@ -23,9 +23,9 @@ The essentials you must honor:
    filled from your config; a typed list is a copy of that config that goes stale the day a seat is
    added. Pass the flag only to override on purpose. Read-only; exit `0` means every reviewer that
    RAN responded — not that the reviews are clean, and not that everyone ran, `3` re-run). **Read
-   the startup lines and say which reviewers actually ran**: bare `opencode` and bare `grok` are
-   relay-only names here, so if your panel falls back to `SHIP_FEATURE_REVIEWERS` they are skipped
-   with a warning and the round still exits `0`. A single reviewer via `codex exec --sandbox read-only` still works.
+   the startup lines and say which reviewers actually ran**: bare `opencode` is a relay-only name
+   here, so if your panel falls back to `SHIP_FEATURE_REVIEWERS` it is skipped with a warning and
+   the round still exits `0`. A single reviewer via `codex exec --sandbox read-only` still works.
    **Plan-review has its own 2-round cap**, distinct from the cross-review loop below — its
    **plan-qualifying** term is not the same as, and must not be conflated with, the "qualifying
    Should-fix" used in cross-review. A round is one

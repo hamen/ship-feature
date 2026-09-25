@@ -8,6 +8,39 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Changed
 
+- **plan-review honours model and effort pins for `claude`, `codex` and `grok` — and `grok45high` is
+  now `grok`.** `~/.config/pr-review-relay/config` is meant to be the one place a seat's model and
+  effort are pinned, but plan-review ignored it for three seats: `claude -p` and `codex exec` ran
+  bare (codex on whatever `~/.codex/config.toml` said), and `grok45high` had `--reasoning-effort
+  high` hardcoded, so no key could set it. Now:
+
+  | seat | shared keys | environment (wins) | unpinned |
+  |---|---|---|---|
+  | `claude` | `MODEL_claude`, `EFFORT_claude` → `--model`, `--effort` | `CLAUDE_REVIEW_MODEL`, `CLAUDE_REVIEW_EFFORT` | no extra argument (as before) |
+  | `codex` | `MODEL_codex`, `EFFORT_codex` → `-m`, `-c model_reasoning_effort="…"` | `CODEX_REVIEW_MODEL`, `CODEX_REVIEW_EFFORT` | no extra argument (as before) |
+  | `grok` | `MODEL_grok`, `EFFORT_grok` → `-m`, `--reasoning-effort` | `GROK_REVIEW_MODEL`, `GROK_REVIEW_EFFORT` | `grok-4.6`, **`medium`** (was a hardcoded `high`) |
+
+  These are the relay's own keys and environment names, so one line pins the seat for the plan
+  review and the PR review alike. They are read from the shared file and the environment only — set
+  in `~/.config/ship-feature/config` they are ignored with a warning — and they are not exported,
+  so `ship-feature relay` behaves exactly as before. A model starting with `-`, or an effort that is
+  not a bare word, stops the run before any reviewer starts. Each seat's dispatch line now prints
+  the model and effort it resolved to (`→ grok reviewing… (model=grok-4.7, effort=medium)`).
+
+  **The seat rename.** A seat called `grok45high` running at medium effort would lie twice — the
+  `kimi3` problem again. Plan-review's grok seat is now bare `grok`, the same seat the relay runs:
+
+  | old | new | what happens now |
+  |---|---|---|
+  | `grok45high` in any reviewer list | `grok` | runs `grok`, with one warning per run |
+  | `GROK45HIGH_REVIEW_MODEL` (environment or `~/.config/ship-feature/config`) | `GROK_REVIEW_MODEL` / `MODEL_grok` | warned, ignored — and a stale export no longer blocks `MODEL_grok` |
+  | `MODEL_grok45high` (`~/.config/pr-review-relay/config`) | `MODEL_grok` | warned, ignored |
+
+  **Behaviour change on pull:** bare `grok` is no longer relay-only in plan-review. A plan panel that
+  falls back to `REVIEWERS` containing `grok` now **runs** it — and, by the quorum rule, now
+  **fails the round (exit 3) if the `grok` CLI is not installed**, where it used to be skipped with
+  a warning. Update `PLAN_REVIEWERS` (`grok45high` → `grok`) and delete `MODEL_grok45high`.
+
 - **BREAKING — the plan-review seat `kimi3` is now `glm`.** The old name was a lie and had been one
   since 2026-08-11: the seat is the **opencode runner pinned read-only**, and which model sits on it
   is one config line. It ran GLM 5.2 for a week, then Kimi K3, then GLM 5.3, while the panel header
