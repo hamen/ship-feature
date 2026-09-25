@@ -803,6 +803,17 @@ printf '%s' "$pn0" | grep 'REVIEW-claude' | grep -q -- "argv=\[-p --permission-m
   && printf '%s' "$pn0" | grep -q '→ claude reviewing… (model=cli default, effort=cli default)' \
   && { echo "  ok   [-] unpinned claude and codex get no extra argument"; PASS=$((PASS+1)); } \
   || { echo "  FAIL an unpinned seat gained an argument: $pn0"; FAIL=$((FAIL+1)); }
+# Every other seat's dispatch line too — each is its own arm in plan_seat_pins, so a misspelt
+# variable there would print "(model=)" on exactly one seat. grok is the one whose default effort
+# changed. The line is printed by the parent before the seat starts, so the seat's own outcome
+# (the gemini stub's auth path) does not matter here.
+pnd=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok,cursor,glm,antigravity 2>&1)
+printf '%s' "$pnd" | grep -q '→ grok reviewing… (model=grok-4.6, effort=medium)' \
+  && printf '%s' "$pnd" | grep -q '→ cursor reviewing… (model=composer-2.5)' \
+  && printf '%s' "$pnd" | grep -q '→ glm reviewing… (model=opencode-go/glm-5.3)' \
+  && printf '%s' "$pnd" | grep -q '→ antigravity reviewing… (model=gemini-3.1-pro-preview)' \
+  && { echo "  ok   [-] the dispatch line shows grok, cursor, glm and gemini's resolved pins"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a dispatch line is missing or wrong: $(printf '%s' "$pnd" | grep '→')"; FAIL=$((FAIL+1)); }
 # The environment beats the shared file, per key; an EMPTY environment value does not block it.
 pn1=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared-pins" CODEX_REVIEW_MODEL=env-codex CLAUDE_REVIEW_EFFORT=low CODEX_REVIEW_EFFORT= bash "$CLI" plan-review --reviewers claude,codex 2>&1)
 printf '%s' "$pn1" | grep 'REVIEW-codex' | grep -qF -- '-m env-codex -c model_reasoning_effort="medium" ' \
@@ -2196,7 +2207,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=350
+EXPECTED=351
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
