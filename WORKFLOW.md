@@ -60,22 +60,23 @@ being true the day it changes, and nothing announces the difference: the round s
 smaller and reads as complete. Pass the flag to override deliberately, not to restate the config.
 
 **Read the startup lines and say which reviewers actually ran.** Omitting the flag fixes a stale
-list; it cannot tell you a seat dropped out. Here, bare `opencode` and bare `grok` are relay-only
-names — if your panel falls back to `SHIP_FEATURE_REVIEWERS` and contains them, they are skipped
-with a warning and the round still exits `0`.
+list; it cannot tell you a seat dropped out. Here, bare `opencode` is a relay-only name — if your
+panel falls back to `SHIP_FEATURE_REVIEWERS` and contains it, it is skipped with a warning and the
+round still exits `0`. Each seat's dispatch line also shows the model and effort it resolved to.
 
 With no file and no stdin it reads
 `./plan.md` when nothing is named — convenient, and NOT where a plan should live: see §1. Reviewers run **read-only** and nothing is written or posted — supported: `claude`
 (`--permission-mode plan --safe-mode`), `codex` (`--sandbox read-only`), `cursor` (ask mode, pinned to
 `$CURSOR_REVIEW_MODEL` — default `composer-2.5`, Cursor's own model — so Cursor's `Auto` cannot
 quietly route the review to a Claude model and have Claude grade a plan Claude wrote, and so the
-seat stays out of `grok45high`'s family too), `glm`
+seat stays out of `grok`'s family too), `glm`
 (the opencode runner, model pinned to `$GLM_REVIEW_MODEL` — default `opencode-go/glm-5.3`, the
 bundled OpenCode Go tier, overridable to a pay-as-you-go model — pinned read-only by
 `OPENCODE_CONFIG_CONTENT` — the highest-precedence config
 layer — denying `edit`+`bash`, with inherited `OPENCODE_CONFIG*` unset, plus `--pure`
-and `--agent plan`), `grok45high` (Grok 4.6 high effort, model pinned to `$GROK45HIGH_REVIEW_MODEL` —
-default `grok-4.6` — via `grok --prompt-file`, running in your
+and `--agent plan`), `grok` (model and effort from `MODEL_grok` / `EFFORT_grok` in the shared panel
+file — the same keys the relay's grok seat reads — or `$GROK_REVIEW_MODEL` / `$GROK_REVIEW_EFFORT`;
+defaults `grok-4.6` / `medium` — via `grok --prompt-file`, running in your
 checkout with a read-only tool allowlist `--tools read_file,list_dir,grep`, the MCP bridge removed
 (`--disallowed-tools search_tool,use_tool`), `--permission-mode plan`, `--sandbox read-only`), and `antigravity` (aliases `agy`, `gemini`) via the
 `gemini` CLI. The gemini run is fail-closed: an isolated `GEMINI_CLI_HOME` **and** working dir with a
@@ -91,16 +92,24 @@ tool as easily as a minor one. The version is probed inside the same isolation t
 with `SHIP_FEATURE_GEMINI_MODEL` or `MODEL_gemini` in the shared panel file. **Tradeoff:** because the
 run is fully isolated, gemini reviews the plan text only — it has no access to the checkout's files
 (deep codebase fact-checking is the PR cross-review's job). The `antigravity` name maps to the `gemini`
-CLI **here** but to `agy` in `relay` — only `gemini` has a read-only mode. Bare `opencode` and bare
-`grok` are relay-only and skipped with a warning (use `grok45high` for plan review).
+CLI **here** but to `agy` in `relay` — only `gemini` has a read-only mode. Bare `opencode` is
+relay-only and skipped with a warning. `grok45high` is the old name of the `grok` seat: it still runs
+`grok`, with a warning, and its old pins (`MODEL_grok45high`, `GROK45HIGH_REVIEW_MODEL`) are ignored.
 
-Reviewers that run in the checkout — `claude`, `codex`, `cursor`, `glm`, `grok45high` — can read the
+`claude` and `codex` take their pins from the same place: `MODEL_claude` / `EFFORT_claude` and
+`MODEL_codex` / `EFFORT_codex` in the shared panel file, or `$CLAUDE_REVIEW_MODEL`,
+`$CLAUDE_REVIEW_EFFORT`, `$CODEX_REVIEW_MODEL`, `$CODEX_REVIEW_EFFORT` in the environment (which
+wins). Unpinned, they get no extra argument and run whatever their CLI is configured for. These six
+pins are read from the shared file and the environment only — set in ship-feature's own config they
+are ignored, with a warning.
+
+Reviewers that run in the checkout — `claude`, `codex`, `cursor`, `glm`, `grok` — can read the
 tree, so they check the plan against the code (a stale line number, a test the change would turn red).
 `glm` has three states, in this order: it runs in the checkout; it falls back to an isolated empty
 directory when the checkout carries its own opencode config (`opencode.json`, `opencode.jsonc`,
 `.opencode`), because that config could otherwise reconfigure the reviewer, and it says so above its
 output; and it is **skipped entirely** if that isolated directory cannot be created, rather than
-running against a tree it cannot vouch for. `grok45high` needs a working OS sandbox to read the tree:
+running against a tree it cannot vouch for. `grok` needs a working OS sandbox to read the tree:
 where one cannot be applied (Linux without bubblewrap) it degrades to an isolated, text-only review and
 says so above its output.
 

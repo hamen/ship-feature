@@ -149,8 +149,10 @@ ship-feature skill for any feature/fix.
   even via shell and can't be overridden by a merged global/checkout config; inherited `OPENCODE_CONFIG*`
   are unset, plus `--pure` and `--agent plan`. It reads the checkout, falls back to an isolated cwd when
   the checkout carries its own opencode config, and is skipped entirely if that cwd cannot be created),
-  `grok45high` (Grok 4.6 high effort — pin with `GROK45HIGH_REVIEW_MODEL`, from the config file or the
-  environment, same contract as `CURSOR_REVIEW_MODEL` below: `grok --prompt-file` — headless Grok ignores stdin — running in
+  `grok` (model and effort from `MODEL_grok` / `EFFORT_grok` in `~/.config/pr-review-relay/config` —
+  the same keys the relay's grok seat reads — or `GROK_REVIEW_MODEL` / `GROK_REVIEW_EFFORT` in the
+  environment; defaults `grok-4.6` / `medium`; `grok45high` is its deprecated old name:
+  `grok --prompt-file` — headless Grok ignores stdin — running in
   your checkout like `claude`/`codex`/`cursor`, held read-only by a tool **allowlist**
   `--tools read_file,list_dir,grep`, with the MCP bridge removed explicitly
   (`--disallowed-tools search_tool,use_tool` — it survives the built-in allowlist), plus
@@ -169,10 +171,13 @@ ship-feature skill for any feature/fix.
   sees only the plan text, not the checkout's files. The `antigravity` name maps to the `gemini` CLI
   here but to `agy` in `relay` — only `gemini` has a read-only mode.
   `--safe-mode` on claude also stops any hooks/plugins/MCP in the checkout from loading.
-  Bare `opencode` and bare `grok` are
+  `claude` and `codex` are pinned from the same file: `MODEL_claude` / `EFFORT_claude` become
+  `--model` / `--effort`, and `MODEL_codex` / `EFFORT_codex` become `-m` /
+  `-c model_reasoning_effort="…"`; the environment (`CLAUDE_REVIEW_MODEL`, `CODEX_REVIEW_EFFORT`, …)
+  wins. Unpinned, they get no extra argument. Each seat's dispatch line prints what it resolved to.
+  Bare `opencode` is
   relay-only and skipped with a warning (a plain `opencode run` uses the
-  all-allow `build` agent — only the `glm` reviewer pins the read-only opencode `plan` agent; bare
-  `grok` is the PR-relay name — use `grok45high` here). The
+  all-allow `build` agent — only the `glm` reviewer pins the read-only opencode `plan` agent). The
   panel is your quorum — **omit `--reviewers` and it is taken from your config**
   (`SHIP_FEATURE_PLAN_REVIEWERS`, then `SHIP_FEATURE_REVIEWERS`). Each resolves from the
   **environment** first, then `~/.config/ship-feature/config`, then `PLAN_REVIEWERS` / `REVIEWERS`
@@ -180,7 +185,7 @@ ship-feature skill for any feature/fix.
   so a stale one in a shell profile silently reduces the panel. Pass the flag only to override on purpose, because a typed
   list is a copy of that config that goes stale the day a seat is added. A supported reviewer whose
   CLI is missing **fails** the round rather than thinning it — but a **relay-only** name in the set
-  (bare `opencode`, bare `grok`) is skipped with a warning and the round still exits `0`, so read
+  (bare `opencode`) is skipped with a warning and the round still exits `0`, so read
   the startup lines. Exit `0` = every reviewer that RAN responded (which is not the same as
   everyone running), `3` = one failed/timed out/returned empty (re-run),
   `1` = usage error. Per-reviewer timeout resolves highest-first: `SHIP_FEATURE_PLAN_TIMEOUT` (the
@@ -223,7 +228,7 @@ failing differently from each other and not just from the author.
 
 Override with `CURSOR_REVIEW_MODEL`; `cursor-agent --list-models` shows what your account offers.
 **Pick something outside the other reviewers' families.** Setting it back to `auto`, to a
-`claude-*` id while Claude writes your plans, or to a `cursor-grok-*` id while `grok45high` is on
+`claude-*` id while Claude writes your plans, or to a `cursor-grok-*` id while `grok` is on
 your panel, all collapse two nominally independent seats onto one model family — the override
 exists for retired model ids, not for going back to Auto.
 The variable has no `SHIP_FEATURE_` prefix on purpose: it describes your Cursor account rather than

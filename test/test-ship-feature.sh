@@ -116,7 +116,7 @@ export PR_RELAY_CONFIG=/dev/null
 # come from the shared config. They are knobs people really do export, and an exported one would
 # satisfy the "no config at all -> the built-in default" assertion below: green on this machine,
 # red in CI, for a reason the assertion never mentions.
-unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL GLM_REVIEW_MODEL KIMI3_REVIEW_MODEL GROK45HIGH_REVIEW_MODEL PR_RELAY_OPENCODE_MODEL SHIP_FEATURE_PLAN_TIMEOUT PR_RELAY_AGENT_TIMEOUT SHIP_FEATURE_GEMINI_MODEL SHIP_FEATURE_GEMINI_TESTED_VERSIONS
+unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL GLM_REVIEW_MODEL KIMI3_REVIEW_MODEL GROK45HIGH_REVIEW_MODEL CLAUDE_REVIEW_MODEL CLAUDE_REVIEW_EFFORT CODEX_REVIEW_MODEL CODEX_REVIEW_EFFORT GROK_REVIEW_MODEL GROK_REVIEW_EFFORT PR_RELAY_OPENCODE_MODEL SHIP_FEATURE_PLAN_TIMEOUT PR_RELAY_AGENT_TIMEOUT SHIP_FEATURE_GEMINI_MODEL SHIP_FEATURE_GEMINI_TESTED_VERSIONS
 # The gemini seat picks its auth method from the environment, and anyone who actually uses gemini
 # has one of these exported — a working machine is the normal case, not the exotic one. Leave them
 # in place and the seat takes the API-key path on this developer's box and the OAuth path in CI,
@@ -374,8 +374,8 @@ make_reviewer codex  0 codex
 # is named `opencode` but tags its output REVIEW-glm.
 make_reviewer glm  0 opencode
 make_reviewer cursor 0 cursor-agent
-# grok45high is invoked through the `grok` binary
-make_reviewer grok45high 0 grok
+# grok is invoked through the `grok` binary
+make_reviewer grok 0 grok
 # antigravity/gemini reviewer (the `gemini` CLI). A richer stub than make_reviewer: it also reports
 # its CWD and whether the isolated, locked-down `.gemini/settings.json` (write tools excluded + hooks
 # off) is present in that CWD — so the read-only isolation contract can be asserted, not just argv.
@@ -657,33 +657,35 @@ printf '%s' "$rout" | grep -q 'CURSOR_REVIEW_MODEL=composer-2.5-fast' \
   && { echo "  ok   [-] the shared cursor pin reaches the child process"; PASS=$((PASS+1)); } \
   || { echo "  FAIL CURSOR_REVIEW_MODEL did not reach pr-review-relay (not exported?)"; FAIL=$((FAIL+1)); }
 cp "$WORK/relay-stub-backup" "$BIN/pr-review-relay"; chmod +x "$BIN/pr-review-relay"
-# The remaining two seats, from the file and with the environment still winning. Each is its own
-# case arm in load_config, so a missing one fails silently on exactly one reviewer.
+# The cursor seat, from the file and with the environment still winning. The grok seat's old key
+# in this same file is RECORDED AND IGNORED: the seat is `grok` now and is pinned by MODEL_grok in
+# the shared file. Stderr is captured, not discarded — the warning is the behaviour under test.
 printf 'CURSOR_REVIEW_MODEL=composer-2.5-fast\nGROK45HIGH_REVIEW_MODEL=grok-9.9\n' > "$CFGDIR/config5"
-pout=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config5" bash "$CLI" plan-review --reviewers cursor,grok45high 2>/dev/null)
+pout=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config5" bash "$CLI" plan-review --reviewers cursor,grok 2>&1)
 printf '%s' "$pout" | grep 'REVIEW-cursor' | grep -q -- "--model composer-2.5-fast" \
   && { echo "  ok   [-] the config file pins the cursor model"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the config file's cursor pin was ignored"; FAIL=$((FAIL+1)); }
-printf '%s' "$pout" | grep 'REVIEW-grok45high' | grep -q -- "-m grok-9.9" \
-  && { echo "  ok   [-] the config file pins the grok45high model"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL the config file's grok45high pin was ignored"; FAIL=$((FAIL+1)); }
-pout2=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config5" CURSOR_REVIEW_MODEL=composer-2.5 GROK45HIGH_REVIEW_MODEL=grok-4.6 bash "$CLI" plan-review --reviewers cursor,grok45high 2>/dev/null)
+printf '%s' "$pout" | grep 'REVIEW-grok' | grep -q -- "-m grok-4.6 " \
+  && printf '%s' "$pout" | grep -q "GROK45HIGH_REVIEW_MODEL is set in ship-feature's config.*IGNORED" \
+  && { echo "  ok   [-] the config file's old grok45high pin warns and is ignored"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the config file's GROK45HIGH_REVIEW_MODEL was honoured or not reported"; FAIL=$((FAIL+1)); }
+pout2=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/config5" CURSOR_REVIEW_MODEL=composer-2.5 GROK_REVIEW_MODEL=grok-4.7 bash "$CLI" plan-review --reviewers cursor,grok 2>/dev/null)
 # Anchored on the argv closing bracket: bare "composer-2.5" is a PREFIX of the "composer-2.5-fast"
 # the config file sets, so an unanchored grep would pass whether the override worked or not —
 # precisely the bug this case exists to catch.
 printf '%s' "$pout2" | grep 'REVIEW-cursor' | grep -q -- "--model composer-2.5]" \
-  && printf '%s' "$pout2" | grep 'REVIEW-grok45high' | grep -q -- "-m grok-4.6" \
-  && { echo "  ok   [-] the environment overrides the cursor and grok45high pins"; PASS=$((PASS+1)); } \
+  && printf '%s' "$pout2" | grep 'REVIEW-grok' | grep -q -- "-m grok-4.7 " \
+  && { echo "  ok   [-] the environment overrides the cursor and grok pins"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the config file overrode an explicit environment model"; FAIL=$((FAIL+1)); }
 
 # --- the SHARED panel config (pr-review-relay's file) is the last fallback ---------------------
 # Both tools drive the same seats on the same accounts, so the model a seat runs belongs to the
 # machine, not to whichever tool is invoking it. The relay's file has carried MODEL_glm since
 # 2026-08-14; reading it here is what makes one file the answer instead of two that drift.
-printf 'MODEL_glm=openrouter/z-ai/glm-9.9\nMODEL_grok45high=grok-9.9\nMODEL_cursor=composer-9.9\n' > "$CFGDIR/shared1"
-sh1=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared1" bash "$CLI" plan-review --reviewers glm,grok45high,cursor 2>/dev/null)
+printf 'MODEL_glm=openrouter/z-ai/glm-9.9\nMODEL_grok=grok-9.9\nMODEL_cursor=composer-9.9\n' > "$CFGDIR/shared1"
+sh1=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared1" bash "$CLI" plan-review --reviewers glm,grok,cursor 2>/dev/null)
 printf '%s' "$sh1" | grep 'REVIEW-glm' | grep -q -- "-m openrouter/z-ai/glm-9.9" \
-  && printf '%s' "$sh1" | grep 'REVIEW-grok45high' | grep -q -- "-m grok-9.9" \
+  && printf '%s' "$sh1" | grep 'REVIEW-grok' | grep -q -- "-m grok-9.9" \
   && { echo "  ok   [-] the shared relay config pins the models"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the shared relay config was not read"; FAIL=$((FAIL+1)); }
 # All three mapped seats, not just two: each is its own case arm, so a missing one fails
@@ -691,8 +693,6 @@ printf '%s' "$sh1" | grep 'REVIEW-glm' | grep -q -- "-m openrouter/z-ai/glm-9.9"
 printf '%s' "$sh1" | grep 'REVIEW-cursor' | grep -q -- "--model composer-9.9" \
   && { echo "  ok   [-] the shared relay config pins the cursor model too"; PASS=$((PASS+1)); } \
   || { echo "  FAIL MODEL_cursor was not mapped"; FAIL=$((FAIL+1)); }
-# MODEL_grok is the RELAY's seat, at medium effort. plan-review's grok45high is a different seat,
-# so reading MODEL_grok here would hand a high-effort plan review the relay's pin.
 # An EMPTY environment value must not block the shared file. Empty means "no pin", not
 # "disable" — the SHIP_FEATURE_* keys use the other rule on purpose. With the wrong one,
 # CURSOR_REVIEW_MODEL= left ship-feature on its built-in default while pr-review-relay used the
@@ -730,7 +730,7 @@ printf '%s' "$sh9" | grep -q -- "--reviewers codex,grok" \
   || { echo "  FAIL REVIEWERS was not read from the shared file"; FAIL=$((FAIL+1)); }
 sh10=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared7" bash "$CLI" plan-review 2>/dev/null)
 printf '%s' "$sh10" | grep -q 'REVIEW-glm' && printf '%s' "$sh10" | grep -q 'REVIEW-codex' \
-  && ! printf '%s' "$sh10" | grep -q 'REVIEW-grok45high' \
+  && ! printf '%s' "$sh10" | grep -q 'REVIEW-grok' \
   && { echo "  ok   [-] the shared file names the plan-review panel"; PASS=$((PASS+1)); } \
   || { echo "  FAIL PLAN_REVIEWERS was not read from the shared file"; FAIL=$((FAIL+1)); }
 # ship-feature's own config still wins, so one tool can differ on purpose.
@@ -768,11 +768,99 @@ sh16=$(PATH="$BIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared7" SHIP_FEATURE_REVIEWER
 printf '%s' "$sh16" | grep -q -- "--reviewers claude,codex" \
   && { echo "  ok   [-] an environment quorum beats the shared file"; PASS=$((PASS+1)); } \
   || { echo "  FAIL the shared file overrode an explicit environment quorum"; FAIL=$((FAIL+1)); }
-printf 'MODEL_grok=grok-0.0\n' > "$CFGDIR/shared4"
-sh5=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared4" bash "$CLI" plan-review --reviewers grok45high 2>/dev/null)
-printf '%s' "$sh5" | grep 'REVIEW-grok45high' | grep -q -- "-m grok-0.0" \
-  && { echo "  FAIL MODEL_grok leaked onto the grok45high seat"; FAIL=$((FAIL+1)); } \
-  || { echo "  ok   [-] MODEL_grok is left to the relay's own seat"; PASS=$((PASS+1)); }
+# INVERTED in 2026-09. `grok` is ONE seat in both tools now: MODEL_grok / EFFORT_grok pin the plan
+# review exactly as they pin the relay's grok seat. (Until then plan-review ran a separate
+# `grok45high` seat at a hardcoded high effort, and this case asserted MODEL_grok did NOT reach it.)
+printf 'MODEL_grok=grok-0.0\nEFFORT_grok=low\n' > "$CFGDIR/shared4"
+sh5=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared4" bash "$CLI" plan-review --reviewers grok 2>/dev/null)
+printf '%s' "$sh5" | grep 'REVIEW-grok' | grep -q -- "-m grok-0.0 --reasoning-effort low " \
+  && { echo "  ok   [-] MODEL_grok / EFFORT_grok pin the plan-review grok seat"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL MODEL_grok / EFFORT_grok did not reach the grok seat: $sh5"; FAIL=$((FAIL+1)); }
+
+# --- claude and codex take their model/effort pins too (Fizzy #1123) -------------------------
+# Until 2026-09 plan-review ran a bare `claude -p` and a bare `codex exec`: MODEL_claude and
+# MODEL_codex / EFFORT_codex in the shared file pinned the PR review and not the plan review, and
+# codex ran whatever ~/.codex/config.toml happened to say.
+printf 'MODEL_claude=claude-pin-1\nEFFORT_claude=high\nMODEL_codex=codex-pin-1\nEFFORT_codex=medium\n' > "$CFGDIR/shared-pins"
+pn=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared-pins" bash "$CLI" plan-review --reviewers claude,codex 2>&1)
+# Anchored on the flags that stay in place AND on "You are reviewing" (the start of the prompt):
+# the pins must sit between the read-only flags and the prompt, not after it.
+printf '%s' "$pn" | grep 'REVIEW-claude' | grep -q -- "--permission-mode plan --safe-mode --model claude-pin-1 --effort high You are reviewing" \
+  && { echo "  ok   [-] MODEL_claude / EFFORT_claude reach the claude seat, before the prompt"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the claude pins did not reach its argv in place: $(printf '%s' "$pn" | grep 'REVIEW-claude')"; FAIL=$((FAIL+1)); }
+printf '%s' "$pn" | grep 'REVIEW-codex' | grep -qF -- 'exec --sandbox read-only -m codex-pin-1 -c model_reasoning_effort="medium" You are reviewing' \
+  && { echo "  ok   [-] MODEL_codex / EFFORT_codex reach the codex seat, before the prompt"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the codex pins did not reach its argv in place: $(printf '%s' "$pn" | grep 'REVIEW-codex')"; FAIL=$((FAIL+1)); }
+# The resolved pins are printed on each seat's dispatch line.
+printf '%s' "$pn" | grep -q '→ claude reviewing… (model=claude-pin-1, effort=high)' \
+  && printf '%s' "$pn" | grep -q '→ codex reviewing… (model=codex-pin-1, effort=medium)' \
+  && { echo "  ok   [-] the dispatch line shows each seat's resolved model and effort"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the dispatch line does not show the resolved pins"; FAIL=$((FAIL+1)); }
+# No pins → exactly today's argv: no new argument, not even an empty one.
+pn0=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers claude,codex 2>&1)
+printf '%s' "$pn0" | grep 'REVIEW-claude' | grep -q -- "argv=\[-p --permission-mode plan --safe-mode You are reviewing" \
+  && printf '%s' "$pn0" | grep 'REVIEW-codex' | grep -q -- "argv=\[exec --sandbox read-only You are reviewing" \
+  && printf '%s' "$pn0" | grep -q '→ claude reviewing… (model=cli default, effort=cli default)' \
+  && { echo "  ok   [-] unpinned claude and codex get no extra argument"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL an unpinned seat gained an argument: $pn0"; FAIL=$((FAIL+1)); }
+# Every other seat's dispatch line too — each is its own arm in plan_seat_pins, so a misspelt
+# variable there would print "(model=)" on exactly one seat. grok is the one whose default effort
+# changed. The line is printed by the parent before the seat starts, so the seat's own outcome
+# (the gemini stub's auth path) does not matter here.
+pnd=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok,cursor,glm,antigravity 2>&1)
+printf '%s' "$pnd" | grep -q '→ grok reviewing… (model=grok-4.6, effort=medium)' \
+  && printf '%s' "$pnd" | grep -q '→ cursor reviewing… (model=composer-2.5)' \
+  && printf '%s' "$pnd" | grep -q '→ glm reviewing… (model=opencode-go/glm-5.3)' \
+  && printf '%s' "$pnd" | grep -q '→ antigravity reviewing… (model=gemini-3.1-pro-preview)' \
+  && { echo "  ok   [-] the dispatch line shows grok, cursor, glm and gemini's resolved pins"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a dispatch line is missing or wrong: $(printf '%s' "$pnd" | grep '→')"; FAIL=$((FAIL+1)); }
+# The environment beats the shared file, per key; an EMPTY environment value does not block it.
+pn1=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared-pins" CODEX_REVIEW_MODEL=env-codex CLAUDE_REVIEW_EFFORT=low CODEX_REVIEW_EFFORT= bash "$CLI" plan-review --reviewers claude,codex 2>&1)
+printf '%s' "$pn1" | grep 'REVIEW-codex' | grep -qF -- '-m env-codex -c model_reasoning_effort="medium" ' \
+  && printf '%s' "$pn1" | grep 'REVIEW-claude' | grep -q -- "--model claude-pin-1 --effort low " \
+  && { echo "  ok   [-] an environment pin beats the shared file, and an empty one does not block it"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL environment/shared-file precedence is wrong: $pn1"; FAIL=$((FAIL+1)); }
+# ship-feature's OWN config is not a home for these six: the value is reported and ignored.
+printf 'CODEX_REVIEW_MODEL=own-codex\n' > "$CFGDIR/own-pins"
+pn2=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_CONFIG="$CFGDIR/own-pins" bash "$CLI" plan-review --reviewers codex 2>&1)
+! printf '%s' "$pn2" | grep 'REVIEW-codex' | grep -q -- "own-codex" \
+  && printf '%s' "$pn2" | grep -q "CODEX_REVIEW_MODEL is set in ship-feature's config and is IGNORED" \
+  && { echo "  ok   [-] a pin in ship-feature's own config warns and is ignored"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a pin in ship-feature's own config was honoured or dropped in silence: $pn2"; FAIL=$((FAIL+1)); }
+# Config typos must not become flags: a leading '-' in a model, or a non-word effort, stops the
+# run before any reviewer starts.
+printf 'MODEL_codex=--yolo\n' > "$CFGDIR/shared-bad1"
+pb1=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared-bad1" bash "$CLI" plan-review --reviewers codex 2>&1); rc=$?
+[ "$rc" != 0 ] && ! printf '%s' "$pb1" | grep -q 'REVIEW-' \
+  && { echo "  ok   [-] a model pin starting with '-' is refused before dispatch"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL MODEL_codex=--yolo reached a reviewer (rc=$rc)"; FAIL=$((FAIL+1)); }
+printf 'EFFORT_codex=x" y\n' > "$CFGDIR/shared-bad2"
+pb2=$(printf 'plan\n' | PATH="$PBIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared-bad2" bash "$CLI" plan-review --reviewers codex 2>&1); rc=$?
+[ "$rc" != 0 ] && ! printf '%s' "$pb2" | grep -q 'REVIEW-' \
+  && { echo "  ok   [-] an effort that is not a bare word is refused before dispatch"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a quoting effort reached a reviewer (rc=$rc)"; FAIL=$((FAIL+1)); }
+# `ship-feature relay` is unchanged: the six pins are read for plan-review and NOT pushed into the
+# relay child, which reads the same file itself. Includes the empty-export case: a plain
+# assignment keeps an inherited export attribute, so without `export -n` an exported EMPTY
+# CODEX_REVIEW_MODEL= would carry the file's value across.
+cp "$BIN/pr-review-relay" "$WORK/relay-stub-backup-pins"
+cat > "$BIN/pr-review-relay" <<'STUB'
+#!/usr/bin/env bash
+for v in CLAUDE_REVIEW_MODEL CLAUDE_REVIEW_EFFORT CODEX_REVIEW_MODEL CODEX_REVIEW_EFFORT GROK_REVIEW_MODEL GROK_REVIEW_EFFORT; do
+  if [ -n "${!v+x}" ]; then echo "$v=[${!v}]"; else echo "$v=unset"; fi
+done
+STUB
+chmod +x "$BIN/pr-review-relay"
+printf 'MODEL_claude=c1\nEFFORT_claude=high\nMODEL_codex=file-m\nEFFORT_codex=medium\nMODEL_grok=g1\nEFFORT_grok=low\n' > "$CFGDIR/shared-pins-relay"
+rp=$(PATH="$BIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared-pins-relay" bash "$CLI" relay --author claude 2>/dev/null)
+rp2=$(PATH="$BIN:$PATH" PR_RELAY_CONFIG="$CFGDIR/shared-pins-relay" CODEX_REVIEW_MODEL= bash "$CLI" relay --author claude 2>/dev/null)
+cp "$WORK/relay-stub-backup-pins" "$BIN/pr-review-relay"; chmod +x "$BIN/pr-review-relay"
+[ "$(printf '%s\n' "$rp" | grep -c '=unset$')" = 6 ] \
+  && { echo "  ok   [-] the shared pins are not pushed into the relay child"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a shared pin reached the relay child's environment: $rp"; FAIL=$((FAIL+1)); }
+! printf '%s' "$rp2" | grep -q 'file-m' \
+  && { echo "  ok   [-] an exported empty pin does not carry the file value into the relay child"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the shared file's value leaked through an exported empty name: $rp2"; FAIL=$((FAIL+1)); }
 # ship-feature's OWN config wins over the shared one — a per-tool override has to be possible,
 # or consolidating would mean losing the ability to differ on purpose.
 printf 'GLM_REVIEW_MODEL=openrouter/z-ai/glm-5.2\n' > "$CFGDIR/shared2"
@@ -938,11 +1026,28 @@ printf '%s' "$depb" | grep -q 'KIMI3_REVIEW_MODEL' && printf '%s' "$depb" | grep
 # of any relay assertion appended below it.
 printf '#!/usr/bin/env bash\necho "ARGS: $*"\nexit 0\n' > "$BIN/pr-review-relay"; chmod +x "$BIN/pr-review-relay"
 
-# GROK45HIGH_REVIEW_MODEL is the documented way to pin grok45high at a different Grok version —
-# same contract as CURSOR_REVIEW_MODEL/GLM_REVIEW_MODEL above: a pin that could not be
-# overridden would be a dead end when xAI ships the next model.
-gmo=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok GROK45HIGH_REVIEW_MODEL=grok-4.7 bash "$CLI" plan-review --reviewers grok45high 2>/dev/null | grep 'REVIEW-grok45high')
-printf '%s' "$gmo" | grep -q -- "-m grok-4.7" && { echo "  ok   [-] GROK45HIGH_REVIEW_MODEL overrides the pinned default"; PASS=$((PASS+1)); } || { echo "  FAIL GROK45HIGH_REVIEW_MODEL ignored: $gmo"; FAIL=$((FAIL+1)); }
+# GROK_REVIEW_MODEL / GROK_REVIEW_EFFORT (the relay's own environment names) pin grok at a
+# different version and effort — same contract as CURSOR_REVIEW_MODEL/GLM_REVIEW_MODEL above: a
+# pin that could not be overridden would be a dead end when xAI ships the next model.
+gmo=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok GROK_REVIEW_MODEL=grok-4.7 GROK_REVIEW_EFFORT=high bash "$CLI" plan-review --reviewers grok 2>/dev/null | grep 'REVIEW-grok')
+printf '%s' "$gmo" | grep -q -- "-m grok-4.7 --reasoning-effort high " && { echo "  ok   [-] GROK_REVIEW_MODEL / GROK_REVIEW_EFFORT override the defaults"; PASS=$((PASS+1)); } || { echo "  FAIL GROK_REVIEW_MODEL / GROK_REVIEW_EFFORT ignored: $gmo"; FAIL=$((FAIL+1)); }
+# The OLD environment name is reported and ignored — and it must NOT block the shared file. This is
+# the case the plan review caught: were the "env already set" flag armed from the old name, a
+# stale export would skip MODEL_grok in silence and the seat would run the built-in default.
+printf 'MODEL_grok=grok-4.7\n' > "$CFGDIR/shared-grok-old"
+gold=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok PR_RELAY_CONFIG="$CFGDIR/shared-grok-old" GROK45HIGH_REVIEW_MODEL=grok-old bash "$CLI" plan-review --reviewers grok 2>&1)
+printf '%s' "$gold" | grep 'REVIEW-grok' | grep -q -- "-m grok-4.7 " \
+  && printf '%s' "$gold" | grep -q 'GROK45HIGH_REVIEW_MODEL is set in the ENVIRONMENT.*IGNORED' \
+  && { echo "  ok   [-] a stale GROK45HIGH_REVIEW_MODEL export warns and does not block MODEL_grok"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL a stale GROK45HIGH_REVIEW_MODEL export blocked MODEL_grok or was not reported: $gold"; FAIL=$((FAIL+1)); }
+# MODEL_grok45high in the shared file: reported, ignored.
+printf 'MODEL_grok45high=grok-old\n' > "$CFGDIR/shared-grok-old2"
+gold2=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok PR_RELAY_CONFIG="$CFGDIR/shared-grok-old2" bash "$CLI" plan-review --reviewers grok 2>&1)
+printf '%s' "$gold2" | grep 'REVIEW-grok' | grep -q -- "-m grok-4.6 " \
+  && printf '%s' "$gold2" | grep -q 'MODEL_grok45high is set in the shared panel config.*IGNORED' \
+  && ! printf '%s' "$gold2" | grep -q 'internal: no message' \
+  && { echo "  ok   [-] MODEL_grok45high in the shared file warns and is ignored"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL MODEL_grok45high was honoured or not reported: $gold2"; FAIL=$((FAIL+1)); }
 
 # --- the per-reviewer TIMEOUT, and the ladder it resolves through -----------------------------
 # AGENT_TIMEOUT in pr-review-relay's config was the one panel key ship-feature did NOT read: the
@@ -1067,64 +1172,64 @@ printf '%s' "$tmo3" | grep -q 'SF=unset' \
   || { echo "  FAIL load_config's assignment kept the export attribute and leaked into the relay: $tmo3"; FAIL=$((FAIL+1)); }
 
 
-# grok45high: Grok 4.6 high effort, prompt-file (not stdin), read-only ALLOWLIST, runs in the
+# grok: Grok 4.6 at medium effort by default (the relay's default for the same seat), prompt-file (not stdin), read-only ALLOWLIST, runs in the
 # checkout so it can verify the plan against the code (parity with claude/codex/cursor).
-out=$(printf 'UNIQUE_PLAN_TOKEN_42\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok45high 2>/dev/null); rc=$?
-check "plan-review grok45high clean exit" "$rc" 0
-printf '%s' "$out" | grep -q -- '-m grok-4.6' && printf '%s' "$out" | grep -q -- '--reasoning-effort high' \
+out=$(printf 'UNIQUE_PLAN_TOKEN_42\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok 2>/dev/null); rc=$?
+check "plan-review grok clean exit" "$rc" 0
+printf '%s' "$out" | grep -q -- '-m grok-4.6' && printf '%s' "$out" | grep -q -- '--reasoning-effort medium' \
   && printf '%s' "$out" | grep -q -- '--permission-mode plan' && printf '%s' "$out" | grep -q -- '--sandbox read-only' \
   && printf '%s' "$out" | grep -qF -- '--tools read_file,list_dir,grep' && printf '%s' "$out" | grep -q -- '--verbatim' \
   && printf '%s' "$out" | grep -qF -- '--disallowed-tools search_tool,use_tool' \
   && printf '%s' "$out" | grep -q -- '--prompt-file' \
-  && { echo "  ok   [-] grok45high argv pins model/high/plan/sandbox/tools-allowlist/mcp-off/verbatim/prompt-file"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL grok45high argv incomplete"; FAIL=$((FAIL+1)); }
+  && { echo "  ok   [-] grok argv pins model/medium/plan/sandbox/tools-allowlist/mcp-off/verbatim/prompt-file"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL grok argv incomplete"; FAIL=$((FAIL+1)); }
 # Read-only means: no shell, no editor, no subagents in the built-in allowlist. Asserted on the
 # ARGV LINE ONLY — grepping the whole output would false-fail on a plan that merely mentions one
 # of these names, since the stub echoes the plan back.
-gargv=$(printf '%s' "$out" | grep 'REVIEW-grok45high' | head -1 | sed -n 's/.*argv=\[\([^]]*\)\].*/\1/p')
+gargv=$(printf '%s' "$out" | grep 'REVIEW-grok' | head -1 | sed -n 's/.*argv=\[\([^]]*\)\].*/\1/p')
 printf '%s' "$gargv" | grep -qE -- '(run_terminal_command|search_replace|spawn_subagent|scheduler_)' \
-  && { echo "  FAIL grok45high allowlist leaks a write/exec tool"; FAIL=$((FAIL+1)); } \
-  || { echo "  ok   [-] grok45high allowlist excludes shell/editor/subagent tools"; PASS=$((PASS+1)); }
+  && { echo "  FAIL grok allowlist leaks a write/exec tool"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] grok allowlist excludes shell/editor/subagent tools"; PASS=$((PASS+1)); }
 # The MCP bridge survives --tools, so it must be removed explicitly. Verified against the real
 # CLI: with `--tools read_file` alone the session still exposes search_tool and use_tool.
 printf '%s' "$gargv" | grep -qF -- '--disallowed-tools search_tool,use_tool' \
-  && { echo "  ok   [-] grok45high removes the MCP bridge explicitly"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL grok45high leaves the MCP bridge reachable"; FAIL=$((FAIL+1)); }
+  && { echo "  ok   [-] grok removes the MCP bridge explicitly"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL grok leaves the MCP bridge reachable"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q 'UNIQUE_PLAN_TOKEN_42' && printf '%s' "$out" | grep -qF -- '--- PLAN ---' \
-  && { echo "  ok   [-] grok45high prompt-file contains the plan text"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL grok45high prompt-file missing plan content"; FAIL=$((FAIL+1)); }
+  && { echo "  ok   [-] grok prompt-file contains the plan text"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL grok prompt-file missing plan content"; FAIL=$((FAIL+1)); }
 # Runs in the caller's checkout (no --cwd override, no iso- temp dir): that is what lets it read
 # the tree the plan is about.
-gk=$(printf '%s' "$out" | grep 'REVIEW-grok45high' | head -1)
+gk=$(printf '%s' "$out" | grep 'REVIEW-grok' | head -1)
 gcwd=$(printf '%s' "$gk" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
 printf '%s' "$out" | grep -q -- '--cwd ' \
-  && { echo "  FAIL grok45high still pins --cwd (should inherit the checkout)"; FAIL=$((FAIL+1)); } \
-  || { echo "  ok   [-] grok45high does not override cwd"; PASS=$((PASS+1)); }
+  && { echo "  FAIL grok still pins --cwd (should inherit the checkout)"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] grok does not override cwd"; PASS=$((PASS+1)); }
 case "$gcwd" in
-  *iso-grok45high*) echo "  FAIL grok45high still runs in an isolated cwd ($gcwd)"; FAIL=$((FAIL+1));;
-  "$PWD") echo "  ok   [-] grok45high inherits the caller's cwd (the checkout, in real use)"; PASS=$((PASS+1));;
-  *) echo "  FAIL grok45high cwd is neither the caller's nor recognised ($gcwd)"; FAIL=$((FAIL+1));;
+  *iso-grok*) echo "  FAIL grok still runs in an isolated cwd ($gcwd)"; FAIL=$((FAIL+1));;
+  "$PWD") echo "  ok   [-] grok inherits the caller's cwd (the checkout, in real use)"; PASS=$((PASS+1));;
+  *) echo "  FAIL grok cwd is neither the caller's nor recognised ($gcwd)"; FAIL=$((FAIL+1));;
 esac
 # The prompt-file must never land inside the checkout, or it shows up in `git status`.
 printf '%s' "$out" | grep -qF -- "--prompt-file $PWD/" \
-  && { echo "  FAIL grok45high prompt-file written inside the checkout"; FAIL=$((FAIL+1)); } \
-  || { echo "  ok   [-] grok45high prompt-file lives outside the checkout"; PASS=$((PASS+1)); }
+  && { echo "  FAIL grok prompt-file written inside the checkout"; FAIL=$((FAIL+1)); } \
+  || { echo "  ok   [-] grok prompt-file lives outside the checkout"; PASS=$((PASS+1)); }
 # A sandbox that warns and continues must FAIL the round, not pass it. This is the fail-open
 # shape: grok exits 0 with a perfectly good review on stdout, while stderr says the OS write
 # barrier could not be set up. Before this guard the round was reported clean.
 cat > "$PBIN/grok" <<'STUB'
 #!/usr/bin/env bash
 echo "warning: failed to set up sandbox (bubblewrap not available), continuing unsandboxed" >&2
-echo "REVIEW-grok45high argv=[$*] CWD=[${PWD}]"
+echo "REVIEW-grok argv=[$*] CWD=[${PWD}]"
 echo "## Blocker"
 echo "None."
 exit 0
 STUB
 chmod +x "$PBIN/grok"
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok 2>&1); rc=$?
 check "plan-review fails when the sandbox warns and continues (fail-closed)" "$rc" 3
 printf '%s' "$out" | grep -qi 'sandbox was not enforced' \
-  && { echo "  ok   [-] grok45high sandbox fail-open is reported, not swallowed"; PASS=$((PASS+1)); } \
+  && { echo "  ok   [-] grok sandbox fail-open is reported, not swallowed"; PASS=$((PASS+1)); } \
   || { echo "  FAIL sandbox fail-open not surfaced"; FAIL=$((FAIL+1)); }
 printf '%s' "$out" | grep -q '## Blocker' \
   && { echo "  FAIL unsandboxed review was printed as a valid review"; FAIL=$((FAIL+1)); } \
@@ -1134,53 +1239,66 @@ printf '%s' "$out" | grep -q '## Blocker' \
 cat > "$PBIN/grok" <<'STUB'
 #!/usr/bin/env bash
 echo "info: sandbox profile read-only applied; namespace ready" >&2
-echo "REVIEW-grok45high argv=[$*] CWD=[${PWD}]"
+echo "REVIEW-grok argv=[$*] CWD=[${PWD}]"
 exit 0
 STUB
 chmod +x "$PBIN/grok"
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok 2>&1); rc=$?
 check "plan-review keeps the review when stderr mentions the sandbox benignly" "$rc" 0
-printf '%s' "$out" | grep -q 'REVIEW-grok45high' \
+printf '%s' "$out" | grep -q 'REVIEW-grok' \
   && { echo "  ok   [-] benign sandbox log does not discard the review"; PASS=$((PASS+1)); } \
   || { echo "  FAIL benign sandbox log false-failed the round"; FAIL=$((FAIL+1)); }
-make_reviewer grok45high 0 grok   # restore
+make_reviewer grok 0 grok   # restore
 
-# When the OS sandbox cannot be enforced, grok45high DEGRADES to the old isolated posture —
+# When the OS sandbox cannot be enforced, grok DEGRADES to the old isolated posture —
 # text-only review, no checkout — instead of refusing, and says so above the review. Refusing would
 # make the reviewer unusable on any Linux without bubblewrap (CI runners included); running it in the
 # checkout unsandboxed is the one thing we must never do.
-out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=fail bash "$CLI" plan-review --reviewers grok45high 2>&1); rc=$?
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=fail bash "$CLI" plan-review --reviewers grok 2>&1); rc=$?
 check "plan-review still returns a review when the sandbox is unavailable" "$rc" 0
 printf '%s' "$out" | grep -qi 'saw the plan text ONLY' \
-  && { echo "  ok   [-] degraded grok45high review is labelled text-only"; PASS=$((PASS+1)); } \
+  && { echo "  ok   [-] degraded grok review is labelled text-only"; PASS=$((PASS+1)); } \
   || { echo "  FAIL degraded review not labelled"; FAIL=$((FAIL+1)); }
-dg=$(printf '%s' "$out" | grep 'REVIEW-grok45high' | head -1)
+dg=$(printf '%s' "$out" | grep 'REVIEW-grok' | head -1)
 printf '%s' "$dg" | grep -qF -- "--deny *" && ! printf '%s' "$dg" | grep -qF -- '--tools read_file' \
-  && { echo "  ok   [-] degraded grok45high denies every tool"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL degraded grok45high did not fall back to deny-all"; FAIL=$((FAIL+1)); }
-printf '%s' "$dg" | grep -qF -- '-m grok-4.6' \
-  && { echo "  ok   [-] degraded grok45high pins the default model too"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL degraded grok45high did not pin -m grok-4.6"; FAIL=$((FAIL+1)); }
+  && { echo "  ok   [-] degraded grok denies every tool"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL degraded grok did not fall back to deny-all"; FAIL=$((FAIL+1)); }
+printf '%s' "$dg" | grep -qF -- '-m grok-4.6 --reasoning-effort medium ' \
+  && { echo "  ok   [-] degraded grok pins the default model and effort too"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL degraded grok did not pin -m grok-4.6 --reasoning-effort medium"; FAIL=$((FAIL+1)); }
 dcwd=$(printf '%s' "$dg" | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
 case "$dcwd" in
-  *iso-grok45high*) echo "  ok   [-] degraded grok45high runs outside the checkout"; PASS=$((PASS+1));;
-  *) echo "  FAIL degraded grok45high ran in $dcwd"; FAIL=$((FAIL+1));;
+  *iso-grok*) echo "  ok   [-] degraded grok runs outside the checkout"; PASS=$((PASS+1));;
+  *) echo "  FAIL degraded grok ran in $dcwd"; FAIL=$((FAIL+1));;
 esac
 
-# GROK45HIGH_REVIEW_MODEL must reach the degraded path too — not just the normal one, since a
-# pin that silently reverts to the default the moment the sandbox is unavailable would be a
-# surprise no one asked for.
-dgo=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=fail GROK45HIGH_REVIEW_MODEL=grok-4.7 bash "$CLI" plan-review --reviewers grok45high 2>&1 | grep 'REVIEW-grok45high')
-printf '%s' "$dgo" | grep -qF -- '-m grok-4.7' \
-  && { echo "  ok   [-] GROK45HIGH_REVIEW_MODEL overrides the degraded-path model too"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL GROK45HIGH_REVIEW_MODEL ignored on the degraded path: $dgo"; FAIL=$((FAIL+1)); }
+# The pins must reach the degraded path too — not just the normal one, since a pin that silently
+# reverts to the default the moment the sandbox is unavailable would be a surprise no one asked for.
+# From the SHARED file here, the way this machine actually sets them.
+printf 'MODEL_grok=grok-4.7\nEFFORT_grok=low\n' > "$CFGDIR/shared-grok-dg"
+dgo=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=fail PR_RELAY_CONFIG="$CFGDIR/shared-grok-dg" bash "$CLI" plan-review --reviewers grok 2>&1 | grep 'REVIEW-grok')
+printf '%s' "$dgo" | grep -qF -- '-m grok-4.7 --reasoning-effort low ' \
+  && { echo "  ok   [-] MODEL_grok / EFFORT_grok reach the degraded path too"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL the grok pins were ignored on the degraded path: $dgo"; FAIL=$((FAIL+1)); }
 
-# bare grok is relay-only (PR panel name), not a plan-reviewer
+# bare grok is a plan-review seat since 2026-09 (it was relay-only while plan-review ran a separate
+# `grok45high` seat). Exit 0 alone proves nothing here — codex would keep the round alive either
+# way — so assert grok actually RAN and was not skipped.
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers grok,codex 2>&1); rc=$?
-check "plan-review bare grok is relay-only (panel still runs codex)" "$rc" 0
-printf '%s' "$out" | grep -qi "relay-only" && { echo "  ok   [-] plan-review warns bare grok is relay-only"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL bare grok not treated as relay-only"; FAIL=$((FAIL+1)); }
-# missing grok binary fails closed when grok45high named — curated PATH so a system
+check "plan-review runs bare grok alongside codex" "$rc" 0
+printf '%s' "$out" | grep -q 'REVIEW-grok' && ! printf '%s' "$out" | grep -qi "grok.*relay-only" \
+  && { echo "  ok   [-] plan-review runs bare grok instead of skipping it"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL bare grok was skipped as relay-only"; FAIL=$((FAIL+1)); }
+# `grok45high` is the old name: it runs grok, ONCE, with ONE warning — even named twice, and even
+# alongside `grok`. The warning has its own guard; collapsing before the de-dupe alone would warn
+# twice for `grok45high,grok45high`.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_FORCE_SANDBOX_PROBE=ok bash "$CLI" plan-review --reviewers grok45high,grok,grok45high 2>&1); rc=$?
+check "plan-review accepts the grok45high alias" "$rc" 0
+[ "$(printf '%s' "$out" | grep -c 'REVIEW-grok')" = 1 ] \
+  && [ "$(printf '%s' "$out" | grep -c "'grok45high' is the old name")" = 1 ] \
+  && { echo "  ok   [-] grok45high collapses to one grok run with one warning"; PASS=$((PASS+1)); } \
+  || { echo "  FAIL grok45high alias ran grok more than once or warned more than once: $out"; FAIL=$((FAIL+1)); }
+# missing grok binary fails closed when grok named — curated PATH so a system
 # `grok` cannot mask the miss (same pattern as the missing-gemini test).
 rm -f "$PBIN/grok"
 MPATH="$PBIN"
@@ -1189,8 +1307,8 @@ for b in bash cat printf timeout gtimeout mktemp tr sed head tail wc rm mkdir ch
   [ -x "$src" ] || continue
   ln -sf "$src" "$PBIN/$b" 2>/dev/null || true
 done
-( printf 'plan\n' | PATH="$MPATH" bash "$CLI" plan-review --reviewers grok45high >/dev/null 2>&1 ); check "plan-review missing grok binary → fail (3)" $? 3
-make_reviewer grok45high 0 grok   # restore
+( printf 'plan\n' | PATH="$MPATH" bash "$CLI" plan-review --reviewers grok >/dev/null 2>&1 ); check "plan-review missing grok binary → fail (3)" $? 3
+make_reviewer grok 0 grok   # restore
 
 # antigravity/gemini runs the `gemini` CLI in DEFAULT non-interactive mode (already excludes
 # shell/edit/write_file/web_fetch) with `-e none` to disable extensions. It must NOT pass
@@ -1440,13 +1558,15 @@ make_reviewer codex 0 codex   # restore
 # quorum, so it never quietly passes on a thinned set.
 ( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers codex,doesnotexist >/dev/null 2>&1 ); check "plan-review missing panel reviewer → fail (3)" $? 3
 
-# bare opencode and bare grok are RELAY-ONLY: skipped with a warning, the rest of the panel still runs (0)
+# bare opencode is RELAY-ONLY: skipped with a warning, the rest of the panel still runs (0). Bare
+# grok is NOT (since 2026-09) — assert it RAN, because codex alone would keep the exit at 0.
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers opencode,grok,codex 2>&1); rc=$?
 check "plan-review skips relay-only agents, runs the rest" "$rc" 0
-printf '%s' "$out" | grep -qi "relay-only" && { echo "  ok   [-] plan-review warns that opencode/grok are relay-only"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not warn about relay-only agents"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep -qi "opencode is relay-only" && { echo "  ok   [-] plan-review warns that opencode is relay-only"; PASS=$((PASS+1)); } || { echo "  FAIL plan-review did not warn about relay-only agents"; FAIL=$((FAIL+1)); }
+printf '%s' "$out" | grep -q 'REVIEW-grok' && { echo "  ok   [-] plan-review runs grok in the same panel"; PASS=$((PASS+1)); } || { echo "  FAIL grok was skipped alongside opencode"; FAIL=$((FAIL+1)); }
 
 # a panel of ONLY relay-only agents → nobody supported ran → clear error (1)
-( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers opencode,grok >/dev/null 2>&1 ); check "plan-review with only relay-only agents → error (1)" $? 1
+( printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers opencode >/dev/null 2>&1 ); check "plan-review with only relay-only agents → error (1)" $? 1
 
 # no panel at all (unset + none passed) → usage error (1)
 ( printf 'plan\n' | PATH="$PBIN:$PATH" SHIP_FEATURE_REVIEWERS= bash "$CLI" plan-review >/dev/null 2>&1 ); check "plan-review with no panel → usage error (1)" $? 1
@@ -2087,7 +2207,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=335
+EXPECTED=351
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
