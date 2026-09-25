@@ -6,6 +6,8 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-25
+
 ### Changed
 
 - **plan-review honours model and effort pins for `claude`, `codex` and `grok` — and `grok45high` is
@@ -78,10 +80,10 @@ All notable changes to **ship-feature** are documented here. This project follow
   Note for anyone who followed the old advice to "review a plan for a repository you do not trust
   with `kimi3`": that was wrong. The fully isolated seat is `antigravity`/`gemini`.
 
-- **Transitional noise, expected, not a bug:** `pr-review-relay` still lists `kimi3` among its own
-  `PANEL_SEATS`, so once you rename the key to `MODEL_glm` it prints one
-  `warning: no reviewer seat named 'glm'` line per run until that repo catches up. It is cosmetic —
-  the relay never read this key.
+- **Transitional noise, now gone:** `pr-review-relay` listed `kimi3` but not `glm` among its own
+  `PANEL_SEATS`, so a `MODEL_glm` key printed one `warning: no reviewer seat named 'glm'` line per
+  run. It was cosmetic — the relay never read this key — and **pr-review-relay v1.7.0** lists `glm`
+  (and `gemini`). Upgrade both together.
 
 - **Every adapter and WORKFLOW.md now say to run `relay` and `plan-review` WITHOUT `--reviewers`.**
   They used to say the opposite — "name the reviewers you have — the quorum — so a missing one
@@ -96,7 +98,8 @@ All notable changes to **ship-feature** are documented here. This project follow
 - The docs now also say to **read each round's startup lines** and state which reviewers actually
   ran. Omitting the flag fixes a stale list; it cannot tell you a seat dropped out. `relay` drops a
   benched (out-of-quota) seat and still exits `0`, and `plan-review` skips the relay-only names
-  (bare `opencode`, bare `grok`) with a warning and still exits `0`.
+  (bare `opencode`, and — until the rename above made it a plan seat — bare `grok`) with a warning
+  and still exits `0`.
 
 Touches `adapters/{skill,cursor,codex}`, `WORKFLOW.md`, `README.md`, `config.example` and the
 adapter-consistency clauses in `test/`. Documentation only — no change to `bin/ship-feature`. **Re-run `./install.sh`**: the Codex adapter
@@ -541,6 +544,7 @@ First release.
   and gitleaks. (`scan-personal-data.sh` needs a private deny-list, so it runs locally pre-publication,
   not in CI.)
 
+[0.6.0]: https://github.com/hamen/ship-feature/releases/tag/v0.6.0
 [0.5.0]: https://github.com/hamen/ship-feature/releases/tag/v0.5.0
 [0.4.0]: https://github.com/hamen/ship-feature/releases/tag/v0.4.0
 [0.3.0]: https://github.com/hamen/ship-feature/releases/tag/v0.3.0
