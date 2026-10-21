@@ -929,6 +929,7 @@ make_strict_opencode() { # $1 = dir to install the stub into
 #   comma-ansi  another layout that has it: `-p, --pure`, in colour
 #   fail        --help itself fails (exit 2, an error on stderr)
 #   hang        --help never answers; exec, so the seat's timeout kills this process
+#   v2          @opencode/cli 2.x: no --pure, lists --standalone (layout of the real 2.0.32)
 case "${1:-}" in
   --help)
     printf 'cwd=%s projcfg=%s\n' "$PWD" "${OPENCODE_DISABLE_PROJECT_CONFIG:-}" >> "${OC_ARGV_FILE:?}.probe"
@@ -937,6 +938,7 @@ case "${1:-}" in
       comma-ansi) printf 'Options:\n  -l, --print-logs  print logs to stderr\n  -p, \033[1m--pure\033[0m  run without external plugins\n' ;;
       fail) echo "Error: the opencode config is broken" >&2; exit 2 ;;
       hang) exec sleep 30 ;;
+      v2) printf 'FLAGS\n  --standalone            Run with a private server instead of the background service\n  --server string         Connect to a server URL instead of the background service\n  --auto                  Auto-approve permissions that are not explicitly denied\n' ;;
       *) printf 'Options:\n      --print-logs    print logs to stderr\n      --pure          run without external plugins\n' ;;
     esac
     exit 0 ;;
@@ -956,6 +958,17 @@ printf '%s\n' "${OPENCODE_CONFIG_CONTENT:-}" > "${OC_ARGV_FILE}.cfg"
 # before permissions apply — arbitrary command execution from the reviewed branch.
 pwd > "${OC_ARGV_FILE}.cwd"
 printf '%s\n' "${OPENCODE_DISABLE_PROJECT_CONFIG:-}" > "${OC_ARGV_FILE}.projcfg"
+# The config dir, and whether it held anything. On v2 it must be an EMPTY dir: that is what keeps
+# the user's global plugins out, since v2 has no --pure.
+_oc_cd_empty=no
+[ -n "${OPENCODE_CONFIG_DIR:-}" ] && [ -d "$OPENCODE_CONFIG_DIR" ] && [ -z "$(ls -A "$OPENCODE_CONFIG_DIR")" ] && _oc_cd_empty=yes
+printf 'dir=%s empty=%s config=%s\n' "${OPENCODE_CONFIG_DIR:-}" "$_oc_cd_empty" "${OPENCODE_CONFIG:-}" > "${OC_ARGV_FILE}.cfgdir"
+# v2 behaves like the real 2.x: `--pure` is an unknown flag (help + exit 1), and a run without
+# --standalone would go to the shared background service, which ignores this env entirely.
+if [ "${OC_HELP:-}" = v2 ]; then
+  case " $* " in *" --pure "*) echo "unknown flag --pure" >&2; exit 1;; esac
+  case " $* " in *" run --standalone "*) ;; *) echo "v2 run without --standalone" >&2; exit 64;; esac
+fi
 case "${OPENCODE_CONFIG_CONTENT:-}" in
   *'"*":"deny"'*) ;;
   *) echo "OPENCODE_CONFIG_CONTENT missing the default-deny baseline" >&2; exit 64;;
@@ -1021,11 +1034,11 @@ oc_run() { # oc_run <expected_exit> <desc> [VAR=val ...] [-- <relay args...>]
     FAIL=$((FAIL + 1))
   fi
 }
-# The stub writes SIX files per run — the argv log plus five sidecars beside it (the sixth,
-# .probe, is the --pure probe's own record, issue #38).
+# The stub writes SEVEN files per run — the argv log plus six sidecars beside it (.probe is
+# the --pure probe's own record, issue #38; .cfgdir is the v2 run's OPENCODE_CONFIG_DIR).
 # Every reset site used to hand-list the ones it happened to care about, in three
 # different shapes, and #36 had to fix one of them (the relative-TMPDIR run) purely
-# because a name had been left off. One list, one place to add the sixth.
+# because a name had been left off. One list, one place to add the next one.
 #
 # `${1-...}` and not `${1:-...}`: with `:-`, an explicit empty argument would
 # silently redirect the wipe onto $OC_ARGV instead of the caller's target.
@@ -1044,7 +1057,7 @@ oc_reset() { # oc_reset [prefix]  (defaults to $OC_ARGV)
     FAIL=$((FAIL + 1))
     return 1
   }
-  rm -f "$f" "$f.cfg" "$f.cwd" "$f.projcfg" "$f.stdin" "$f.probe"
+  rm -f "$f" "$f.cfg" "$f.cwd" "$f.projcfg" "$f.stdin" "$f.probe" "$f.cfgdir"
 }
 
 oc_assert() { # oc_assert <desc> <grep-mode: has|hasnt> <pattern>
@@ -1094,22 +1107,22 @@ oc_stdin() { # oc_stdin <desc> <has|hasnt> <pattern>
 # wrong path makes tests pass by erasing evidence, and no pass-count check would
 # show it: a successful dispatch rewrites the sidecars either way.
 _ocr="$WORK/oc-reset-probe"
-for _sfx in "" .cfg .cwd .projcfg .stdin .probe; do : >"$_ocr$_sfx"; done
+for _sfx in "" .cfg .cwd .projcfg .stdin .probe .cfgdir; do : >"$_ocr$_sfx"; done
 oc_reset "$_ocr"
 _left=""
-for _sfx in "" .cfg .cwd .projcfg .stdin .probe; do [ -e "$_ocr$_sfx" ] && _left="$_left $_ocr$_sfx"; done
+for _sfx in "" .cfg .cwd .projcfg .stdin .probe .cfgdir; do [ -e "$_ocr$_sfx" ] && _left="$_left $_ocr$_sfx"; done
 if [ -z "$_left" ]; then
-  echo "  ok   [-] oc_reset clears the argv log and all five sidecars"
+  echo "  ok   [-] oc_reset clears the argv log and all six sidecars"
   PASS=$((PASS + 1))
 else
   echo "  FAIL oc_reset left:$_left"
   FAIL=$((FAIL + 1))
 fi
 # The default argument, which twelve of the thirteen call sites rely on.
-for _sfx in "" .cfg .cwd .projcfg .stdin .probe; do : >"$OC_ARGV$_sfx"; done
+for _sfx in "" .cfg .cwd .projcfg .stdin .probe .cfgdir; do : >"$OC_ARGV$_sfx"; done
 oc_reset
 _left=""
-for _sfx in "" .cfg .cwd .projcfg .stdin .probe; do [ -e "$OC_ARGV$_sfx" ] && _left="$_left $OC_ARGV$_sfx"; done
+for _sfx in "" .cfg .cwd .projcfg .stdin .probe .cfgdir; do [ -e "$OC_ARGV$_sfx" ] && _left="$_left $OC_ARGV$_sfx"; done
 if [ -z "$_left" ]; then
   echo "  ok   [-] oc_reset with no argument defaults to \$OC_ARGV"
   PASS=$((PASS + 1))
@@ -1123,12 +1136,12 @@ fi
 # exits 0 — a test helper quietly removing files that are not its own.
 _ocrdir="$WORK/oc-reset-empty"
 mkdir -p "$_ocrdir"
-for _sfx in .cfg .cwd .projcfg .stdin .probe bystander; do : >"$_ocrdir/$_sfx"; done
+for _sfx in .cfg .cwd .projcfg .stdin .probe .cfgdir bystander; do : >"$_ocrdir/$_sfx"; done
 # Subshell: the guard's own FAIL increment is deliberately not counted here — this
 # assertion is about the files, and the guard firing is the expected path.
 (cd "$_ocrdir" && oc_reset "") >/dev/null 2>&1
 _survived=1
-for _sfx in .cfg .cwd .projcfg .stdin .probe bystander; do [ -e "$_ocrdir/$_sfx" ] || _survived=0; done
+for _sfx in .cfg .cwd .projcfg .stdin .probe .cfgdir bystander; do [ -e "$_ocrdir/$_sfx" ] || _survived=0; done
 if [ "$_survived" = 1 ]; then
   echo "  ok   [-] oc_reset refuses an empty prefix instead of clearing the cwd"
   PASS=$((PASS + 1))
@@ -1271,8 +1284,8 @@ oc_probe_fails() { # oc_probe_fails <desc> <message...> -- <VAR=val ...>
     FAIL=$((FAIL + 1))
   fi
 }
-oc_probe_fails "an opencode without --pure fails the round, names the version, runs no review" \
-  'opencode 1.2.27 has no --pure flag' 'Upgrade OpenCode' -- OC_HELP=nopure OC_VERSION=1.2.27
+oc_probe_fails "an opencode with neither --pure nor --standalone fails the round, names the version, runs no review" \
+  'opencode 1.2.27 has neither --pure (v1) nor --standalone (v2)' 'Upgrade OpenCode' -- OC_HELP=nopure OC_VERSION=1.2.27
 oc_probe_fails "a --help that fails is reported as that, with its error, not as a missing flag" \
   '`opencode --help` exited 2' 'the opencode config is broken' -- OC_HELP=fail
 oc_probe_fails "a --help that hangs is a timeout, not a missing flag" \
@@ -1285,7 +1298,7 @@ rm -f "$WORK/sha_counter"
 _probe_out="$(env PATH="$BIN:$PATH" XDG_CACHE_HOME="$WORK/cache" GH_SHA_COUNTER="$WORK/sha_counter" \
   PR_RELAY_OPENCODE_MODEL= OC_ARGV_FILE="$OC_ARGV" OC_HELP=fail \
   bash "$RELAY" --pr 1 --author antigravity --reviewers claude,opencode 2>&1)"
-if ! grep -qF 'has no --pure flag' <<<"$_probe_out"; then
+if ! grep -qF 'has neither --pure' <<<"$_probe_out"; then
   echo "  ok   [-] a failed --help never says the flag is missing"
   PASS=$((PASS + 1))
 else
@@ -1303,6 +1316,49 @@ else
   FAIL=$((FAIL + 1))
 fi
 unset _probe _probe_out
+
+# --- OpenCode v2 (@opencode/cli 2.x) ----------------------------------------------
+# v2 has no --pure, so the seat runs `run --standalone` (a private server: the shared background
+# service was started with the user's env and ignores this one) with OPENCODE_CONFIG_DIR at an empty
+# dir (what keeps the user's global plugins out). Everything else is the v1 lockdown, unchanged.
+# OPENCODE_CONFIG is inherited on purpose: it names one more config file, plugins and all, so v2
+# must drop it.
+oc_run 0 "a v2 CLI (--standalone, no --pure) runs the review" OC_HELP=v2 PR_RELAY_OPENCODE_MODEL=oc-v2-pin \
+  OPENCODE_CONFIG="$WORK/inherited-opencode.json"
+oc_assert "v2 runs on a private server" has "run --standalone"
+oc_assert "v2 never passes --pure, which v2 rejects" hasnt "--pure"
+oc_assert "v2 still selects the relay's own agent" has "--agent pr-review-relay-ro"
+oc_assert "v2 passes the pinned model" has "-m oc-v2-pin"
+oc_cfg "v2 keeps the default-deny policy" has '"\*":"deny"'
+oc_stdin "v2 delivers the diff on stdin" has "+change"
+_cd="$(cat "$OC_ARGV.cfgdir" 2>/dev/null || true)"
+case "$_cd" in
+  "dir=$(cat "$OC_ARGV.cwd" 2>/dev/null)/"*" empty=yes config=")
+    echo "  ok   [-] v2 points OPENCODE_CONFIG_DIR at an empty dir inside the private attach dir, OPENCODE_CONFIG dropped"
+    PASS=$((PASS + 1))
+    ;;
+  *)
+    echo "  FAIL v2 config dir is not an empty dir in the attach dir ($_cd)"
+    FAIL=$((FAIL + 1))
+    ;;
+esac
+# v1 is untouched: no --standalone, and no config dir of ours.
+oc_run 0 "a v1 CLI still runs the v1 command"
+oc_assert "v1 keeps --pure" has "--pure run"
+oc_assert "v1 never gets --standalone" hasnt "--standalone"
+_cd="$(cat "$OC_ARGV.cfgdir" 2>/dev/null || true)"
+if [ "$_cd" = "dir= empty=no config=" ]; then
+  echo "  ok   [-] v1 runs without a config dir of ours"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL v1 got a config dir ($_cd)"
+  FAIL=$((FAIL + 1))
+fi
+# The empty config dir also hides the user's default model, and v2 then falls back to a free
+# model that refuses to run outside OpenCode (seen on 2.0.32). So v2 needs a pin, said up front.
+oc_probe_fails "a v2 CLI with no pinned model fails and says to pin one" \
+  'set PR_RELAY_OPENCODE_MODEL' -- OC_HELP=v2
+unset _cd
 
 oc_run 0 "opencode runs read-only, diff mode" -- --diff
 oc_assert "diff-mode argv still read-only" has "--agent pr-review-relay-ro"
@@ -2034,6 +2090,26 @@ fi
 # the check above is only "rc=0 and argv non-empty", which a broken canonicalisation
 # would still satisfy.
 oc_stdin "a relative TMPDIR still delivers the diff on stdin" has "+change"
+# The same on v2, where the config dir is one more path made under TMPDIR: relative, it would name
+# nothing once the seat cds into the attach dir, and opencode would fall back to the user's config.
+rm -rf "$WORK/cache"
+mkdir -p "$WORK/cache"
+rm -f "$WORK/sha_counter"
+oc_reset
+(cd "$WORK" && env PATH="$BIN:$PATH" TMPDIR="reltmp" XDG_CACHE_HOME="$WORK/cache" \
+  GH_SHA_COUNTER="$WORK/sha_counter" OC_ARGV_FILE="$OC_ARGV" OC_HELP=v2 PR_RELAY_OPENCODE_MODEL=oc-v2-pin \
+  bash "$RELAY" --pr 1 --author antigravity --reviewers claude,opencode >/dev/null 2>&1)
+rc=$?
+case "$rc $(cat "$OC_ARGV.cfgdir" 2>/dev/null)" in
+  "0 dir=/"*" empty=yes config=")
+    echo "  ok   [0] a relative TMPDIR on v2 still gives an absolute, empty config dir"
+    PASS=$((PASS + 1))
+    ;;
+  *)
+    echo "  FAIL [got $rc] relative TMPDIR on v2: $(cat "$OC_ARGV.cfgdir" 2>/dev/null)"
+    FAIL=$((FAIL + 1))
+    ;;
+esac
 
 # CDPATH can steer `cd`, so a relative PATH entry could be canonicalized to a
 # CDPATH match outside the repo while the shell still resolves commands from the
@@ -2225,14 +2301,29 @@ if [ -f "$RL" ]; then
   rl_old=$(cd "$RLREPO" && env PATH="$BIN:$PATH" OC_ARGV_FILE="$OC_ARGV" OC_HELP=nopure OC_VERSION=1.2.27 \
     bash "$RL" --base mainline --reviewers opencode 2>&1)
   rl_old_rc=$?
-  if [ "$rl_old_rc" = 3 ] && grep -qF 'opencode 1.2.27 has no --pure flag' <<<"$rl_old" && [ ! -e "$OC_ARGV" ]; then
-    echo "  ok   [$rl_old_rc] review-local names an opencode without --pure and does not run it"
+  if [ "$rl_old_rc" = 3 ] && grep -qF 'opencode 1.2.27 has neither --pure (v1) nor --standalone (v2)' <<<"$rl_old" && [ ! -e "$OC_ARGV" ]; then
+    echo "  ok   [$rl_old_rc] review-local names an opencode with neither flag and does not run it"
     PASS=$((PASS + 1))
   else
     echo "  FAIL review-local on an old opencode (rc $rl_old_rc; want 3, the named reason, no review run): $(grep -i opencode <<<"$rl_old" | tail -n 3)"
     FAIL=$((FAIL + 1))
   fi
   unset rl_old rl_old_rc
+  # And a v2 CLI runs here too, through the same lib: --standalone, an empty config dir, no --pure.
+  oc_reset
+  (cd "$RLREPO" && env PATH="$BIN:$PATH" OC_ARGV_FILE="$OC_ARGV" OC_HELP=v2 PR_RELAY_OPENCODE_MODEL=oc-v2-pin \
+    bash "$RL" --base mainline --reviewers opencode >/dev/null 2>&1)
+  rc=$?
+  if [ "$rc" = 0 ] && [ -s "$OC_ARGV" ]; then
+    echo "  ok   [0] review-local dispatches a v2 opencode"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL [got $rc] review-local did not dispatch a v2 opencode"
+    FAIL=$((FAIL + 1))
+  fi
+  rl_assert "review-local v2: --standalone" has "run --standalone" "$OC_ARGV"
+  rl_assert "review-local v2: no --pure" hasnt "--pure" "$OC_ARGV"
+  rl_assert "review-local v2: empty config dir" has "empty=yes" "$OC_ARGV.cfgdir"
 
   # The same gate, the other caller. review-local posts nowhere, so its stdout banner
   # IS the delivery: a rejected body must not go out under "===== Name review =====",

@@ -481,8 +481,9 @@ OPENCODE_RO_CONFIG='{"share":"disabled","permission":{"*":"deny"},"agent":{"pr-r
 # TMPDIR happens to sit inside it. Every single-layer defence here has turned out
 # to be bypassable, so these stay stacked.
 #
-# `--pure` skips external plugins, which load and can execute code at startup
-# regardless of permissions. `--` must precede the prompt: $context_block is
+# `--pure` (v1) or an empty OPENCODE_CONFIG_DIR (v2, see the v2 branch below) keeps
+# external plugins out: they load and can execute code at startup regardless of
+# permissions. `--` must precede the prompt: $context_block is
 # prepended raw, and a --context-file can start with a `-`, which the parser would
 # read as a flag. It also keeps the prompt the last element of the argv.
 # relay_assert_tmpdir_outside_repo <dir>
@@ -526,6 +527,31 @@ relay_assert_tmpdir_outside_repo() {
 # The seat is named `opencode` on the command line but its variable is PR_RELAY_OPENCODE_MODEL;
 # the config key follows the SEAT name, so nobody has to know that history to configure it.
 opencode_resolve_model() { panel_resolve PR_RELAY_OPENCODE_MODEL MODEL_opencode ""; }
+
+# opencode_cli_kind <`opencode --help` output>  →  v1 | v2 | none
+#
+# Shared by every caller that runs opencode (this seat, and plan-review's glm seat in
+# bin/ship-feature), so the two cannot disagree about which CLI they face. Probed on real
+# releases (2026-10-21): v1 is npm `opencode-ai`, whose --pure first appears in 1.3.4 and
+# is still there in 1.19.x; v2 is npm `@opencode/cli`, where 2.0.0 through 2.1.x list
+# --standalone and have no --pure. No v1 release lists --standalone.
+#
+# The flag as a word anywhere on a line, because help layouts differ (`--pure   …`,
+# `-p, --pure`, `--pure=`), with colour codes stripped first. `--purely` is not it.
+opencode_cli_kind() {
+  local _h _esc
+  _esc="$(printf '\033')"
+  _h="$(printf '%s\n' "$1" | sed "s/${_esc}\[[0-9;]*m//g")"
+  if grep -qE '(^|[^[:alnum:]_-])--pure([^[:alnum:]_-]|$)' <<<"$_h"; then
+    echo v1
+  elif grep -qE '(^|[^[:alnum:]_-])--standalone([^[:alnum:]_-]|$)' <<<"$_h"; then
+    echo v2
+  else
+    echo none
+  fi
+}
+# The tail of the "too old" message, after "opencode <version> ". One wording for both callers.
+OPENCODE_TOO_OLD="has neither --pure (v1) nor --standalone (v2) in \`opencode --help\`, so it would print its help instead of a review. No review ran. Upgrade OpenCode (1.3.4 is the first v1 release with --pure; any 2.x works)."
 
 opencode_review() {
   local attach_dir="$1" diff="$2" context_block="$3" subject="$4" errf="$5" agent_timeout="$6"
@@ -615,42 +641,69 @@ opencode_review() {
       exit 1
     }
     PATH="$_abs_path"
-    # PROBE FOR --pure FIRST (issue #38). An OpenCode CLI that predates the flag does not
+    # PROBE THE FLAGS FIRST (issue #38). An OpenCode CLI that predates --pure does not
     # refuse it: it prints its top-level help and exits 0 (seen on 1.2.27). The non-review
     # gate then rejects that "review", so the round fails every time, and nothing says the
-    # CLI is too old. `--help` lists every global flag, so ask it. The probe is an opencode
-    # start-up too, so it runs in the same cwd, config lock and timeout as the review.
+    # CLI is too old. `--help` lists every global flag, so ask it, and let it also tell v1
+    # from v2 (opencode_cli_kind). The probe is an opencode start-up too, so it runs in the
+    # same cwd, config lock and timeout as the review.
     _oc_help_rc=0
     _oc_help="$(OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_CONFIG_CONTENT="$OPENCODE_RO_CONFIG" \
       timeout "$agent_timeout" "$OPENCODE_BIN" --help </dev/null 2>&1)" || _oc_help_rc=$?
-    # A `--help` that failed says nothing about the flag, and "no --pure, upgrade" would
-    # send the reader to replace a CLI that may be fine. So the failure gets its own
-    # message and keeps its output. Exit 1 even on a timeout: the seat report hides
-    # stderr after a 124 (it is a review's partial transcript then), and this line is
-    # the only thing that says it was the probe, not the review, that hung.
+    # A `--help` that failed says nothing about the flags, and "upgrade" would send the
+    # reader to replace a CLI that may be fine. So the failure gets its own message and
+    # keeps its output. Exit 1 even on a timeout: the seat report hides stderr after a
+    # 124 (it is a review's partial transcript then), and this line is the only thing
+    # that says it was the probe, not the review, that hung.
     if [ "$_oc_help_rc" -ne 0 ]; then
       if [ "$_oc_help_rc" -eq 124 ]; then
-        echo "\`opencode --help\` did not finish within ${agent_timeout}s, so the seat could not check for --pure. No review ran. If the CLI is only slow to start, raise PR_RELAY_AGENT_TIMEOUT." >"$errf"
+        echo "\`opencode --help\` did not finish within ${agent_timeout}s, so the seat could not check its flags. No review ran. If the CLI is only slow to start, raise PR_RELAY_AGENT_TIMEOUT." >"$errf"
       else
-        echo "\`opencode --help\` exited $_oc_help_rc, so the seat could not check for --pure. No review ran. Its output:" >"$errf"
+        echo "\`opencode --help\` exited $_oc_help_rc, so the seat could not check its flags. No review ran. Its output:" >"$errf"
         printf '%s\n' "$_oc_help" | tail -n 5 >>"$errf"
       fi
       exit 1
     fi
-    # The flag as a word anywhere on a line, because help layouts differ (`--pure   …`,
-    # `-p, --pure`, `--pure=`), with colour codes stripped first. `--purely` is not it.
-    _oc_esc="$(printf '\033')"
-    if ! printf '%s\n' "$_oc_help" | sed "s/${_oc_esc}\[[0-9;]*m//g" |
-      grep -qE '(^|[^[:alnum:]_-])--pure([^[:alnum:]_-]|$)'; then
-      _oc_ver="$(OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_CONFIG_CONTENT="$OPENCODE_RO_CONFIG" \
-        timeout "$agent_timeout" "$OPENCODE_BIN" --version </dev/null 2>/dev/null | head -n 1)"
-      echo "opencode ${_oc_ver:-(version unknown)} has no --pure flag (\`opencode --help\` does not list it), so it would print its help instead of a review. Upgrade OpenCode (1.18.25 is known to have the flag)." >"$errf"
-      exit 1
-    fi
-    OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_CONFIG_CONTENT="$OPENCODE_RO_CONFIG" \
-      timeout "$agent_timeout" "$OPENCODE_BIN" --pure run \
-      --agent pr-review-relay-ro ${model[@]+"${model[@]}"} -- "$oc_prompt" \
-      <"$diff_file" 2>"$errf"
+    case "$(opencode_cli_kind "$_oc_help")" in
+      v1)
+        OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_CONFIG_CONTENT="$OPENCODE_RO_CONFIG" \
+          timeout "$agent_timeout" "$OPENCODE_BIN" --pure run \
+          --agent pr-review-relay-ro ${model[@]+"${model[@]}"} -- "$oc_prompt" \
+          <"$diff_file" 2>"$errf"
+        ;;
+      v2)
+        # No --pure on v2. `run --standalone` starts a private server: without it, `run`
+        # talks to the shared background service, which was started with the USER's env and
+        # ignores every variable set here, policy included (seen on 2.0.32). An empty
+        # OPENCODE_CONFIG_DIR replaces the global config dir, which is what keeps the user's
+        # plugins out: v2's `"plugins": ["-*"]` is applied only after each plugin's module
+        # has been imported, so it stops no code. The same empty dir hides the user's
+        # default model, and v2 then falls back to a free model that refuses to run, so a
+        # pin is required. mktemp -d under the attach dir: unique, private, cleaned with it,
+        # and absolute because we already cd'd here (a relative TMPDIR stays harmless).
+        if [ "${#model[@]}" -eq 0 ]; then
+          echo "OpenCode v2 needs a pinned model for this seat: it runs with an empty config dir to keep your plugins out, so your default model is not visible: set PR_RELAY_OPENCODE_MODEL (or MODEL_opencode in the config). No review ran." >"$errf"
+          exit 1
+        fi
+        _oc_cfg="$(mktemp -d "$PWD/oc-config.XXXXXX")" || {
+          echo "cannot create the empty OpenCode config dir in $attach_dir. No review ran." >"$errf"
+          exit 1
+        }
+        # An inherited OPENCODE_CONFIG names one more config file, plugins and all. This is a
+        # subshell, so the unset stays here.
+        unset OPENCODE_CONFIG
+        OPENCODE_CONFIG_DIR="$_oc_cfg" OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_CONFIG_CONTENT="$OPENCODE_RO_CONFIG" \
+          timeout "$agent_timeout" "$OPENCODE_BIN" run --standalone \
+          --agent pr-review-relay-ro ${model[@]+"${model[@]}"} -- "$oc_prompt" \
+          <"$diff_file" 2>"$errf"
+        ;;
+      *)
+        _oc_ver="$(OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_CONFIG_CONTENT="$OPENCODE_RO_CONFIG" \
+          timeout "$agent_timeout" "$OPENCODE_BIN" --version </dev/null 2>/dev/null | head -n 1)"
+        echo "opencode ${_oc_ver:-(version unknown)} $OPENCODE_TOO_OLD" >"$errf"
+        exit 1
+        ;;
+    esac
   )
   # The redirect is not cosmetic, and it is a REPLACEMENT for `</dev/null`, never a
   # removal: opencode reads non-TTY stdin and appends it to the prompt. The relay

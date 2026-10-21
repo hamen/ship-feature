@@ -726,7 +726,20 @@ make_reviewer() {
   # $1 = review tag, $2 = exit code, $3 = binary name on PATH
   cat >"$PBIN/$3" <<STUB
 #!/usr/bin/env bash
-echo "REVIEW-$1 argv=[\$*] OPENCODE_CONFIG_CONTENT=[\${OPENCODE_CONFIG_CONTENT:-}] OPENCODE_CONFIG=[\${OPENCODE_CONFIG:-}] OPENCODE_CONFIG_DIR=[\${OPENCODE_CONFIG_DIR:-}] CWD=[\${PWD}]"
+# glm probes \`opencode --help\` first, to tell v1 (--pure) from v2 (--standalone). OC_HELP picks the
+# answer: unset = v1, v2 = @opencode/cli 2.x, nopure = a CLI older than both.
+if [ "\$(basename "\$0")" = opencode ] && [ "\${1:-}" = --version ]; then echo 1.2.27; exit 0; fi
+if [ "\$(basename "\$0")" = opencode ] && [ "\${1:-}" = --help ]; then
+  case "\${OC_HELP:-}" in
+    v2) printf 'FLAGS\n  --standalone            Run with a private server instead of the background service\n' ;;
+    nopure) printf 'Options:\n      --print-logs    print logs to stderr\n' ;;
+    *) printf 'Options:\n      --pure          run without external plugins\n' ;;
+  esac
+  exit 0
+fi
+_cd_empty=no
+[ -n "\${OPENCODE_CONFIG_DIR:-}" ] && [ -d "\$OPENCODE_CONFIG_DIR" ] && [ -z "\$(ls -A "\$OPENCODE_CONFIG_DIR")" ] && _cd_empty=yes
+echo "REVIEW-$1 CFGDIR_EMPTY=[\$_cd_empty] PROJCFG=[\${OPENCODE_DISABLE_PROJECT_CONFIG:-}] argv=[\$*] OPENCODE_CONFIG_CONTENT=[\${OPENCODE_CONFIG_CONTENT:-}] OPENCODE_CONFIG=[\${OPENCODE_CONFIG:-}] OPENCODE_CONFIG_DIR=[\${OPENCODE_CONFIG_DIR:-}] CWD=[\${PWD}]"
 _args=("\$@")
 for ((_i=0; _i<\${#_args[@]}; _i++)); do
   if [ "\${_args[\$_i]}" = "--prompt-file" ]; then
@@ -989,6 +1002,44 @@ printf '%s' "$km" | grep -q -- "--agent build" && {
   echo "  ok   [-] glm never uses the all-allow build agent"
   PASS=$((PASS + 1))
 }
+# --- glm on OpenCode v2 (@opencode/cli 2.x): no --pure, so `run --standalone` (a private server;
+# the shared background service ignores this env) with OPENCODE_CONFIG_DIR at an empty dir (what
+# keeps the user's global plugins out). Same policy, same agent, same model, same cwd as v1.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=v2 bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+km2=$(printf '%s' "$out" | grep 'REVIEW-glm')
+printf '%s' "$km2" | grep -q -- "argv=\[run --standalone --agent plan -m " && ! printf '%s' "$km2" | grep -q -- "--pure" && {
+  echo "  ok   [-] glm on v2 runs --standalone with the plan agent and no --pure"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm on v2 argv wrong: $km2"
+  FAIL=$((FAIL + 1))
+}
+printf '%s' "$km2" | grep -q 'CFGDIR_EMPTY=\[yes\] PROJCFG=\[1\]' && {
+  echo "  ok   [-] glm on v2 points OPENCODE_CONFIG_DIR at an empty dir and skips project config (no plugins)"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm on v2 has no empty config dir: $km2"
+  FAIL=$((FAIL + 1))
+}
+printf '%s' "$km2" | grep -q 'OPENCODE_CONFIG_CONTENT=\[.*"edit":"deny".*"bash":"deny".*\]' &&
+  printf '%s' "$km2" | grep -q "CWD=\[$PWD\]" && {
+  echo "  ok   [-] glm on v2 keeps the read-only policy and reads the checkout"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm on v2 lost the policy or the cwd: $km2"
+  FAIL=$((FAIL + 1))
+}
+# A CLI with neither flag fails the seat with the reason, and the review never starts.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=nopure bash "$CLI" plan-review --reviewers glm 2>&1)
+printf '%s' "$out" | grep -q 'has neither --pure (v1) nor --standalone (v2)' && ! printf '%s' "$out" | grep -q 'REVIEW-glm' && {
+  echo "  ok   [-] glm on an opencode with neither flag fails with the reason and runs no review"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm on an old opencode: $(printf '%s' "$out" | grep -i -m3 'glm\|opencode')"
+  FAIL=$((FAIL + 1))
+}
+unset km2
+
 # The other half of the cwd contract: a checkout that ships its OWN opencode config must push
 # the seat back into an isolated dir, and must SAY so. Permissions are pinned by the deny above
 # and cannot be overridden, but a repo config also carries MCP servers, agents and model
@@ -3322,6 +3373,8 @@ OVERLAP_LOG="$WORK/overlap.log"
 for _slow in claude codex opencode; do
   cat >"$PBIN/$_slow" <<SLOWSTUB
 #!/usr/bin/env bash
+# glm's v1/v2 flag probe is not a review: answer it at once, outside the log.
+[ "\${1:-}" = --help ] && { printf -- '--pure\n'; exit 0; }
 echo "start" >> "$OVERLAP_LOG"
 sleep 1
 echo "end" >> "$OVERLAP_LOG"
@@ -4600,7 +4653,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=514
+EXPECTED=518
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

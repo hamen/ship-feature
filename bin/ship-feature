@@ -1086,12 +1086,46 @@ have found something serious, write it down before you go looking for the next t
           fi
           degraded_note="! $repo_opencode_config would configure the reviewer — this review saw the plan text ONLY, not the code"
         fi
-        out=$(cd "${ro_cwd:-$PWD}" &&
-          unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR &&
-          export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","task":"deny","lsp":"deny"}}' &&
-          printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" |
-          run_reviewer opencode run --pure --agent plan -m "$GLM_REVIEW_MODEL" 2>"$errf")
-        rc=$?
+        # v1 or v2, by the relay seat's own check (opencode_cli_kind, relay/lib-opencode.sh). v2 has
+        # no --pure: `run --standalone` (a private server; the shared background service was started
+        # with the user's env and ignores everything set here) plus an EMPTY OPENCODE_CONFIG_DIR (it
+        # replaces the global config dir, which is what keeps the user's plugins out) stand in for it.
+        # Policy, agent, model and cwd are the same on both. The empty dir also hides the user's
+        # default model, which is harmless here: -m is always passed.
+        local oc_help oc_help_rc=0 oc_cfg="" oc_ver
+        local -a oc_cmd=(run --pure)
+        oc_help="$(cd "${ro_cwd:-$PWD}" && unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR &&
+          run_reviewer opencode --help </dev/null 2>&1)" || oc_help_rc=$?
+        if [ "$oc_help_rc" -ne 0 ]; then
+          echo "\`opencode --help\` exited $oc_help_rc, so the seat could not check its flags. No review ran." >"$errf"
+          rc=1 out="" oc_cmd=()
+        else
+          case "$(opencode_cli_kind "$oc_help")" in
+            v1) ;;
+            v2)
+              if oc_cfg="$(mktemp -d "$STATUS_DIR/oc-config.XXXXXX")" && oc_cfg="$(cd "$oc_cfg" && pwd -P)"; then
+                oc_cmd=(run --standalone)
+              else
+                echo "cannot create the empty OpenCode config dir. No review ran." >"$errf"
+                rc=1 out="" oc_cmd=()
+              fi
+              ;;
+            *)
+              oc_ver="$(run_reviewer opencode --version </dev/null 2>/dev/null | head -n 1)"
+              echo "opencode ${oc_ver:-(version unknown)} $OPENCODE_TOO_OLD" >"$errf"
+              rc=1 out="" oc_cmd=()
+              ;;
+          esac
+        fi
+        if [ "${#oc_cmd[@]}" -gt 0 ]; then
+          out=$(cd "${ro_cwd:-$PWD}" &&
+            unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR &&
+            { [ -z "$oc_cfg" ] || export OPENCODE_CONFIG_DIR="$oc_cfg" OPENCODE_DISABLE_PROJECT_CONFIG=1; } &&
+            export OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"deny","bash":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","task":"deny","lsp":"deny"}}' &&
+            printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" |
+            run_reviewer opencode "${oc_cmd[@]}" --agent plan -m "$GLM_REVIEW_MODEL" 2>"$errf")
+          rc=$?
+        fi
         [ -n "$ro_cwd" ] && rm -rf "$ro_cwd"
         true
         ;;

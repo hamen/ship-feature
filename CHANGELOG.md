@@ -46,6 +46,16 @@ All notable changes to **ship-feature** are documented here. This project follow
 
 ### Fixed
 
+- **OpenCode v2 (`@opencode/cli` 2.x) failed both opencode seats.** v2 has no `--pure`, so the
+  relay's `opencode` seat and plan-review's `glm` seat stopped on every round. Dropping the flag was
+  not enough: v2's `run` goes to a shared background server that ignores the seat's env, policy
+  included, and the user's plugins still load. Both seats now read `opencode --help`: `--pure`
+  means v1 and runs as before; `--standalone` means v2 and runs `run --standalone` with
+  `OPENCODE_CONFIG_DIR` pointed at an empty private dir, which keeps plugins out. A CLI with
+  neither flag fails with "has neither --pure (v1) nor --standalone (v2) … Upgrade OpenCode". On
+  v2 the relay seat needs `PR_RELAY_OPENCODE_MODEL` (or `MODEL_opencode`): the empty dir hides
+  your default model and custom providers. The upgrade hint now names 1.3.4, the first v1 release
+  with `--pure`.
 - **The pi seats run on a Node that meets pi's floor, not on the reviewed repo's pinned Node.** pi's
   launcher starts through `env node`, and both the relay and `plan-review` run pi inside the checkout,
   where mise puts that repo's pinned Node first. A repo pinned to Node 20 crashed both pi seats at

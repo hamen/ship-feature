@@ -325,7 +325,9 @@ relay child process sees it). Three sources, highest first: the environment,
 ## Overriding the glm model
 
 `plan-review` invokes the `glm` reviewer with `opencode run --pure --agent plan -m
-"$GLM_REVIEW_MODEL"` (default `opencode-go/glm-5.3`, the bundled OpenCode Go tier). Override with
+"$GLM_REVIEW_MODEL"`. On OpenCode v2, which has no `--pure`, it runs `opencode run --standalone`
+with an empty `OPENCODE_CONFIG_DIR`, so a model on a provider defined only in your `opencode.json`
+is not found there. (Default `opencode-go/glm-5.3`, the bundled OpenCode Go tier). Override with
 `GLM_REVIEW_MODEL` to route it at a different model instead — for example a pay-as-you-go
 OpenRouter id (`openrouter/z-ai/glm-5.3`) if you want the seat off the bundled subscription tier
 without waiting on its quota reset. `opencode models` lists what your account can reach.
