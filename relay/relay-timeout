@@ -28,8 +28,9 @@ exec perl -e '
   die "relay-timeout: fork failed: $!\n" unless defined $pid;
   if (!$pid) {
     exec { $ARGV[0] } @ARGV;
+    my $missing = $!{ENOENT};
     print STDERR "relay-timeout: $ARGV[0]: $!\n";
-    POSIX::_exit($!{ENOENT} ? 127 : 126);
+    POSIX::_exit($missing ? 127 : 126);
   }
   my $timed_out = 0;
   $SIG{ALRM} = sub { $timed_out = 1; $SIG{TERM} = "IGNORE"; kill "TERM", -$$; };
