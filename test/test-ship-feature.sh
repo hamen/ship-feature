@@ -1213,6 +1213,20 @@ printf '%s' "$out" | grep -q 'opencode --help` did not finish within 1s' && ! pr
   echo "  FAIL glm on a hung --help: $(printf '%s' "$out" | grep -i -m3 'glm\|opencode')"
   FAIL=$((FAIL + 1))
 }
+# Stock macOS has neither timeout nor gtimeout: perl's alarm must still cut the hang. A PATH with
+# every tool but those two, ahead of nothing else.
+NOTO="$WORK/no-timeout-bin"
+mkdir -p "$NOTO"
+IFS=: read -r -a _pdirs <<<"$PATH"
+for _d in "${_pdirs[@]}"; do
+  for _b in "$_d"/*; do
+    case "${_b##*/}" in timeout | gtimeout) continue ;; esac
+    [ -x "$_b" ] && [ ! -e "$NOTO/${_b##*/}" ] && ln -s "$_b" "$NOTO/${_b##*/}" 2>/dev/null
+  done
+done
+out=$(printf 'plan\n' | PATH="$PBIN:$NOTO" OC_HELP=hang SHIP_FEATURE_PLAN_TIMEOUT=1 bash "$CLI" plan-review --reviewers glm 2>&1)
+check "glm on a hung --help without timeout/gtimeout: perl cuts it" \
+  "$(printf '%s' "$out" | grep -c 'opencode --help` did not finish within 1s')|$(printf '%s' "$out" | grep -c 'REVIEW-glm')" "1|0"
 # The --help probe is an opencode startup in the checkout too: empty config dir, no project
 # config, the read-only policy — even with a hostile inherited policy.
 probe_log="$WORK/oc-probe.log"
@@ -4883,6 +4897,13 @@ _before="$(ld_tip "$_r")"
 (cd "$_r" && git checkout -q -b g origin/main && echo g >g.txt && git add g.txt && git commit -q -m g && ld >/dev/null 2>&1)
 _rc=$?
 check "land: refuses a feature branch in the main working tree, which stays on it" "$_rc|$([ "$(ld_tip "$_r")" = "$_before" ] && echo same)|$(git -C "$_r" rev-parse --abbrev-ref HEAD)" "1|same|g"
+# Reached through a symlink, as macOS's /var is: the main tree must still be refused.
+_r="$(ld_repo maintreelink)"
+ln -s "$_r" "$_r-link"
+_before="$(ld_tip "$_r")"
+(cd "$_r-link" && git checkout -q -b g origin/main && echo g >g.txt && git add g.txt && git commit -q -m g && ld >/dev/null 2>&1)
+_rc=$?
+check "land: refuses the main working tree reached through a symlink" "$_rc|$([ "$(ld_tip "$_r")" = "$_before" ] && echo same)" "1|same"
 
 _r="$(ld_repo nohook nohook)"
 _before="$(ld_tip "$_r")"
@@ -5104,7 +5125,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=590
+EXPECTED=592
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

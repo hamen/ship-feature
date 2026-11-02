@@ -435,7 +435,10 @@ cmd_preflight() {
   git_dir=$(git rev-parse --absolute-git-dir 2>/dev/null)
   common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
   # `CDPATH=''` disables CDPATH lookups and the `./` prefix stops a value like `-` being read as an option.
-  case "$common_dir" in /*) : ;; *) common_dir=$(CDPATH='' cd "./$common_dir" 2>/dev/null && pwd) ;; esac
+  # pwd -P: --absolute-git-dir resolves symlinks, so a logical path (/var vs /private/var on macOS)
+  # would never match it and the main tree would pass as a linked worktree.
+  case "$common_dir" in /*) : ;; *) common_dir="./$common_dir" ;; esac
+  common_dir=$(CDPATH='' cd "$common_dir" 2>/dev/null && pwd -P)
   if [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ]; then
     ok "in a linked worktree"
   else
@@ -712,8 +715,9 @@ cmd_plan_review() {
     [ -n "$reviewers" ] || die "no reviewers — pass --reviewers <list> or set SHIP_FEATURE_PLAN_REVIEWERS / SHIP_FEATURE_REVIEWERS (e.g. claude,codex)."
   fi
 
-  # Portable timeout: GNU `timeout`, else Homebrew `gtimeout`, else run WITHOUT a limit
-  # (stock macOS ships neither) — a missing timeout must never break the reviewer.
+  # Portable timeout: GNU `timeout`, else Homebrew `gtimeout`, else perl's alarm (stock macOS
+  # ships perl but neither timeout), else run WITHOUT a limit — a missing timeout must never
+  # break the reviewer.
   local TIMEOUT_BIN
   TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
   # 500, matching pr-review-relay's own default. The panel runs reasoning models at high
@@ -782,7 +786,19 @@ have found something serious, write it down before you go looking for the next t
   skey() { printf 'k_%s' "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
 
   # Run a reviewer command under the timeout when one is available, else directly.
-  run_reviewer() { if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$timeout_s" "$@"; else "$@"; fi; }
+  run_reviewer() {
+    if [ -n "$TIMEOUT_BIN" ]; then
+      "$TIMEOUT_BIN" "$timeout_s" "$@"
+    elif command -v perl >/dev/null 2>&1; then
+      # The alarm survives exec; SIGALRM (exit 142) is reported as timeout's 124.
+      local _rc=0
+      perl -e 'alarm shift; exec @ARGV or exit 127' "$timeout_s" "$@" || _rc=$?
+      [ "$_rc" -eq 142 ] && return 124
+      return "$_rc"
+    else
+      "$@"
+    fi
+  }
 
   # Pin the Cursor reviewer's model. Left unset, cursor-agent falls back to whatever
   # ~/.cursor/cli-config.json holds — typically "Auto", which routes to the frontier models and is
@@ -1768,7 +1784,8 @@ cmd_land() {
   # that would move the checkout under every other agent that uses it.
   git_dir=$(git rev-parse --absolute-git-dir 2>/dev/null)
   common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
-  case "$common_dir" in /*) : ;; *) common_dir=$(CDPATH='' cd "./$common_dir" 2>/dev/null && pwd) ;; esac
+  case "$common_dir" in /*) : ;; *) common_dir="./$common_dir" ;; esac
+  common_dir=$(CDPATH='' cd "$common_dir" 2>/dev/null && pwd -P) # resolved like git_dir, see preflight
   [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ] || die "not in a linked worktree — land never runs in the main working tree."
   top=$(git rev-parse --show-toplevel 2>/dev/null)
   git diff --quiet && git diff --cached --quiet || die "uncommitted changes — commit them first: land ships commits only."
