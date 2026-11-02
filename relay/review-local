@@ -309,7 +309,8 @@ if [ -n "$CONTEXT_FILE" ]; then
   # helpers (opencode's prompt starts right after the block) get the same separation as $PROMPT.
   CONTEXT_BLOCK="$(printf '## Provided context — read this and verify the branch against it\n\n%s\n\n---' "$_ctx")"$'\n\n'
   unset _ctx
-  echo "  context: $CONTEXT_FILE ($(wc -c <"$CONTEXT_FILE") bytes)"
+  # $((...)) drops the spaces BSD wc pads its count with.
+  echo "  context: $CONTEXT_FILE ($(($(wc -c <"$CONTEXT_FILE"))) bytes)"
   PROMPT="$CONTEXT_BLOCK$PROMPT"
 fi
 

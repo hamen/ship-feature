@@ -4188,7 +4188,7 @@ ok_if $? "a post-dispatch exit-3 path logs its verdict" "$(tail -1 "$_log" 2>/de
 s_reset
 env PATH="$BIN:$PATH" XDG_CACHE_HOME="$SCACHE" GH_SHA_COUNTER="$WORK/sha_counter" GH_FIXED_SHA="$SHA_A" \
   bash "$RELAY" --pr 1 --author antigravity --reviewers claude,codex,qwen --parallel >/dev/null 2>&1
-_n=$(ls "$SCACHE"/pr-review-relay/*.review 2>/dev/null | wc -l)
+_n=$(($(ls "$SCACHE"/pr-review-relay/*.review 2>/dev/null | wc -l))) # $((...)): BSD wc pads
 _bad=0
 for _f in "$SCACHE"/pr-review-relay/*.review; do
   _key=$(basename "$_f" | sed 's/.*\.k_\(.*\)\.review/\1/')
