@@ -213,6 +213,10 @@ check "preflight fails on the default branch" $? 1
 # preflight: on a feature branch but NOT a linked worktree → fail
 (cd "$MAIN" && git checkout -q -b feat2 && bash "$CLI" preflight >/dev/null 2>&1)
 check "preflight fails outside a linked worktree" $? 1
+# ...and reached through a symlink, as macOS's /var is.
+ln -s "$MAIN" "$MAIN-link"
+out=$(cd "$MAIN-link" && pf 2>&1)
+check "preflight fails outside a linked worktree reached through a symlink" "$?|$(printf '%s' "$out" | grep -c 'not in a linked worktree')" "1|1"
 
 # preflight negatives:
 # (a) worktree marker not git-ignored → fail (fresh clone, no exclude entry added)
@@ -1215,18 +1219,26 @@ printf '%s' "$out" | grep -q 'opencode --help` did not finish within 1s' && ! pr
 }
 # Stock macOS has neither timeout nor gtimeout: perl's alarm must still cut the hang. A PATH with
 # every tool but those two, ahead of nothing else.
-NOTO="$WORK/no-timeout-bin"
-mkdir -p "$NOTO"
-IFS=: read -r -a _pdirs <<<"$PATH"
-for _d in "${_pdirs[@]}"; do
-  for _b in "$_d"/*; do
-    case "${_b##*/}" in timeout | gtimeout) continue ;; esac
-    [ -x "$_b" ] && [ ! -e "$NOTO/${_b##*/}" ] && ln -s "$_b" "$NOTO/${_b##*/}" 2>/dev/null
-  done
-done
-out=$(printf 'plan\n' | PATH="$PBIN:$NOTO" OC_HELP=hang SHIP_FEATURE_PLAN_TIMEOUT=1 bash "$CLI" plan-review --reviewers glm 2>&1)
-check "glm on a hung --help without timeout/gtimeout: perl cuts it" \
-  "$(printf '%s' "$out" | grep -c 'opencode --help` did not finish within 1s')|$(printf '%s' "$out" | grep -c 'REVIEW-glm')" "1|0"
+if command -v perl >/dev/null 2>&1; then
+  NOTO="$WORK/no-timeout-bin"
+  mkdir -p "$NOTO"
+  (
+    IFS=: read -r -a pdirs <<<"$PATH"
+    for d in "${pdirs[@]}"; do
+      [ -n "$d" ] || continue
+      for b in "$d"/*; do
+        case "${b##*/}" in timeout | gtimeout) continue ;; esac
+        [ -x "$b" ] && [ ! -e "$NOTO/${b##*/}" ] && ln -s "$b" "$NOTO/${b##*/}" 2>/dev/null
+      done
+    done
+  )
+  out=$(printf 'plan\n' | PATH="$PBIN:$NOTO" OC_HELP=hang SHIP_FEATURE_PLAN_TIMEOUT=1 bash "$CLI" plan-review --reviewers glm 2>&1)
+  check "glm on a hung --help without timeout/gtimeout: perl cuts it" \
+    "$(printf '%s' "$out" | grep -c 'opencode --help` did not finish within 1s')|$(printf '%s' "$out" | grep -c 'REVIEW-glm')" "1|0"
+else
+  echo "  ok   [-] perl timeout fallback test skipped (no perl)"
+  PASS=$((PASS + 1))
+fi
 # The --help probe is an opencode startup in the checkout too: empty config dir, no project
 # config, the read-only policy — even with a hostile inherited policy.
 probe_log="$WORK/oc-probe.log"
@@ -5125,7 +5137,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=592
+EXPECTED=593
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

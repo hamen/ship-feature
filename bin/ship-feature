@@ -439,7 +439,7 @@ cmd_preflight() {
   # would never match it and the main tree would pass as a linked worktree.
   case "$common_dir" in /*) : ;; *) common_dir="./$common_dir" ;; esac
   common_dir=$(CDPATH='' cd "$common_dir" 2>/dev/null && pwd -P)
-  if [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ]; then
+  if [ -n "$git_dir" ] && [ -n "$common_dir" ] && [ "$git_dir" != "$common_dir" ]; then
     ok "in a linked worktree"
   else
     die "not in a linked worktree — use 'git worktree add' (never work in the main tree)."
@@ -792,7 +792,7 @@ have found something serious, write it down before you go looking for the next t
     elif command -v perl >/dev/null 2>&1; then
       # The alarm survives exec; SIGALRM (exit 142) is reported as timeout's 124.
       local _rc=0
-      perl -e 'alarm shift; exec @ARGV or exit 127' "$timeout_s" "$@" || _rc=$?
+      perl -e 'alarm shift; exec @ARGV or exit 127' -- "$timeout_s" "$@" || _rc=$?
       [ "$_rc" -eq 142 ] && return 124
       return "$_rc"
     else
@@ -1786,7 +1786,7 @@ cmd_land() {
   common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
   case "$common_dir" in /*) : ;; *) common_dir="./$common_dir" ;; esac
   common_dir=$(CDPATH='' cd "$common_dir" 2>/dev/null && pwd -P) # resolved like git_dir, see preflight
-  [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ] || die "not in a linked worktree — land never runs in the main working tree."
+  [ -n "$git_dir" ] && [ -n "$common_dir" ] && [ "$git_dir" != "$common_dir" ] || die "not in a linked worktree — land never runs in the main working tree."
   top=$(git rev-parse --show-toplevel 2>/dev/null)
   git diff --quiet && git diff --cached --quiet || die "uncommitted changes — commit them first: land ships commits only."
   git fetch -q origin "$def" || die "git fetch origin $def failed."
