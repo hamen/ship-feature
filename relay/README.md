@@ -913,6 +913,10 @@ picked a `bash` through `PATH` before the first line runs. Nothing a script does
   **deny-everything** policy — `"*": "deny"`, no allowlist (see the next bullet) — repeated on the
   relay's own agent, because OpenCode applies agent-scoped permissions
   *after* the global ones, so the agent actually in use has to carry the policy too. It also runs with `--pure` so external plugins, which execute at startup, don't load.
+  **OpenCode v2** (`@opencode/cli` 2.x) has no `--pure`. The seat tells the two apart from `opencode --help`
+  and, on v2, runs `opencode run --standalone` (the shared background server ignores this env) with
+  `OPENCODE_CONFIG_DIR` set to an empty private dir, which is what keeps plugins out there. That dir also
+  hides your default model and custom providers, so v2 needs `PR_RELAY_OPENCODE_MODEL`.
   Deliberately **not** run with `--auto`, which would auto-approve every `ask` permission.
 - **The OpenCode reviewer gets no tools at all.** Not "no writes" — nothing: `"*": "deny"`, with no
   allowlist. It does not need any, because the diff reaches it as prompt content on stdin rather than
