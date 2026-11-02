@@ -1204,7 +1204,7 @@ have found something serious, write it down before you go looking for the next t
                   # A loop, not ${x//'{repo}'/…}: Bash 3.2 keeps the quotes in that pattern.
                   local oc_rest="$oc_extra"
                   oc_extra=""
-                  while case "$oc_rest" in *"{repo}"*) true ;; *) false ;; esac; do
+                  while [[ $oc_rest == *"{repo}"* ]]; do
                     oc_extra="$oc_extra${oc_rest%%"{repo}"*}$oc_repo"
                     oc_rest="${oc_rest#*"{repo}"}"
                   done
