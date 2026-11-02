@@ -4615,8 +4615,11 @@ if (set -m) 2>/dev/null; then
   ok_if $? "SIGTERM: the relay was inside \`gh pr diff\` when it was killed" "-"
   [ "$(cat "$WORK/kstatus" 2>/dev/null)" = 143 ]
   ok_if $? "SIGTERM: the relay still dies of the signal (status 143)" "status=$(cat "$WORK/kstatus" 2>/dev/null)"
+  # The detail also says where `mktemp -d` puts a dir under a set TMPDIR (own dir, so ktmp stays
+  # as the relay left it): this fails on macOS only.
+  mkdir -p "$WORK/kprobe"
   [ "$(cat "$WORK/kbefore" 2>/dev/null)" = 2 ]
-  ok_if $? "SIGTERM: STATUS_DIR and ATTACH_DIR both existed when the TERM was sent" "entries=$(cat "$WORK/kbefore" 2>/dev/null)"
+  ok_if $? "SIGTERM: STATUS_DIR and ATTACH_DIR both existed when the TERM was sent" "entries=$(cat "$WORK/kbefore" 2>/dev/null); mktemp -d under TMPDIR=$WORK/kprobe gives $(TMPDIR="$WORK/kprobe" mktemp -d 2>&1)"
   [ -z "$(ls -A "$WORK/ktmp" 2>/dev/null)" ]
   ok_if $? "SIGTERM: the handler removed STATUS_DIR and ATTACH_DIR" "left: $(ls -A "$WORK/ktmp" 2>/dev/null | tr '\n' ' ')"
 else
