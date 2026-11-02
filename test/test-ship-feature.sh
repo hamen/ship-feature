@@ -1314,7 +1314,7 @@ printf '%s' "$sub_out" | grep -q 'would configure the reviewer' &&
 # and .opencode; only the first was exercised, so a typo in either of the others was free.
 for cfgname in opencode.jsonc .opencode; do
   rm -rf "${ocfg_repo:?}/opencode.json" "${ocfg_repo:?}/opencode.jsonc" "${ocfg_repo:?}/.opencode"
-  if [ "$cfgname" = .opencode ]; then mkdir -p "$ocfg_repo/.opencode"; else printf '{}\n' >"$ocfg_repo/$cfgname"; fi
+  if [ "$cfgname" = .opencode ]; then mkdir -p "$ocfg_repo/.opencode/agent" "$ocfg_repo/.opencode/goals"; else printf '{}\n' >"$ocfg_repo/$cfgname"; fi
   n_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null |
     grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
   case "$n_cwd" in
@@ -1328,6 +1328,20 @@ for cfgname in opencode.jsonc .opencode; do
       ;;
   esac
 done
+rm -rf "${ocfg_repo:?}/.opencode"
+
+# A `.opencode` holding only `goals/` is opencode v2's own session state, written into every folder
+# it runs in. It is not config, so glm must keep reading the checkout.
+mkdir -p "$ocfg_repo/.opencode/goals" && printf '{}\n' >"$ocfg_repo/.opencode/goals/state.json"
+g_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null |
+  grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+if [ "$g_cwd" = "$ocfg_repo" ]; then
+  echo "  ok   [-] a .opencode with only goals/ does not isolate glm"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL a .opencode with only goals/ isolated glm ($g_cwd)"
+  FAIL=$((FAIL + 1))
+fi
 rm -rf "${ocfg_repo:?}/.opencode"
 printf '{}\n' >"$ocfg_repo/opencode.json"
 
