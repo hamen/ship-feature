@@ -1052,7 +1052,7 @@ printf '%s' "$km2" | grep -qF "OPENCODE_CONFIG_CONTENT=[$oc_ro2]" &&
 # The folder is COPIED per run (the user's folder is never the config dir), and read-only is then
 # pinned by a denylist, top level and in the chosen agent, since the allowlist would block its MCP tools.
 rv_dir="$WORK/rv-config"
-mkdir -p "$rv_dir/agents" && printf 'x\n' >"$rv_dir/agents/rev.md" && printf 'x\n' >"$rv_dir/agents/envagent.md" &&
+mkdir -p "$rv_dir/agents" && printf -- '---\nmode: subagent\n---\nx\n' >"$rv_dir/agents/rev.md" && printf 'x\n' >"$rv_dir/agents/envagent.md" &&
   printf '{}\n' >"$rv_dir/opencode.json"
 printf 'Extra step for {repo} and {repo}.\n' >"$WORK/rv-extra.md"
 rv_stdin="$WORK/rv-stdin.log"
@@ -1108,6 +1108,17 @@ for rv_case in "GLM_REVIEW_CONFIG_DIR=$WORK/rv-missing|GLM_REVIEW_CONFIG_DIR" \
     FAIL=$((FAIL + 1))
   }
 done
+# An agent defined only in opencode.json runs (no opencode.jsonc beside it).
+mkdir -p "$WORK/rv-json" && printf '{"agent":{"jsonagent":{"prompt":"x"}}}\n' >"$WORK/rv-json/opencode.json"
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=v2 GLM_REVIEW_CONFIG_DIR="$WORK/rv-json" GLM_REVIEW_AGENT=jsonagent \
+  bash "$CLI" plan-review --reviewers glm 2>&1)
+printf '%s' "$out" | grep 'REVIEW-glm' | grep -q -- '--agent jsonagent ' && {
+  echo "  ok   [-] glm runs an agent defined only in the folder's opencode.json"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm with an agent defined in opencode.json: $out"
+  FAIL=$((FAIL + 1))
+}
 # GLM_REVIEW_AGENT without a folder: the empty dir has no such agent, so it is ignored and said so.
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=v2 GLM_REVIEW_AGENT=rev bash "$CLI" plan-review --reviewers glm 2>/dev/null)
 km2=$(printf '%s' "$out" | grep 'REVIEW-glm')
@@ -1381,7 +1392,8 @@ rm -f "${ocfg_repo:?}/.opencode"
 
 # A .opencode that cannot be listed counts as config (fail closed): glm is isolated.
 mkdir -p "$ocfg_repo/.opencode/goals" && chmod 000 "$ocfg_repo/.opencode"
-u_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null |
+u_cwd=isolated
+[ "$(id -u)" = 0 ] || u_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null |
   grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
 chmod 755 "$ocfg_repo/.opencode" && rm -rf "${ocfg_repo:?}/.opencode"
 case "$u_cwd" in
@@ -5091,7 +5103,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=589
+EXPECTED=590
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

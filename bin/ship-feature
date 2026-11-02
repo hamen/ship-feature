@@ -1179,8 +1179,8 @@ have found something serious, write it down before you go looking for the next t
                 # A name the folder does not define would run as a new, empty agent: fail instead.
                 if [ "${#oc_cmd[@]}" -gt 0 ] && [ "$oc_agent" != plan ] &&
                   [ ! -f "$oc_cfg/agent/$oc_agent.md" ] && [ ! -f "$oc_cfg/agents/$oc_agent.md" ] &&
-                  ! cat -- "$oc_cfg/opencode.json" "$oc_cfg/opencode.jsonc" 2>/dev/null | grep -qF "\"$oc_agent\""; then
-                  echo "GLM_REVIEW_AGENT '$oc_agent' is not defined in GLM_REVIEW_CONFIG_DIR (agents/$oc_agent.md, agent/$oc_agent.md, or opencode.json). No review ran." >"$errf"
+                  ! grep -qsF "\"$oc_agent\"" -- "$oc_cfg/opencode.json" "$oc_cfg/opencode.jsonc"; then
+                  echo "GLM_REVIEW_AGENT '$oc_agent' is not defined in GLM_REVIEW_CONFIG_DIR (agents/$oc_agent.md, agent/$oc_agent.md, opencode.json or opencode.jsonc). No review ran." >"$errf"
                   rc=1 out="" oc_cmd=()
                 fi
                 local oc_deny='"edit":"deny","bash":"deny","execute":"deny","task":"deny","lsp":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","skill":"deny","question":"deny","worktree_create":"deny","session_move":"deny","session_rename":"deny","opencode_console_*":"deny"'

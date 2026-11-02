@@ -349,11 +349,12 @@ without waiting on its quota reset. `opencode models` lists what your account ca
 - `GLM_REVIEW_CONFIG_DIR`: a folder with your agents, instructions and MCP servers. Each run copies
   it to a fresh temp dir and uses that as `OPENCODE_CONFIG_DIR`.
 - `GLM_REVIEW_AGENT`: the agent to run, default `plan`. Ignored without a folder. Any other name
-  must be defined in the folder (`agents/<name>.md`, `agent/<name>.md` or `opencode.json`).
+  must be defined in the folder (`agents/<name>.md`, `agent/<name>.md`, `opencode.json` or
+  `opencode.jsonc`).
 - `GLM_REVIEW_PROMPT_EXTRA`: a file appended to the glm prompt. `{repo}` becomes the checkout path.
   Skipped when the seat runs outside the checkout.
 
-With a folder set, everything is still denied but `read`, `grep` and `glob`. Your agent's own
+With a folder set, everything is still denied except `read`, `grep` and `glob`. Your agent's own
 `permission` block can allow more by name, such as its MCP servers' read tools. Whatever it allows,
 edit (also write and patch), bash, execute, task, lsp, webfetch, websearch, external_directory,
 skill, question, worktree_create, session_move, session_rename and `opencode_console_*` stay
