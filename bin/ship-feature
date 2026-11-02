@@ -1170,7 +1170,8 @@ have found something serious, write it down before you go looking for the next t
                 oc_agent="${GLM_REVIEW_AGENT:-plan}"
                 case "$oc_agent" in '' | -* | *[!A-Za-z0-9_-]*)
                   echo "GLM_REVIEW_AGENT '$oc_agent' is not a plain agent name. No review ran." >"$errf"
-                  rc=1 out="" oc_cmd=() ;;
+                  rc=1 out="" oc_cmd=()
+                  ;;
                 esac
                 if [ "${#oc_cmd[@]}" -gt 0 ] && ! { [ -d "$oc_src" ] && [ -r "$oc_src" ] && cp -R -- "$oc_src/." "$oc_cfg/" 2>"$errf"; }; then
                   echo "GLM_REVIEW_CONFIG_DIR '$oc_src' could not be copied. No review ran." >>"$errf"
