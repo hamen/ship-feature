@@ -1096,7 +1096,7 @@ rv_claude=$(printf '%s' "$out" | grep 'REVIEW-claude')
 for rv_case in "GLM_REVIEW_CONFIG_DIR=$WORK/rv-missing|GLM_REVIEW_CONFIG_DIR" \
   "GLM_REVIEW_CONFIG_DIR=$rv_dir GLM_REVIEW_AGENT=a\"b|GLM_REVIEW_AGENT" \
   "GLM_REVIEW_CONFIG_DIR=$rv_dir GLM_REVIEW_AGENT=--help|GLM_REVIEW_AGENT" \
-  "GLM_REVIEW_CONFIG_DIR=$rv_dir GLM_REVIEW_AGENT=nosuch|GLM_REVIEW_AGENT 'nosuch' is not defined" \
+  "GLM_REVIEW_CONFIG_DIR=$rv_dir GLM_REVIEW_AGENT=nosuch|GLM_REVIEW_AGENT .nosuch. is not defined" \
   "GLM_REVIEW_CONFIG_DIR=$WORK/rv-extra.md|GLM_REVIEW_CONFIG_DIR" \
   "GLM_REVIEW_PROMPT_EXTRA=$WORK/rv-missing.md|GLM_REVIEW_PROMPT_EXTRA"; do
   out=$(printf 'plan\n' | env PATH="$PBIN:$PATH" OC_HELP=v2 ${rv_case%%|*} bash "$CLI" plan-review --reviewers glm 2>&1)
