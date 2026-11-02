@@ -1093,6 +1093,7 @@ rv_claude=$(printf '%s' "$out" | grep 'REVIEW-claude')
   FAIL=$((FAIL + 1))
 }
 # Each bad setting fails the seat, says which, and runs no review.
+# shellcheck disable=SC2089,SC2090 # the quote in a"b is the bad agent name under test, passed as one word
 for rv_case in "GLM_REVIEW_CONFIG_DIR=$WORK/rv-missing|GLM_REVIEW_CONFIG_DIR" \
   "GLM_REVIEW_CONFIG_DIR=$rv_dir GLM_REVIEW_AGENT=a\"b|GLM_REVIEW_AGENT" \
   "GLM_REVIEW_CONFIG_DIR=$rv_dir GLM_REVIEW_AGENT=--help|GLM_REVIEW_AGENT" \
