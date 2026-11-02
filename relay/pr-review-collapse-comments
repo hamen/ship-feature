@@ -86,7 +86,7 @@ fi
 
 while IFS= read -r cid; do
   [ -n "$cid" ] || continue
-  tmp="$(mktemp)"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/relay.XXXXXX")"
   gh api "repos/$REPO/issues/comments/$cid" --jq .body >"$tmp"
   if grep -q '<details' "$tmp"; then
     echo "  – comment $cid already collapsed"
@@ -95,7 +95,7 @@ while IFS= read -r cid; do
   fi
   wrapped="$(node "$WRAP" --auto --file "$tmp")"
   rm -f "$tmp"
-  patch_body="$(mktemp)"
+  patch_body="$(mktemp "${TMPDIR:-/tmp}/relay.XXXXXX")"
   printf '%s' "$wrapped" >"$patch_body"
   gh api -X PATCH "repos/$REPO/issues/comments/$cid" \
     -f body="$(cat "$patch_body")" >/dev/null

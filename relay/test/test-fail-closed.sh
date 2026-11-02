@@ -5787,6 +5787,30 @@ _rc=$?
 ok_if $? "relay-timeout with no timeout, gtimeout or perl refuses and runs nothing" "rc=$_rc err=$_err"
 unset RT NOTO NOPERL _hidden _t0 _rc _el _out _err
 
+# --- temp files honour TMPDIR on macOS too --------------------------------------------------------
+# macOS `mktemp` with no template ignores TMPDIR and uses the system temp dir, so the relay's temp
+# dirs never went where TMPDIR said there (seen on the macOS runner). Every call now names a
+# template under ${TMPDIR:-/tmp}. This stub behaves like the macOS mktemp and logs each call that
+# has no template.
+_real_mktemp="$(command -v mktemp)"
+_bm="$WORK/bsd-mktemp-bin"
+mkdir -p "$_bm" "$WORK/sys-tmp"
+cat >"$_bm/mktemp" <<MK
+#!/usr/bin/env bash
+for _a in "\$@"; do case "\$_a" in -*) ;; *) exec "$_real_mktemp" "\$@" ;; esac; done
+echo "mktemp \$*" >>"$WORK/notemplate.log"
+TMPDIR="$WORK/sys-tmp" exec "$_real_mktemp" "\$@"
+MK
+chmod +x "$_bm/mktemp"
+rm -f "$WORK/notemplate.log"
+s_reset
+env PATH="$_bm:$BIN:$PATH" XDG_CACHE_HOME="$SCACHE" GH_SHA_COUNTER="$WORK/sha_counter" GH_FIXED_SHA="$SHA_A" \
+  bash "$RELAY" --pr 1 --author antigravity --reviewers claude,grok >/dev/null 2>&1
+cf_run PATH="$_bm:$BIN:$PATH" -- --reviewers claude,grok
+[ ! -s "$WORK/notemplate.log" ]
+ok_if $? "pr-review-relay and review-local name a TMPDIR template on every mktemp (macOS ignores TMPDIR without one)" "$(tr '\n' ',' <"$WORK/notemplate.log" 2>/dev/null)"
+unset _real_mktemp _bm
+
 echo "-------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
 [ "$FAIL" = 0 ]

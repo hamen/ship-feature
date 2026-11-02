@@ -244,7 +244,7 @@ echo "▶ Local review for branch '$BRANCH_LABEL' vs '$BASE' — author: ${AUTHO
 # Reviewer failures are recorded as files so they survive the subshells that
 # --parallel creates; without this the script printed "✔ Local review done." after
 # every reviewer had timed out or returned nothing.
-FAILDIR="$(mktemp -d)" || {
+FAILDIR="$(mktemp -d "${TMPDIR:-/tmp}/relay.XXXXXX")" || {
   echo "cannot create temp dir" >&2
   exit 1
 }
@@ -256,7 +256,7 @@ relay_assert_tmpdir_outside_repo "$FAILDIR"
 # opencode (staged diff), grok and the pi seats (prompt file + isolated cwd) need ATTACH_DIR.
 ATTACH_DIR=""
 if opencode_is_selected || grok_is_selected || pi_is_selected; then
-  ATTACH_DIR="$(mktemp -d)" || {
+  ATTACH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/relay.XXXXXX")" || {
     echo "cannot create temp dir for attachments" >&2
     exit 1
   }
@@ -348,7 +348,7 @@ review_with() {
       return 0
     fi
   fi
-  errf="$(mktemp)"
+  errf="$(mktemp "${TMPDIR:-/tmp}/relay.XXXXXX")"
   case "$name" in
     claude)
       out=$(printf '%s' "$DIFF" | "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" claude -p ${CLAUDE_MODEL_ARGS[@]+"${CLAUDE_MODEL_ARGS[@]}"} "$PROMPT" 2>"$errf")

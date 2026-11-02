@@ -354,7 +354,7 @@ if [ "$DRY" = 1 ]; then
 fi
 
 # --- Gather the feedback corpus ----------------------------------------------
-CORPUS="$(mktemp)" || {
+CORPUS="$(mktemp "${TMPDIR:-/tmp}/relay.XXXXXX")" || {
   echo "mktemp failed" >&2
   exit 1
 }
@@ -362,11 +362,11 @@ CORPUS="$(mktemp)" || {
 # `.claude/settings.json` (e.g. a SessionStart hook) would otherwise run on agent start,
 # regardless of --permission-mode. An empty cwd carries no such project config. It must be
 # outside the repo for the same reason PATH must (a repo-local temp could be shadowed).
-AGENT_CWD="$(mktemp -d)" || {
+AGENT_CWD="$(mktemp -d "${TMPDIR:-/tmp}/relay.XXXXXX")" || {
   echo "mktemp -d failed" >&2
   exit 1
 }
-PARTS="$(mktemp -d)" || {
+PARTS="$(mktemp -d "${TMPDIR:-/tmp}/relay.XXXXXX")" || {
   echo "mktemp -d failed" >&2
   exit 1
 }

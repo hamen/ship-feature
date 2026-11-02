@@ -96,7 +96,7 @@ echo "▶ PR review consensus"
 echo "  pr:   #$PR ${PR_URL:+($PR_URL)}"
 echo "  file: $CONSENSUS_FILE"
 
-BODY_FILE="$(mktemp)"
+BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/relay.XXXXXX")"
 {
   if [ -n "$PR_URL" ]; then
     echo "**PR:** $PR_URL"
