@@ -656,7 +656,7 @@ opencode_review() {
       exit 1
     }
     _oc_help="$(env -u OPENCODE_CONFIG OPENCODE_CONFIG_DIR="$_oc_probe_cfg" OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_CONFIG_CONTENT="$OPENCODE_RO_CONFIG" \
-      timeout "$agent_timeout" "$OPENCODE_BIN" --help </dev/null 2>&1)" || _oc_help_rc=$?
+      "$RELAY_TIMEOUT" "$agent_timeout" "$OPENCODE_BIN" --help </dev/null 2>&1)" || _oc_help_rc=$?
     # A `--help` that failed says nothing about the flags, and "upgrade" would send the
     # reader to replace a CLI that may be fine. So the failure gets its own message and
     # keeps its output. Exit 1 even on a timeout: the seat report hides stderr after a
@@ -674,7 +674,7 @@ opencode_review() {
     case "$(opencode_cli_kind "$_oc_help")" in
       v1)
         OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_CONFIG_CONTENT="$OPENCODE_RO_CONFIG" \
-          timeout "$agent_timeout" "$OPENCODE_BIN" --pure run \
+          "$RELAY_TIMEOUT" "$agent_timeout" "$OPENCODE_BIN" --pure run \
           --agent pr-review-relay-ro ${model[@]+"${model[@]}"} -- "$oc_prompt" \
           <"$diff_file" 2>"$errf"
         ;;
@@ -700,13 +700,13 @@ opencode_review() {
         # subshell, so the unset stays here.
         unset OPENCODE_CONFIG
         OPENCODE_CONFIG_DIR="$_oc_cfg" OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_CONFIG_CONTENT="$OPENCODE_RO_CONFIG" \
-          timeout "$agent_timeout" "$OPENCODE_BIN" run --standalone \
+          "$RELAY_TIMEOUT" "$agent_timeout" "$OPENCODE_BIN" run --standalone \
           --agent pr-review-relay-ro ${model[@]+"${model[@]}"} -- "$oc_prompt" \
           <"$diff_file" 2>"$errf"
         ;;
       *)
         _oc_ver="$(env -u OPENCODE_CONFIG OPENCODE_CONFIG_DIR="$_oc_probe_cfg" OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_CONFIG_CONTENT="$OPENCODE_RO_CONFIG" \
-          timeout "$agent_timeout" "$OPENCODE_BIN" --version </dev/null 2>/dev/null | head -n 1)"
+          "$RELAY_TIMEOUT" "$agent_timeout" "$OPENCODE_BIN" --version </dev/null 2>/dev/null | head -n 1)"
         echo "opencode ${_oc_ver:-(version unknown)} $OPENCODE_TOO_OLD" >"$errf"
         exit 1
         ;;

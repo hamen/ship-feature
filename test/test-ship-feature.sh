@@ -4782,7 +4782,7 @@ ci_files() {
   local line f miss=""
   line=" $(grep "^$1 " "$CISTUB_LOG" | grep -v ' --version$' | head -n 1) "
   for f in .githooks/pre-push bin/ci bin/ship-feature install.sh scripts/scan-generic.sh scripts/scan-personal-data.sh test/test-ship-feature.sh \
-    relay/bin/ci relay/lib-argv.sh relay/lib-grok.sh relay/lib-opencode.sh relay/lib-panel.sh relay/lib-pi.sh \
+    relay/bin/ci relay/lib-argv.sh relay/lib-grok.sh relay/lib-opencode.sh relay/lib-panel.sh relay/lib-pi.sh relay/relay-timeout \
     relay/pr-review-collapse-comments relay/pr-review-consensus relay/pr-review-distill relay/pr-review-fetch \
     relay/pr-review-relay relay/review-local relay/test/lib-hermetic.sh relay/test/test-distill.sh \
     relay/test/test-fail-closed.sh relay/test/test-panel-config.sh; do

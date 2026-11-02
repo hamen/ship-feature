@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# relay-timeout SECONDS COMMAND [ARGS...] — GNU `timeout`'s contract on any machine.
+#
+# Every reviewer seat runs under a wall-clock limit. Stock macOS ships neither `timeout` nor
+# `gtimeout`, so the relay called a command that did not exist and every seat failed there
+# (294 of 713 tests on the macOS CI runner). This uses GNU timeout or Homebrew's gtimeout when
+# either is installed, else does the same job with perl, which stock macOS has. With none of the
+# three it refuses: a reviewer with no limit can hang a round forever.
+#
+# The perl fallback keeps the exit codes the relay reads: 124 on timeout, the command's own code
+# otherwise, 128+N when a signal killed it, 127 when the command cannot be run. Like GNU timeout it
+# puts itself and the command in a new process group and sends TERM to the whole group, so the
+# reviewer's own children die with it.
+set -u
+t="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
+[ -n "$t" ] && exec "$t" "$@"
+command -v perl >/dev/null 2>&1 || {
+  echo "relay-timeout: none of timeout, gtimeout or perl found — refuse to run without a wall-clock limit (macOS: brew install coreutils)" >&2
+  exit 125
+}
+# shellcheck disable=SC2016 # perl code, not shell: the $ signs are perl's
+exec perl -e '
+  use POSIX ();
+  my $secs = shift;
+  die "relay-timeout: usage: relay-timeout SECONDS COMMAND [ARGS...]\n" unless defined $secs && $secs =~ /^[0-9]+$/ && @ARGV;
+  setpgrp(0, 0);
+  my $pid = fork;
+  die "relay-timeout: fork failed: $!\n" unless defined $pid;
+  if (!$pid) {
+    exec { $ARGV[0] } @ARGV;
+    print STDERR "relay-timeout: $ARGV[0]: $!\n";
+    POSIX::_exit($!{ENOENT} ? 127 : 126);
+  }
+  my $timed_out = 0;
+  $SIG{ALRM} = sub { $timed_out = 1; $SIG{TERM} = "IGNORE"; kill "TERM", -$$; };
+  for my $s (qw(INT TERM HUP)) { $SIG{$s} = sub { $SIG{$s} = "IGNORE"; kill $s, -$$; }; }
+  alarm $secs if $secs > 0;
+  my $r;
+  do { $r = waitpid($pid, 0) } while ($r == -1 && $!{EINTR});
+  my $st = $?;
+  exit 124 if $timed_out;
+  exit(($st & 127) ? 128 + ($st & 127) : $st >> 8);
+' -- "$@"

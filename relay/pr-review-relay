@@ -1338,31 +1338,31 @@ review_with() {
     # claude and codex take the prompt on STDIN, never in argv: no argv size depends on the diff, the
     # context or the base. The producer stays pipeline element 0, so rc is PIPESTATUS[1] as before.
     claude)
-      _seat_stdin | ${SB[@]+"${SB[@]}"} timeout "$AGENT_TIMEOUT" claude -p ${CLAUDE_MODEL_ARGS[@]+"${CLAUDE_MODEL_ARGS[@]}"} 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+      _seat_stdin | ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" claude -p ${CLAUDE_MODEL_ARGS[@]+"${CLAUDE_MODEL_ARGS[@]}"} 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       rc=${PIPESTATUS[1]}
       ;;
     codex)
-      _seat_stdin | ${SB[@]+"${SB[@]}"} timeout "$AGENT_TIMEOUT" codex exec -s danger-full-access ${CODEX_MODEL_ARGS[@]+"${CODEX_MODEL_ARGS[@]}"} 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+      _seat_stdin | ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" codex exec -s danger-full-access ${CODEX_MODEL_ARGS[@]+"${CODEX_MODEL_ARGS[@]}"} 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       rc=${PIPESTATUS[1]}
       ;;
     qwen)
-      printf '%s' "$feed" | QWEN_CODE_SUPPRESS_YOLO_WARNING=1 ${SB[@]+"${SB[@]}"} timeout "$AGENT_TIMEOUT" qwen --safe-mode --approval-mode yolo -p "$PROMPT" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+      printf '%s' "$feed" | QWEN_CODE_SUPPRESS_YOLO_WARNING=1 ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" qwen --safe-mode --approval-mode yolo -p "$PROMPT" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       rc=${PIPESTATUS[1]}
       ;;
     cursor)
       if [ "$MODE" = diff ]; then
-        printf '%s\n\n%s' "$PROMPT" "$DIFF" | ${SB[@]+"${SB[@]}"} timeout "$AGENT_TIMEOUT" cursor-agent -p --trust --mode=ask --model "$CURSOR_REVIEW_MODEL" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+        printf '%s\n\n%s' "$PROMPT" "$DIFF" | ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" cursor-agent -p --trust --mode=ask --model "$CURSOR_REVIEW_MODEL" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       else
-        printf '%s' "$PROMPT" | ${SB[@]+"${SB[@]}"} timeout "$AGENT_TIMEOUT" cursor-agent -p --trust --mode=ask --model "$CURSOR_REVIEW_MODEL" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+        printf '%s' "$PROMPT" | ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" cursor-agent -p --trust --mode=ask --model "$CURSOR_REVIEW_MODEL" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       fi
       rc=${PIPESTATUS[1]}
       ;;
     antigravity)
       # No stdin producer here, so the agent is pipeline element 0, not 1.
       if [ "$MODE" = diff ]; then
-        ${SB[@]+"${SB[@]}"} timeout "$AGY_OUTER_TIMEOUT" agy --dangerously-skip-permissions --print-timeout "${AGENT_TIMEOUT}s" ${AGY_MODEL_ARGS[@]+"${AGY_MODEL_ARGS[@]}"} -p "$_argv_el" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+        ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGY_OUTER_TIMEOUT" agy --dangerously-skip-permissions --print-timeout "${AGENT_TIMEOUT}s" ${AGY_MODEL_ARGS[@]+"${AGY_MODEL_ARGS[@]}"} -p "$_argv_el" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       else
-        ${SB[@]+"${SB[@]}"} timeout "$AGY_OUTER_TIMEOUT" agy --dangerously-skip-permissions --print-timeout "${AGENT_TIMEOUT}s" ${AGY_MODEL_ARGS[@]+"${AGY_MODEL_ARGS[@]}"} -p "$PROMPT" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+        ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGY_OUTER_TIMEOUT" agy --dangerously-skip-permissions --print-timeout "${AGENT_TIMEOUT}s" ${AGY_MODEL_ARGS[@]+"${AGY_MODEL_ARGS[@]}"} -p "$PROMPT" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       fi
       rc=${PIPESTATUS[0]}
       ;;

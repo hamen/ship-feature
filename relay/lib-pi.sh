@@ -293,13 +293,13 @@ pi_review() {
     echo "pi: '$pi_bin' is not an executable file" >>"$errf"
     return 1
   }
-  timeout_bin="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
-  [ -n "$timeout_bin" ] || {
-    # Without a wall-clock limit a hung pi burns the round forever. (macOS: brew install coreutils)
-    echo "pi: neither timeout nor gtimeout found — refuse to run without a wall-clock limit" >>"$errf"
+  # relay-timeout (lib-panel.sh): GNU timeout, gtimeout or perl; it refuses to run pi when it
+  # has none of them. Already absolute.
+  timeout_bin="$RELAY_TIMEOUT"
+  [ -x "$timeout_bin" ] || {
+    echo "pi: $timeout_bin is missing (keep it next to lib-panel.sh) — refuse to run without a wall-clock limit" >>"$errf"
     return 1
   }
-  timeout_bin="$(opencode_abs_path "$timeout_bin")"
   # Before the cd: the in-repo check reads the checkout from the cwd.
   pi_resolve_node || {
     echo "pi: $PI_NODE_WHY; refuse to start the model call without it" >>"$errf"

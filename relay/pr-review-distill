@@ -713,15 +713,15 @@ rc=0
 # checkout is loaded, with the prompt on stdin (avoids the ~128 KiB argv limit).
 case "$AGENT" in
   claude)
-    out=$(printf '%s' "$PROMPT" | (cd "$AGENT_CWD" && timeout "$AGENT_TIMEOUT" claude -p ${CLAUDE_MODEL_ARGS[@]+"${CLAUDE_MODEL_ARGS[@]}"}) 2>/dev/null)
+    out=$(printf '%s' "$PROMPT" | (cd "$AGENT_CWD" && "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" claude -p ${CLAUDE_MODEL_ARGS[@]+"${CLAUDE_MODEL_ARGS[@]}"}) 2>/dev/null)
     rc=$?
     ;;
   codex)
-    out=$(printf '%s' "$PROMPT" | (cd "$AGENT_CWD" && timeout "$AGENT_TIMEOUT" codex exec -s read-only ${CODEX_MODEL_ARGS[@]+"${CODEX_MODEL_ARGS[@]}"}) 2>/dev/null)
+    out=$(printf '%s' "$PROMPT" | (cd "$AGENT_CWD" && "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" codex exec -s read-only ${CODEX_MODEL_ARGS[@]+"${CODEX_MODEL_ARGS[@]}"}) 2>/dev/null)
     rc=$?
     ;;
   cursor)
-    out=$(printf '%s' "$PROMPT" | (cd "$AGENT_CWD" && timeout "$AGENT_TIMEOUT" cursor-agent -p --trust --mode=ask --model "$CURSOR_REVIEW_MODEL") 2>/dev/null)
+    out=$(printf '%s' "$PROMPT" | (cd "$AGENT_CWD" && "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" cursor-agent -p --trust --mode=ask --model "$CURSOR_REVIEW_MODEL") 2>/dev/null)
     rc=$?
     ;;
 esac
