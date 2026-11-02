@@ -11,10 +11,10 @@ All notable changes to **ship-feature** are documented here. This project follow
 - **The glm plan-review seat can run your own reviewer (OpenCode v2).** `GLM_REVIEW_CONFIG_DIR`
   points it at a folder of agents, instructions and MCP servers, copied fresh each run;
   `GLM_REVIEW_AGENT` picks the agent; `GLM_REVIEW_PROMPT_EXTRA` appends a file to the prompt, with
-  `{repo}` filled in. With a folder set, the read/grep/glob allowlist becomes a denylist (edit,
-  bash, execute, question, `opencode_console_*` and the other built-in write, shell, network and
-  delegation tools), in the agent
-  too; your folder's own MCP servers and plugins are yours to keep read-only. `opencode-reviewer/`
+  `{repo}` filled in. With a folder set, everything but read/grep/glob is still denied; your agent
+  can allow more by name (its MCP read tools), while edit, bash, execute, question,
+  `opencode_console_*` and the other write, shell, network and delegation tools stay denied. The
+  agent always runs as primary, and a name the folder does not define fails the seat. `opencode-reviewer/`
   ships an optional, tested folder for it: a plan-review agent and a "Callers checked" prompt step. Unset, nothing changes. On v1 the keys are ignored with a note.
 
 - **`ship-feature seat-audit`: a review round that wrote anything does not count.** Some reviewer

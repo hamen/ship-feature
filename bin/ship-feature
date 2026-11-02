@@ -1156,12 +1156,15 @@ have found something serious, write it down before you go looking for the next t
                 rc=1 out="" oc_cmd=()
               }
               # The user's own reviewer folder: a fresh COPY per run, so a run cannot write into it.
-              # The allowlist would block the folder's MCP tools, so read-only is pinned by naming
-              # every write, shell, network and delegation tool instead — top level and in the
-              # agent, so the agent's own file cannot allow one back (edit also gates write and
-              # patch; question would wait for a human who is not there; opencode_console_* is the
-              # account's MCP server that can change models and providers). Only `permission` is
-              # added to the agent: its prompt and tools stay the user's; -m still sets the model.
+              # Top level: everything denied but read, grep and glob, as without a folder. The
+              # agent's own permissions apply after the top level, so its file can allow more (its
+              # MCP read tools, by name). Every write, shell, network and delegation tool is then
+              # denied again in the agent, last, so the file cannot allow one back (edit also gates
+              # write and patch; question would wait for a human who is not there;
+              # opencode_console_* is the account's MCP server that can change models and
+              # providers). The agent is pinned primary: a `mode: subagent` file would make
+              # OpenCode fall back to build, which gets the same lock. Only `mode` and
+              # `permission` are added: the prompt and tools stay the user's; -m sets the model.
               if [ "${#oc_cmd[@]}" -gt 0 ] && [ -n "${GLM_REVIEW_CONFIG_DIR:-}" ]; then
                 oc_src="${GLM_REVIEW_CONFIG_DIR/#\~\//$HOME/}"
                 oc_agent="${GLM_REVIEW_AGENT:-plan}"
@@ -1173,8 +1176,17 @@ have found something serious, write it down before you go looking for the next t
                   echo "GLM_REVIEW_CONFIG_DIR '$oc_src' could not be copied. No review ran." >>"$errf"
                   rc=1 out="" oc_cmd=()
                 fi
+                # A name the folder does not define would run as a new, empty agent: fail instead.
+                if [ "${#oc_cmd[@]}" -gt 0 ] && [ "$oc_agent" != plan ] &&
+                  [ ! -f "$oc_cfg/agent/$oc_agent.md" ] && [ ! -f "$oc_cfg/agents/$oc_agent.md" ] &&
+                  ! cat -- "$oc_cfg/opencode.json" "$oc_cfg/opencode.jsonc" 2>/dev/null | grep -qF "\"$oc_agent\""; then
+                  echo "GLM_REVIEW_AGENT '$oc_agent' is not defined in GLM_REVIEW_CONFIG_DIR (agents/$oc_agent.md, agent/$oc_agent.md, or opencode.json). No review ran." >"$errf"
+                  rc=1 out="" oc_cmd=()
+                fi
                 local oc_deny='"edit":"deny","bash":"deny","execute":"deny","task":"deny","lsp":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","skill":"deny","question":"deny","worktree_create":"deny","session_move":"deny","session_rename":"deny","opencode_console_*":"deny"'
-                oc_ro="{\"share\":\"disabled\",\"permission\":{$oc_deny},\"agent\":{\"$oc_agent\":{\"permission\":{$oc_deny}}}}"
+                local oc_build=""
+                [ "$oc_agent" = build ] || oc_build=",\"build\":{\"permission\":{\"*\":\"deny\",$oc_deny}}"
+                oc_ro="{\"share\":\"disabled\",\"permission\":{\"*\":\"deny\",\"read\":\"allow\",\"grep\":\"allow\",\"glob\":\"allow\",$oc_deny},\"agent\":{\"$oc_agent\":{\"mode\":\"primary\",\"permission\":{$oc_deny}}$oc_build}}"
               elif [ -n "${GLM_REVIEW_AGENT:-}" ] && [ "$GLM_REVIEW_AGENT" != plan ]; then
                 degraded_note="$degraded_note${degraded_note:+$'\n'}! GLM_REVIEW_AGENT needs GLM_REVIEW_CONFIG_DIR — ignored, ran the plan agent"
               fi

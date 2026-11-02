@@ -22,8 +22,8 @@ GLM_REVIEW_PROMPT_EXTRA=/path/to/ship-feature/opencode-reviewer/review-prompt-ex
 
 To change it, copy the folder somewhere of your own and point the settings there. The seat copies
 the folder fresh on each run, so a review never writes into it. With the folder set, the seat still
-denies edit, bash, execute and the other built-in write, shell and network tools (see the main
-README).
+denies everything but read, grep and glob, unless the agent allows a tool by name. Edit, bash,
+execute and the other write, shell and network tools stay denied either way (see the main README).
 
 Tested on OpenCode 2.0.32: the agent's prompt is used, and it sees only read-only tools.
 
@@ -52,8 +52,8 @@ seat found it 0 times out of 3. To add codebase-memory-mcp in your own copy of t
 
    `codemode: false` puts its tools in the tool list instead of behind Code Mode, which the seat
    denies.
-3. In the agent's frontmatter, allow its read tools by name. The seat's denylist does not cover MCP
-   tools, so name what may run rather than what may not:
+3. In the agent's frontmatter, allow its read tools by name. The seat denies every tool it is not
+   told to allow, so an MCP tool missing from this list is not available:
 
    ```yaml
    permission:

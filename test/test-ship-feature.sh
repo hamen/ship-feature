@@ -1052,7 +1052,8 @@ printf '%s' "$km2" | grep -qF "OPENCODE_CONFIG_CONTENT=[$oc_ro2]" &&
 # The folder is COPIED per run (the user's folder is never the config dir), and read-only is then
 # pinned by a denylist, top level and in the chosen agent, since the allowlist would block its MCP tools.
 rv_dir="$WORK/rv-config"
-mkdir -p "$rv_dir/agents" && printf 'x\n' >"$rv_dir/agents/rev.md" && printf '{}\n' >"$rv_dir/opencode.json"
+mkdir -p "$rv_dir/agents" && printf 'x\n' >"$rv_dir/agents/rev.md" && printf 'x\n' >"$rv_dir/agents/envagent.md" &&
+  printf '{}\n' >"$rv_dir/opencode.json"
 printf 'Extra step for {repo} and {repo}.\n' >"$WORK/rv-extra.md"
 rv_stdin="$WORK/rv-stdin.log"
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=v2 OC_STDIN_LOG="$rv_stdin" GLM_REVIEW_CONFIG_DIR="$rv_dir" GLM_REVIEW_AGENT=rev \
@@ -1063,9 +1064,9 @@ printf '%s' "$km2" | grep -q -- "argv=\[run --standalone --agent rev -m " &&
   printf '%s' "$km2" | grep -q 'CFGFILES=\[agents,opencode.json,\]' &&
   printf '%s' "$km2" | grep -q 'OPENCODE_CONFIG_DIR=\[[^]]*/oc-config\.' &&
   ! printf '%s' "$km2" | grep -qF "OPENCODE_CONFIG_DIR=[$rv_dir]" &&
-  printf '%s' "$km2" | grep -qF "OPENCODE_CONFIG_CONTENT=[{\"share\":\"disabled\",\"permission\":{$rv_deny},\"agent\":{\"rev\":{\"permission\":{$rv_deny}}}}]" &&
+  printf '%s' "$km2" | grep -qF "OPENCODE_CONFIG_CONTENT=[{\"share\":\"disabled\",\"permission\":{\"*\":\"deny\",\"read\":\"allow\",\"grep\":\"allow\",\"glob\":\"allow\",$rv_deny},\"agent\":{\"rev\":{\"mode\":\"primary\",\"permission\":{$rv_deny}},\"build\":{\"permission\":{\"*\":\"deny\",$rv_deny}}}}]" &&
   [ "$(ls -A "$rv_dir" | tr '\n' ,)" = "agents,opencode.json," ] && {
-  echo "  ok   [-] glm on v2 runs a copy of GLM_REVIEW_CONFIG_DIR with GLM_REVIEW_AGENT, denylist pinned in that agent"
+  echo "  ok   [-] glm on v2 runs a copy of GLM_REVIEW_CONFIG_DIR with GLM_REVIEW_AGENT: all denied but read/grep/glob, agent primary, build locked"
   PASS=$((PASS + 1))
 } || {
   echo "  FAIL glm with GLM_REVIEW_CONFIG_DIR: $km2"
@@ -1095,6 +1096,8 @@ rv_claude=$(printf '%s' "$out" | grep 'REVIEW-claude')
 for rv_case in "GLM_REVIEW_CONFIG_DIR=$WORK/rv-missing|GLM_REVIEW_CONFIG_DIR" \
   "GLM_REVIEW_CONFIG_DIR=$rv_dir GLM_REVIEW_AGENT=a\"b|GLM_REVIEW_AGENT" \
   "GLM_REVIEW_CONFIG_DIR=$rv_dir GLM_REVIEW_AGENT=--help|GLM_REVIEW_AGENT" \
+  "GLM_REVIEW_CONFIG_DIR=$rv_dir GLM_REVIEW_AGENT=nosuch|GLM_REVIEW_AGENT 'nosuch' is not defined" \
+  "GLM_REVIEW_CONFIG_DIR=$WORK/rv-extra.md|GLM_REVIEW_CONFIG_DIR" \
   "GLM_REVIEW_PROMPT_EXTRA=$WORK/rv-missing.md|GLM_REVIEW_PROMPT_EXTRA"; do
   out=$(printf 'plan\n' | env PATH="$PBIN:$PATH" OC_HELP=v2 ${rv_case%%|*} bash "$CLI" plan-review --reviewers glm 2>&1)
   printf '%s' "$out" | grep -q "${rv_case##*|}.*No review ran" && ! printf '%s' "$out" | grep -q 'REVIEW-glm' && {
@@ -1375,6 +1378,22 @@ case "$l_cwd" in
     ;;
 esac
 rm -f "${ocfg_repo:?}/.opencode"
+
+# A .opencode that cannot be listed counts as config (fail closed): glm is isolated.
+mkdir -p "$ocfg_repo/.opencode/goals" && chmod 000 "$ocfg_repo/.opencode"
+u_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null |
+  grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+chmod 755 "$ocfg_repo/.opencode" && rm -rf "${ocfg_repo:?}/.opencode"
+case "$u_cwd" in
+  "$ocfg_repo" | "$ocfg_repo"/* | "")
+    echo "  FAIL an unreadable .opencode did not isolate glm ($u_cwd)"
+    FAIL=$((FAIL + 1))
+    ;;
+  *)
+    echo "  ok   [-] an unreadable .opencode counts as config and isolates glm"
+    PASS=$((PASS + 1))
+    ;;
+esac
 printf '{}\n' >"$ocfg_repo/opencode.json"
 
 # A LINKED WORKTREE at <repo>/.claude/worktrees/<name> is its own git toplevel, so a walk that
@@ -5072,7 +5091,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=586
+EXPECTED=589
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

@@ -348,17 +348,18 @@ without waiting on its quota reset. `opencode models` lists what your account ca
 
 - `GLM_REVIEW_CONFIG_DIR`: a folder with your agents, instructions and MCP servers. Each run copies
   it to a fresh temp dir and uses that as `OPENCODE_CONFIG_DIR`.
-- `GLM_REVIEW_AGENT`: the agent to run, default `plan`. Ignored without a folder.
+- `GLM_REVIEW_AGENT`: the agent to run, default `plan`. Ignored without a folder. Any other name
+  must be defined in the folder (`agents/<name>.md`, `agent/<name>.md` or `opencode.json`).
 - `GLM_REVIEW_PROMPT_EXTRA`: a file appended to the glm prompt. `{repo}` becomes the checkout path.
   Skipped when the seat runs outside the checkout.
 
-With a folder set, the read/grep/glob allowlist would block your MCP tools, so the seat swaps it
-for a denylist: edit (also write and patch), bash, execute, task, lsp, webfetch, websearch,
-external_directory, skill, question, worktree_create, session_move, session_rename and
-`opencode_console_*`, denied in your agent too. Anything else your agent allows, it gets, including
-your MCP servers' tools and plugins, which the denylist does not cover: keep those read-only
-yourself. `GLM_REVIEW_MODEL` still sets the model. A missing folder or file, or a bad agent name,
-fails the seat.
+With a folder set, everything is still denied but `read`, `grep` and `glob`. Your agent's own
+`permission` block can allow more by name, such as its MCP servers' read tools. Whatever it allows,
+edit (also write and patch), bash, execute, task, lsp, webfetch, websearch, external_directory,
+skill, question, worktree_create, session_move, session_rename and `opencode_console_*` stay
+denied. Your agent always runs as a primary agent, so a `mode: subagent` file cannot drop the run
+to `build`. `GLM_REVIEW_MODEL` still sets the model. A missing folder or file, or an agent name the
+folder does not define, fails the seat.
 
 [`opencode-reviewer/`](opencode-reviewer/README.md) is a ready, tested folder to point these at: a
 plan-review agent that checks claims against the code, and a "Callers checked" step for
