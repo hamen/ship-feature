@@ -1300,6 +1300,22 @@ case "$sub_cwd" in
     PASS=$((PASS + 1))
     ;;
 esac
+
+# A goals-only .opencode on the way up is skipped, not a stop: the walk still reaches the root config.
+mkdir -p "$ocfg_repo/sub/.opencode/goals"
+sh_cwd=$(cd "$ocfg_repo/sub/deeper" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null |
+  grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$sh_cwd" in
+  "$ocfg_repo" | "$ocfg_repo"/* | "")
+    echo "  FAIL a goals-only .opencode below the root config stopped the walk ($sh_cwd)"
+    FAIL=$((FAIL + 1))
+    ;;
+  *)
+    echo "  ok   [-] a goals-only .opencode does not hide a config further up"
+    PASS=$((PASS + 1))
+    ;;
+esac
+rm -rf "${ocfg_repo:?}/sub/.opencode"
 printf '%s' "$sub_out" | grep -q 'would configure the reviewer' &&
   {
     echo "  ok   [-] glm announces the degraded review from a subdirectory too"
@@ -1343,6 +1359,22 @@ else
   FAIL=$((FAIL + 1))
 fi
 rm -rf "${ocfg_repo:?}/.opencode"
+
+# A symlinked .opencode is read through: a link to a real config dir still isolates glm.
+mkdir -p "$WORK/linked-oc/agent" && ln -s "$WORK/linked-oc" "$ocfg_repo/.opencode"
+l_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null |
+  grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$l_cwd" in
+  "$ocfg_repo" | "$ocfg_repo"/* | "")
+    echo "  FAIL a symlinked .opencode config did not isolate glm ($l_cwd)"
+    FAIL=$((FAIL + 1))
+    ;;
+  *)
+    echo "  ok   [-] a symlinked .opencode config isolates glm"
+    PASS=$((PASS + 1))
+    ;;
+esac
+rm -f "${ocfg_repo:?}/.opencode"
 printf '{}\n' >"$ocfg_repo/opencode.json"
 
 # A LINKED WORKTREE at <repo>/.claude/worktrees/<name> is its own git toplevel, so a walk that
@@ -5040,7 +5072,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=583
+EXPECTED=586
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

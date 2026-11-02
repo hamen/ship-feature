@@ -966,16 +966,17 @@ have found something serious, write it down before you go looking for the next t
   # trailing slash, and misses a symlinked $HOME against a physical $PWD — and the cost of
   # missing is not a warning, it is `~/.opencode` matching and every review silently degrading
   # to prose, which is the failure this bound exists to prevent.
-  # Prints the first opencode config in $1. A `.opencode` dir holding only `goals/` is not config:
-  # opencode v2 writes that session state into every folder it runs in, so counting it would turn
-  # every repo opencode has ever touched into a prose-only review.
+  # Prints the first opencode config in $1. A `.opencode` dir that is empty or holds only `goals/`
+  # is not config: opencode v2 writes that session state into every folder it runs in, so counting
+  # it would turn every repo opencode has ever touched into a prose-only review.
   glm_config_at() {
-    local f
+    local f other
     for f in opencode.json opencode.jsonc .opencode; do
       [ -e "$1/$f" ] || continue
-      if [ "$f" = .opencode ] && [ -d "$1/$f" ] &&
-        [ -z "$(find "$1/$f" -mindepth 1 -maxdepth 1 ! -name goals -print -quit 2>/dev/null)" ]; then
-        continue
+      if [ "$f" = .opencode ] && [ -d "$1/$f" ]; then
+        # -H: a symlinked .opencode is read through. A find error counts as config (fail closed).
+        other="$(find -H "$1/$f" -mindepth 1 -maxdepth 1 ! -name goals -print -quit 2>/dev/null)" || other=error
+        [ -z "$other" ] && continue
       fi
       printf '%s' "$1/$f"
       return 0
