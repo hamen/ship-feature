@@ -5786,6 +5786,16 @@ _rc=$?
 [ "$_rc" = 125 ] && ! printf '%s' "$_err" | grep -q '^ran$' && printf '%s' "$_err" | grep -q 'refuse to run without a wall-clock limit'
 ok_if $? "relay-timeout with no timeout, gtimeout or perl refuses and runs nothing" "rc=$_rc err=$_err"
 unset RT NOTO NOPERL _hidden _t0 _rc _el _out _err
+# lib-panel.sh is sourced before the relay's PATH guard, so it must find relay-timeout with
+# builtins only: a dirname planted in the reviewed checkout must never run.
+_fk="$WORK/fake-dirname"
+mkdir -p "$_fk"
+printf '#!/bin/sh\ntouch "%s/ran"\necho /evil\n' "$_fk" >"$_fk/dirname"
+chmod +x "$_fk/dirname"
+_rt=$(PATH="$_fk:$PATH" bash -c '. "$1/lib-panel.sh"; printf %s "$RELAY_TIMEOUT"' _ "$HERE/..")
+[ ! -e "$_fk/ran" ] && [ "$_rt" = "$(cd -P "$HERE/.." && pwd -P)/relay-timeout" ]
+ok_if $? "lib-panel.sh finds relay-timeout without running a dirname from PATH" "rt=$_rt ran=$([ -e "$_fk/ran" ] && echo yes || echo no)"
+unset _fk _rt
 
 # --- temp files honour TMPDIR on macOS too --------------------------------------------------------
 # macOS `mktemp` with no template ignores TMPDIR and uses the system temp dir, so the relay's temp

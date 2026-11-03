@@ -715,8 +715,8 @@ cmd_plan_review() {
     [ -n "$reviewers" ] || die "no reviewers — pass --reviewers <list> or set SHIP_FEATURE_PLAN_REVIEWERS / SHIP_FEATURE_REVIEWERS (e.g. claude,codex)."
   fi
 
-  # Portable timeout: GNU `timeout`, else Homebrew `gtimeout`, else perl's alarm (stock macOS
-  # ships perl but neither timeout), else run WITHOUT a limit — a missing timeout must never
+  # Portable timeout: GNU `timeout`, else Homebrew `gtimeout`, else relay/relay-timeout's perl
+  # fallback (stock macOS ships perl but neither timeout), else run WITHOUT a limit — a missing timeout must never
   # break the reviewer.
   local TIMEOUT_BIN
   TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
@@ -790,11 +790,9 @@ have found something serious, write it down before you go looking for the next t
     if [ -n "$TIMEOUT_BIN" ]; then
       "$TIMEOUT_BIN" "$timeout_s" "$@"
     elif command -v perl >/dev/null 2>&1; then
-      # The alarm survives exec; SIGALRM (exit 142) is reported as timeout's 124.
-      local _rc=0
-      perl -e 'alarm shift; exec @ARGV or exit 127' -- "$timeout_s" "$@" || _rc=$?
-      [ "$_rc" -eq 142 ] && return 124
-      return "$_rc"
+      # The relay's perl timeout: it kills the reviewer's whole process group, so a child left
+      # holding the output pipe (an opencode server, an MCP command) cannot stall the round.
+      "$RELAY_TIMEOUT" "$timeout_s" "$@"
     else
       "$@"
     fi

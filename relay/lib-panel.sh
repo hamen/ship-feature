@@ -38,8 +38,13 @@ PANEL_SEATS="claude claude_fallback codex cursor antigravity grok opencode qwen 
 # next to this file; pwd -P because the callers cd before they run it. ${BASH_SOURCE:-$0}, not
 # ${BASH_SOURCE[0]}: dash and zsh load this file too (test-panel-config.sh), and the [0] form is a
 # bad substitution in dash. bash reads the scalar form as element 0.
+# Builtins only (no dirname): the relay sources this before its PATH guard, so a dirname in the
+# reviewed checkout would run here.
+_lp_src="${BASH_SOURCE:-$0}"
+case "$_lp_src" in */*) _lp_dir="${_lp_src%/*}" ;; *) _lp_dir=. ;; esac
 # shellcheck disable=SC2034 # read by the scripts and libs that source this file
-RELAY_TIMEOUT="$(cd -- "$(dirname -- "${BASH_SOURCE:-$0}")" && pwd -P)/relay-timeout"
+RELAY_TIMEOUT="$(cd -P -- "${_lp_dir:-/}" && pwd -P)/relay-timeout"
+unset _lp_src _lp_dir
 
 # PANEL_CFG_* is this loader's OUTPUT, never an input. Without this reset an exported
 # PANEL_CFG_REVIEWERS=cursor acts as a fifth, undocumented precedence layer that outranks the

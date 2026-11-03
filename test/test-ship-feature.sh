@@ -741,6 +741,7 @@ if [ "\$(basename "\$0")" = opencode ] && [ "\${1:-}" = --help ]; then
   case "\${OC_HELP:-}" in
     fail) echo "oc-help-broke" >&2; exit 7 ;;
     hang) exec sleep 30 ;;
+    hang-child) sleep 30 & wait ;;
     v2) printf 'FLAGS\n  --standalone            Run with a private server instead of the background service\n' ;;
     nopure) printf 'Options:\n      --print-logs    print logs to stderr\n' ;;
     *) printf 'Options:\n      --pure          run without external plugins\n' ;;
@@ -1235,6 +1236,12 @@ if command -v perl >/dev/null 2>&1; then
   out=$(printf 'plan\n' | PATH="$PBIN:$NOTO" OC_HELP=hang SHIP_FEATURE_PLAN_TIMEOUT=1 bash "$CLI" plan-review --reviewers glm 2>&1)
   check "glm on a hung --help without timeout/gtimeout: perl cuts it" \
     "$(printf '%s' "$out" | grep -c 'opencode --help` did not finish within 1s')|$(printf '%s' "$out" | grep -c 'REVIEW-glm')" "1|0"
+  # A hung reviewer whose child holds the output pipe: the whole group dies, so the round ends on time.
+  t0=$(date +%s)
+  out=$(printf 'plan\n' | PATH="$PBIN:$NOTO" OC_HELP=hang-child SHIP_FEATURE_PLAN_TIMEOUT=1 bash "$CLI" plan-review --reviewers glm 2>&1)
+  check "glm on a hung --help with a child, without timeout/gtimeout: the child dies too" \
+    "$(printf '%s' "$out" | grep -c 'opencode --help` did not finish within 1s')|$(($(date +%s) - t0 < 10))" "1|1"
+  unset t0
 else
   echo "  ok   [-] perl timeout fallback test skipped (no perl)"
   PASS=$((PASS + 1))
@@ -5137,7 +5144,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=593
+EXPECTED=594
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1
