@@ -1243,8 +1243,8 @@ if command -v perl >/dev/null 2>&1; then
     "$(printf '%s' "$out" | grep -c 'opencode --help` did not finish within 1s')|$(($(date +%s) - t0 < 10))" "1|1"
   unset t0
 else
-  echo "  ok   [-] perl timeout fallback test skipped (no perl)"
-  PASS=$((PASS + 1))
+  echo "  ok   [-] perl timeout fallback tests skipped (no perl): 2"
+  PASS=$((PASS + 2))
 fi
 # The --help probe is an opencode startup in the checkout too: empty config dir, no project
 # config, the read-only policy — even with a hostile inherited policy.
