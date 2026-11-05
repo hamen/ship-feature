@@ -220,6 +220,11 @@ load_config() {
       # built-in default while the file plainly named a model — the same silent drop that
       # renaming this seat was meant to end.
       KIMI3_REVIEW_MODEL) sf_note_deprecated file:KIMI3_REVIEW_MODEL ;;
+      # The glm seat's own reviewer setup (OpenCode v2 only, see plan_review_with). Paths; a
+      # leading ~/ is expanded where they are used.
+      GLM_REVIEW_CONFIG_DIR) [ -n "${GLM_REVIEW_CONFIG_DIR:-}" ] || GLM_REVIEW_CONFIG_DIR="$val" ;;
+      GLM_REVIEW_AGENT) [ -n "${GLM_REVIEW_AGENT:-}" ] || GLM_REVIEW_AGENT="$val" ;;
+      GLM_REVIEW_PROMPT_EXTRA) [ -n "${GLM_REVIEW_PROMPT_EXTRA:-}" ] || GLM_REVIEW_PROMPT_EXTRA="$val" ;;
       CURSOR_REVIEW_MODEL) [ -n "${CURSOR_REVIEW_MODEL:-}" ] || export CURSOR_REVIEW_MODEL="$val" ;;
       # The grok seat's old key. Recorded and DROPPED, like KIMI3_REVIEW_MODEL above: the seat is
       # `grok` now and takes MODEL_grok / EFFORT_grok from the shared panel config.
@@ -430,8 +435,11 @@ cmd_preflight() {
   git_dir=$(git rev-parse --absolute-git-dir 2>/dev/null)
   common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
   # `CDPATH=''` disables CDPATH lookups and the `./` prefix stops a value like `-` being read as an option.
-  case "$common_dir" in /*) : ;; *) common_dir=$(CDPATH='' cd "./$common_dir" 2>/dev/null && pwd) ;; esac
-  if [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ]; then
+  # pwd -P: --absolute-git-dir resolves symlinks, so a logical path (/var vs /private/var on macOS)
+  # would never match it and the main tree would pass as a linked worktree.
+  case "$common_dir" in /*) : ;; *) common_dir="./$common_dir" ;; esac
+  common_dir=$(CDPATH='' cd "$common_dir" 2>/dev/null && pwd -P)
+  if [ -n "$git_dir" ] && [ -n "$common_dir" ] && [ "$git_dir" != "$common_dir" ]; then
     ok "in a linked worktree"
   else
     die "not in a linked worktree — use 'git worktree add' (never work in the main tree)."
@@ -707,8 +715,9 @@ cmd_plan_review() {
     [ -n "$reviewers" ] || die "no reviewers — pass --reviewers <list> or set SHIP_FEATURE_PLAN_REVIEWERS / SHIP_FEATURE_REVIEWERS (e.g. claude,codex)."
   fi
 
-  # Portable timeout: GNU `timeout`, else Homebrew `gtimeout`, else run WITHOUT a limit
-  # (stock macOS ships neither) — a missing timeout must never break the reviewer.
+  # Portable timeout: GNU `timeout`, else Homebrew `gtimeout`, else relay/relay-timeout's perl
+  # fallback (stock macOS ships perl but neither timeout), else run WITHOUT a limit — a missing timeout must never
+  # break the reviewer.
   local TIMEOUT_BIN
   TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
   # 500, matching pr-review-relay's own default. The panel runs reasoning models at high
@@ -777,7 +786,17 @@ have found something serious, write it down before you go looking for the next t
   skey() { printf 'k_%s' "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
 
   # Run a reviewer command under the timeout when one is available, else directly.
-  run_reviewer() { if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$timeout_s" "$@"; else "$@"; fi; }
+  run_reviewer() {
+    if [ -n "$TIMEOUT_BIN" ]; then
+      "$TIMEOUT_BIN" "$timeout_s" "$@"
+    elif command -v perl >/dev/null 2>&1; then
+      # The relay's perl timeout: it kills the reviewer's whole process group, so a child left
+      # holding the output pipe (an opencode server, an MCP command) cannot stall the round.
+      "$RELAY_TIMEOUT" "$timeout_s" "$@"
+    else
+      "$@"
+    fi
+  }
 
   # Pin the Cursor reviewer's model. Left unset, cursor-agent falls back to whatever
   # ~/.cursor/cli-config.json holds — typically "Auto", which routes to the frontier models and is
@@ -961,8 +980,26 @@ have found something serious, write it down before you go looking for the next t
   # trailing slash, and misses a symlinked $HOME against a physical $PWD — and the cost of
   # missing is not a warning, it is `~/.opencode` matching and every review silently degrading
   # to prose, which is the failure this bound exists to prevent.
+  # Prints the first opencode config in $1. A `.opencode` dir that is empty or holds only `goals/`
+  # is not config: opencode v2 writes that session state into every folder it runs in, so counting
+  # it would turn every repo opencode has ever touched into a prose-only review.
+  glm_config_at() {
+    local f other
+    for f in opencode.json opencode.jsonc .opencode; do
+      [ -e "$1/$f" ] || continue
+      if [ "$f" = .opencode ] && [ -d "$1/$f" ]; then
+        # -H: a symlinked .opencode is read through. A find error counts as config (fail closed).
+        other="$(find -H "$1/$f" -mindepth 1 -maxdepth 1 ! -name goals -print -quit 2>/dev/null)" || other=error
+        [ -z "$other" ] && continue
+      fi
+      printf '%s' "$1/$f"
+      return 0
+    done
+    return 1
+  }
+
   glm_repo_config() {
-    local dir f home="" stop="" main=""
+    local dir home="" stop="" main=""
     dir="$(cd "$PWD" 2>/dev/null && pwd -P)" || dir="$PWD"
     [ -n "${HOME:-}" ] && home="$(cd "$HOME" 2>/dev/null && pwd -P)"
     # opencode stops project-config discovery at the worktree root (1.18.18), so walking past it
@@ -972,12 +1009,7 @@ have found something serious, write it down before you go looking for the next t
     [ -n "$stop" ] && stop="$(cd "$stop" 2>/dev/null && pwd -P)"
     while :; do
       { [ -n "$home" ] && [ "$dir" = "$home" ]; } && return 1
-      for f in opencode.json opencode.jsonc .opencode; do
-        if [ -e "$dir/$f" ]; then
-          printf '%s' "${dir}/${f}"
-          return 0
-        fi
-      done
+      glm_config_at "$dir" && return 0
       [ -n "$stop" ] && [ "$dir" = "$stop" ] && break
       [ "$dir" = "/" ] && return 1
       dir="$(dirname "$dir")"
@@ -990,13 +1022,7 @@ have found something serious, write it down before you go looking for the next t
     [ -n "$main" ] || return 1
     main="$(cd "$(dirname "$main")" 2>/dev/null && pwd -P)" || return 1
     [ "$main" = "$dir" ] && return 1
-    for f in opencode.json opencode.jsonc .opencode; do
-      if [ -e "$main/$f" ]; then
-        printf '%s' "${main}/${f}"
-        return 0
-      fi
-    done
-    return 1
+    glm_config_at "$main"
   }
 
   # Both the review (stdout) and the diagnostics (stderr-bound) are buffered to files, so
@@ -1103,7 +1129,7 @@ have found something serious, write it down before you go looking for the next t
         # replaces the global config dir, which is what keeps the user's plugins out) stand in for it.
         # Policy, agent, model and cwd are the same on both. The empty dir also hides the user's
         # default model, which is harmless here: -m is always passed.
-        local oc_help oc_help_rc=0 oc_cfg="" oc_ver
+        local oc_help oc_help_rc=0 oc_cfg="" oc_ver oc_agent=plan oc_extra="" oc_src oc_repo
         local -a oc_cmd=(run --pure)
         local oc_ro='{"permission":{"edit":"deny","bash":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","task":"deny","lsp":"deny"}}'
         # The probe is an opencode startup in the checkout too, so it gets the same isolation as
@@ -1125,7 +1151,11 @@ have found something serious, write it down before you go looking for the next t
           rc=1 out="" oc_cmd=()
         elif [ "${#oc_cmd[@]}" -gt 0 ]; then
           case "$(opencode_cli_kind "$oc_help")" in
-            v1) oc_cfg="" ;; # v1 runs with the user's config dir, as before; --pure keeps plugins out
+            v1) # v1 runs with the user's config dir, as before; --pure keeps plugins out
+              oc_cfg=""
+              [ -z "${GLM_REVIEW_CONFIG_DIR:-}${GLM_REVIEW_AGENT:-}${GLM_REVIEW_PROMPT_EXTRA:-}" ] ||
+                degraded_note="$degraded_note${degraded_note:+$'\n'}! GLM_REVIEW_CONFIG_DIR/AGENT/PROMPT_EXTRA need OpenCode v2 — ignored"
+              ;;
             v2)
               oc_cmd=(run --standalone)
               # v2 adds tools the v1 denylist does not name: execute (Code Mode), skill,
@@ -1139,6 +1169,62 @@ have found something serious, write it down before you go looking for the next t
                 echo "cannot create the empty OpenCode config dir. No review ran." >"$errf"
                 rc=1 out="" oc_cmd=()
               }
+              # The user's own reviewer folder: a fresh COPY per run, so a run cannot write into it.
+              # Top level: everything denied but read, grep and glob, as without a folder. The
+              # agent's own permissions apply after the top level, so its file can allow more (its
+              # MCP read tools, by name). Every write, shell, network and delegation tool is then
+              # denied again in the agent, last, so the file cannot allow one back (edit also gates
+              # write and patch; question would wait for a human who is not there;
+              # opencode_console_* is the account's MCP server that can change models and
+              # providers). The agent is pinned primary: a `mode: subagent` file would make
+              # OpenCode fall back to build, which gets the same lock. Only `mode` and
+              # `permission` are added: the prompt and tools stay the user's; -m sets the model.
+              if [ "${#oc_cmd[@]}" -gt 0 ] && [ -n "${GLM_REVIEW_CONFIG_DIR:-}" ]; then
+                oc_src="${GLM_REVIEW_CONFIG_DIR/#\~\//$HOME/}"
+                oc_agent="${GLM_REVIEW_AGENT:-plan}"
+                case "$oc_agent" in '' | -* | *[!A-Za-z0-9_-]*)
+                  echo "GLM_REVIEW_AGENT '$oc_agent' is not a plain agent name. No review ran." >"$errf"
+                  rc=1 out="" oc_cmd=()
+                  ;;
+                esac
+                if [ "${#oc_cmd[@]}" -gt 0 ] && ! { [ -d "$oc_src" ] && [ -r "$oc_src" ] && cp -R -- "$oc_src/." "$oc_cfg/" 2>"$errf"; }; then
+                  echo "GLM_REVIEW_CONFIG_DIR '$oc_src' could not be copied. No review ran." >>"$errf"
+                  rc=1 out="" oc_cmd=()
+                fi
+                # A name the folder does not define would run as a new, empty agent: fail instead.
+                if [ "${#oc_cmd[@]}" -gt 0 ] && [ "$oc_agent" != plan ] &&
+                  [ ! -f "$oc_cfg/agent/$oc_agent.md" ] && [ ! -f "$oc_cfg/agents/$oc_agent.md" ] &&
+                  ! grep -qsF "\"$oc_agent\"" -- "$oc_cfg/opencode.json" "$oc_cfg/opencode.jsonc"; then
+                  echo "GLM_REVIEW_AGENT '$oc_agent' is not defined in GLM_REVIEW_CONFIG_DIR (agents/$oc_agent.md, agent/$oc_agent.md, opencode.json or opencode.jsonc). No review ran." >"$errf"
+                  rc=1 out="" oc_cmd=()
+                fi
+                local oc_deny='"edit":"deny","bash":"deny","execute":"deny","task":"deny","lsp":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","skill":"deny","question":"deny","worktree_create":"deny","session_move":"deny","session_rename":"deny","opencode_console_*":"deny"'
+                local oc_build=""
+                [ "$oc_agent" = build ] || oc_build=",\"build\":{\"permission\":{\"*\":\"deny\",$oc_deny}}"
+                oc_ro="{\"share\":\"disabled\",\"permission\":{\"*\":\"deny\",\"read\":\"allow\",\"grep\":\"allow\",\"glob\":\"allow\",$oc_deny},\"agent\":{\"$oc_agent\":{\"mode\":\"primary\",\"permission\":{$oc_deny}}$oc_build}}"
+              elif [ -n "${GLM_REVIEW_AGENT:-}" ] && [ "$GLM_REVIEW_AGENT" != plan ]; then
+                degraded_note="$degraded_note${degraded_note:+$'\n'}! GLM_REVIEW_AGENT needs GLM_REVIEW_CONFIG_DIR — ignored, ran the plan agent"
+              fi
+              if [ "${#oc_cmd[@]}" -gt 0 ] && [ -n "${GLM_REVIEW_PROMPT_EXTRA:-}" ]; then
+                oc_src="${GLM_REVIEW_PROMPT_EXTRA/#\~\//$HOME/}"
+                if [ -n "$ro_cwd" ]; then
+                  # {repo} would name a tree this run cannot read, and a refused read ends the run.
+                  degraded_note="$degraded_note${degraded_note:+$'\n'}! GLM_REVIEW_PROMPT_EXTRA skipped: the seat is not in the checkout"
+                elif ! oc_extra="$(cat -- "$oc_src" 2>"$errf")"; then
+                  echo "GLM_REVIEW_PROMPT_EXTRA '$oc_src' could not be read. No review ran." >>"$errf"
+                  rc=1 out="" oc_cmd=() oc_extra=""
+                else
+                  oc_repo="$(git rev-parse --show-toplevel 2>/dev/null)" || oc_repo="$PWD"
+                  # A loop, not ${x//'{repo}'/…}: Bash 3.2 keeps the quotes in that pattern.
+                  local oc_rest="$oc_extra"
+                  oc_extra=""
+                  while [[ $oc_rest == *"{repo}"* ]]; do
+                    oc_extra="$oc_extra${oc_rest%%"{repo}"*}$oc_repo"
+                    oc_rest="${oc_rest#*"{repo}"}"
+                  done
+                  oc_extra=$'\n\n'"$oc_extra$oc_rest"
+                fi
+              fi
               ;;
             *)
               oc_ver="$(cd "${ro_cwd:-$PWD}" && unset OPENCODE_CONFIG &&
@@ -1154,8 +1240,8 @@ have found something serious, write it down before you go looking for the next t
             unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR &&
             { [ -z "$oc_cfg" ] || export OPENCODE_CONFIG_DIR="$oc_cfg" OPENCODE_DISABLE_PROJECT_CONFIG=1; } &&
             export OPENCODE_CONFIG_CONTENT="$oc_ro" &&
-            printf '%s\n\n--- PLAN ---\n%s' "$PROMPT" "$plan" |
-            run_reviewer opencode "${oc_cmd[@]}" --agent plan -m "$GLM_REVIEW_MODEL" 2>"$errf")
+            printf '%s\n\n--- PLAN ---\n%s' "$PROMPT$oc_extra" "$plan" |
+            run_reviewer opencode "${oc_cmd[@]}" --agent "$oc_agent" -m "$GLM_REVIEW_MODEL" 2>"$errf")
           rc=$?
         fi
         [ -n "$ro_cwd" ] && rm -rf "$ro_cwd"
@@ -1696,8 +1782,9 @@ cmd_land() {
   # that would move the checkout under every other agent that uses it.
   git_dir=$(git rev-parse --absolute-git-dir 2>/dev/null)
   common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
-  case "$common_dir" in /*) : ;; *) common_dir=$(CDPATH='' cd "./$common_dir" 2>/dev/null && pwd) ;; esac
-  [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ] || die "not in a linked worktree — land never runs in the main working tree."
+  case "$common_dir" in /*) : ;; *) common_dir="./$common_dir" ;; esac
+  common_dir=$(CDPATH='' cd "$common_dir" 2>/dev/null && pwd -P) # resolved like git_dir, see preflight
+  [ -n "$git_dir" ] && [ -n "$common_dir" ] && [ "$git_dir" != "$common_dir" ] || die "not in a linked worktree — land never runs in the main working tree."
   top=$(git rev-parse --show-toplevel 2>/dev/null)
   git diff --quiet && git diff --cached --quiet || die "uncommitted changes — commit them first: land ships commits only."
   git fetch -q origin "$def" || die "git fetch origin $def failed."

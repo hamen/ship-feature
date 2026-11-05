@@ -354,7 +354,7 @@ if [ "$DRY" = 1 ]; then
 fi
 
 # --- Gather the feedback corpus ----------------------------------------------
-CORPUS="$(mktemp)" || {
+CORPUS="$(mktemp "${TMPDIR:-/tmp}/relay.XXXXXX")" || {
   echo "mktemp failed" >&2
   exit 1
 }
@@ -362,11 +362,11 @@ CORPUS="$(mktemp)" || {
 # `.claude/settings.json` (e.g. a SessionStart hook) would otherwise run on agent start,
 # regardless of --permission-mode. An empty cwd carries no such project config. It must be
 # outside the repo for the same reason PATH must (a repo-local temp could be shadowed).
-AGENT_CWD="$(mktemp -d)" || {
+AGENT_CWD="$(mktemp -d "${TMPDIR:-/tmp}/relay.XXXXXX")" || {
   echo "mktemp -d failed" >&2
   exit 1
 }
-PARTS="$(mktemp -d)" || {
+PARTS="$(mktemp -d "${TMPDIR:-/tmp}/relay.XXXXXX")" || {
   echo "mktemp -d failed" >&2
   exit 1
 }
@@ -713,15 +713,15 @@ rc=0
 # checkout is loaded, with the prompt on stdin (avoids the ~128 KiB argv limit).
 case "$AGENT" in
   claude)
-    out=$(printf '%s' "$PROMPT" | (cd "$AGENT_CWD" && timeout "$AGENT_TIMEOUT" claude -p ${CLAUDE_MODEL_ARGS[@]+"${CLAUDE_MODEL_ARGS[@]}"}) 2>/dev/null)
+    out=$(printf '%s' "$PROMPT" | (cd "$AGENT_CWD" && "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" claude -p ${CLAUDE_MODEL_ARGS[@]+"${CLAUDE_MODEL_ARGS[@]}"}) 2>/dev/null)
     rc=$?
     ;;
   codex)
-    out=$(printf '%s' "$PROMPT" | (cd "$AGENT_CWD" && timeout "$AGENT_TIMEOUT" codex exec -s read-only ${CODEX_MODEL_ARGS[@]+"${CODEX_MODEL_ARGS[@]}"}) 2>/dev/null)
+    out=$(printf '%s' "$PROMPT" | (cd "$AGENT_CWD" && "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" codex exec -s read-only ${CODEX_MODEL_ARGS[@]+"${CODEX_MODEL_ARGS[@]}"}) 2>/dev/null)
     rc=$?
     ;;
   cursor)
-    out=$(printf '%s' "$PROMPT" | (cd "$AGENT_CWD" && timeout "$AGENT_TIMEOUT" cursor-agent -p --trust --mode=ask --model "$CURSOR_REVIEW_MODEL") 2>/dev/null)
+    out=$(printf '%s' "$PROMPT" | (cd "$AGENT_CWD" && "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" cursor-agent -p --trust --mode=ask --model "$CURSOR_REVIEW_MODEL") 2>/dev/null)
     rc=$?
     ;;
 esac

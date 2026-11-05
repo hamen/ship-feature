@@ -810,7 +810,7 @@ relay_exit() {
 # Per-reviewer outcome, written as files so it survives subshells under --parallel:
 # $STATUS_DIR/<key> is "pending" (pre-seeded), "ok", or "fail". A reviewer that is
 # hard-killed before writing leaves its pre-seeded "pending" → counted as a failure.
-STATUS_DIR="$(mktemp -d)" || {
+STATUS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/relay.XXXXXX")" || {
   relay_log "verdict exit=1 cannot create outcome temp dir"
   echo "cannot create temp dir for outcome tracking" >&2
   exit 1
@@ -841,7 +841,7 @@ trap relay_exit EXIT
 # outside STATUS_DIR. Don't allocate (or widen the trap) when none is selected.
 ATTACH_DIR=""
 if opencode_is_selected || grok_is_selected || pi_is_selected; then
-  ATTACH_DIR="$(mktemp -d)" || {
+  ATTACH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/relay.XXXXXX")" || {
     relay_log "verdict exit=1 cannot create attachment temp dir"
     echo "cannot create temp dir for attachments" >&2
     exit 1
@@ -1238,7 +1238,7 @@ review_with() {
   skey="$(status_key "$name")"
   # Capitalize first letter — Bash 3.2-safe (no ${name^}, which is Bash 4+).
   Name="$(printf '%s' "${name:0:1}" | tr '[:lower:]' '[:upper:]')${name:1}"
-  errf="$(mktemp)"
+  errf="$(mktemp "${TMPDIR:-/tmp}/relay.XXXXXX")"
   [ "$MODE" = diff ] && feed="$DIFF" # only diff mode pipes the diff; link mode fetches it
   # Cap the stderr capture as well. Bounding only stdout left the documented "a runaway reviewer
   # cannot fill the disk" guarantee false: agents are chatty on stderr (progress, retries, stack
@@ -1263,7 +1263,7 @@ review_with() {
     [ -s "$errf" ] || return 0
     [ "$(wc -c <"$errf" 2>/dev/null || echo 0)" -le "$LOG_MAX_BYTES" ] && return 0
     local _t
-    _t="$(mktemp)" || return 0
+    _t="$(mktemp "${TMPDIR:-/tmp}/relay.XXXXXX")" || return 0
     tail -c "$LOG_MAX_BYTES" "$errf" >"$_t" 2>/dev/null && mv -f "$_t" "$errf" || rm -f "$_t"
   }
   # This reviewer's sidecar. The name is derived from RUN_BASE (already unique and freshly created
@@ -1338,31 +1338,31 @@ review_with() {
     # claude and codex take the prompt on STDIN, never in argv: no argv size depends on the diff, the
     # context or the base. The producer stays pipeline element 0, so rc is PIPESTATUS[1] as before.
     claude)
-      _seat_stdin | ${SB[@]+"${SB[@]}"} timeout "$AGENT_TIMEOUT" claude -p ${CLAUDE_MODEL_ARGS[@]+"${CLAUDE_MODEL_ARGS[@]}"} 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+      _seat_stdin | ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" claude -p ${CLAUDE_MODEL_ARGS[@]+"${CLAUDE_MODEL_ARGS[@]}"} 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       rc=${PIPESTATUS[1]}
       ;;
     codex)
-      _seat_stdin | ${SB[@]+"${SB[@]}"} timeout "$AGENT_TIMEOUT" codex exec -s danger-full-access ${CODEX_MODEL_ARGS[@]+"${CODEX_MODEL_ARGS[@]}"} 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+      _seat_stdin | ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" codex exec -s danger-full-access ${CODEX_MODEL_ARGS[@]+"${CODEX_MODEL_ARGS[@]}"} 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       rc=${PIPESTATUS[1]}
       ;;
     qwen)
-      printf '%s' "$feed" | QWEN_CODE_SUPPRESS_YOLO_WARNING=1 ${SB[@]+"${SB[@]}"} timeout "$AGENT_TIMEOUT" qwen --safe-mode --approval-mode yolo -p "$PROMPT" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+      printf '%s' "$feed" | QWEN_CODE_SUPPRESS_YOLO_WARNING=1 ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" qwen --safe-mode --approval-mode yolo -p "$PROMPT" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       rc=${PIPESTATUS[1]}
       ;;
     cursor)
       if [ "$MODE" = diff ]; then
-        printf '%s\n\n%s' "$PROMPT" "$DIFF" | ${SB[@]+"${SB[@]}"} timeout "$AGENT_TIMEOUT" cursor-agent -p --trust --mode=ask --model "$CURSOR_REVIEW_MODEL" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+        printf '%s\n\n%s' "$PROMPT" "$DIFF" | ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" cursor-agent -p --trust --mode=ask --model "$CURSOR_REVIEW_MODEL" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       else
-        printf '%s' "$PROMPT" | ${SB[@]+"${SB[@]}"} timeout "$AGENT_TIMEOUT" cursor-agent -p --trust --mode=ask --model "$CURSOR_REVIEW_MODEL" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+        printf '%s' "$PROMPT" | ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGENT_TIMEOUT" cursor-agent -p --trust --mode=ask --model "$CURSOR_REVIEW_MODEL" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       fi
       rc=${PIPESTATUS[1]}
       ;;
     antigravity)
       # No stdin producer here, so the agent is pipeline element 0, not 1.
       if [ "$MODE" = diff ]; then
-        ${SB[@]+"${SB[@]}"} timeout "$AGY_OUTER_TIMEOUT" agy --dangerously-skip-permissions --print-timeout "${AGENT_TIMEOUT}s" ${AGY_MODEL_ARGS[@]+"${AGY_MODEL_ARGS[@]}"} -p "$_argv_el" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+        ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGY_OUTER_TIMEOUT" agy --dangerously-skip-permissions --print-timeout "${AGENT_TIMEOUT}s" ${AGY_MODEL_ARGS[@]+"${AGY_MODEL_ARGS[@]}"} -p "$_argv_el" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       else
-        ${SB[@]+"${SB[@]}"} timeout "$AGY_OUTER_TIMEOUT" agy --dangerously-skip-permissions --print-timeout "${AGENT_TIMEOUT}s" ${AGY_MODEL_ARGS[@]+"${AGY_MODEL_ARGS[@]}"} -p "$PROMPT" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
+        ${SB[@]+"${SB[@]}"} "$RELAY_TIMEOUT" "$AGY_OUTER_TIMEOUT" agy --dangerously-skip-permissions --print-timeout "${AGENT_TIMEOUT}s" ${AGY_MODEL_ARGS[@]+"${AGY_MODEL_ARGS[@]}"} -p "$PROMPT" 2> >(tail -c "$LOG_MAX_BYTES" >"$errf") | head -c "$LOG_CAP_PROBE" >>"$side"
       fi
       rc=${PIPESTATUS[0]}
       ;;
@@ -1399,7 +1399,7 @@ review_with() {
     # cap to detect overflow, and posting cap+1 bytes under a marker that says "truncated at N"
     # would contradict itself.
     local _trim
-    _trim="$(mktemp)" || _trim=""
+    _trim="$(mktemp "${TMPDIR:-/tmp}/relay.XXXXXX")" || _trim=""
     if [ -n "$_trim" ]; then
       head -c $((_hdr + LOG_MAX_BYTES)) "$side" >"$_trim" 2>/dev/null && mv -f "$_trim" "$side" || rm -f "$_trim"
     fi
@@ -1531,8 +1531,8 @@ review_with() {
   # the PR page shows a one-line toggle (forum-style hide/show) per reviewer.
   local footer comment_body out_file
   footer="<sub>via pr-review-relay · author: ${AUTHOR:-?}${CONTEXT_FILE:+ · context: $(basename "$CONTEXT_FILE")}${HEAD_SHA:+ · reviewed sha: ${HEAD_SHA:0:7}}</sub>"
-  comment_body="$(mktemp)"
-  out_file="$(mktemp)"
+  comment_body="$(mktemp "${TMPDIR:-/tmp}/relay.XXXXXX")"
+  out_file="$(mktemp "${TMPDIR:-/tmp}/relay.XXXXXX")"
   printf '%s' "$out" >"$out_file"
   # If the wrapper fails (node missing/broken) or yields an empty body, do NOT post
   # a broken/partial comment and mark ok — treat it as a failed reviewer.

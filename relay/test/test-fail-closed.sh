@@ -4188,7 +4188,7 @@ ok_if $? "a post-dispatch exit-3 path logs its verdict" "$(tail -1 "$_log" 2>/de
 s_reset
 env PATH="$BIN:$PATH" XDG_CACHE_HOME="$SCACHE" GH_SHA_COUNTER="$WORK/sha_counter" GH_FIXED_SHA="$SHA_A" \
   bash "$RELAY" --pr 1 --author antigravity --reviewers claude,codex,qwen --parallel >/dev/null 2>&1
-_n=$(ls "$SCACHE"/pr-review-relay/*.review 2>/dev/null | wc -l)
+_n=$(($(ls "$SCACHE"/pr-review-relay/*.review 2>/dev/null | wc -l))) # $((...)): BSD wc pads
 _bad=0
 for _f in "$SCACHE"/pr-review-relay/*.review; do
   _key=$(basename "$_f" | sed 's/.*\.k_\(.*\)\.review/\1/')
@@ -4615,8 +4615,11 @@ if (set -m) 2>/dev/null; then
   ok_if $? "SIGTERM: the relay was inside \`gh pr diff\` when it was killed" "-"
   [ "$(cat "$WORK/kstatus" 2>/dev/null)" = 143 ]
   ok_if $? "SIGTERM: the relay still dies of the signal (status 143)" "status=$(cat "$WORK/kstatus" 2>/dev/null)"
+  # The detail also says where `mktemp -d` puts a dir under a set TMPDIR (own dir, so ktmp stays
+  # as the relay left it): this fails on macOS only.
+  mkdir -p "$WORK/kprobe"
   [ "$(cat "$WORK/kbefore" 2>/dev/null)" = 2 ]
-  ok_if $? "SIGTERM: STATUS_DIR and ATTACH_DIR both existed when the TERM was sent" "entries=$(cat "$WORK/kbefore" 2>/dev/null)"
+  ok_if $? "SIGTERM: STATUS_DIR and ATTACH_DIR both existed when the TERM was sent" "entries=$(cat "$WORK/kbefore" 2>/dev/null); mktemp -d under TMPDIR=$WORK/kprobe gives $(TMPDIR="$WORK/kprobe" mktemp -d 2>&1)"
   [ -z "$(ls -A "$WORK/ktmp" 2>/dev/null)" ]
   ok_if $? "SIGTERM: the handler removed STATUS_DIR and ATTACH_DIR" "left: $(ls -A "$WORK/ktmp" 2>/dev/null | tr '\n' ' ')"
 else
@@ -5716,6 +5719,107 @@ _n=$(grep -c 'CTX-MARKER-END' "$CF/seen")
 [ "$CF_RC" = 0 ] && [ "$_n" = 3 ]
 ok_if $? "review-local, 140 KB context: grok, pi_glm and pi_grok each get the whole plan" "rc=$CF_RC, end marker seen $_n times; err: $(head -3 "$CF/err")"
 unset _n
+
+# --- relay-timeout: stock macOS has neither timeout nor gtimeout ------------------------------
+# Every seat called a bare `timeout`, so on macOS each one died with "command not found" and 294
+# relay tests failed there. relay-timeout falls back to perl. NOTO is /usr/bin and /bin without
+# timeout or gtimeout, which is what a stock Mac looks like to the relay.
+RT="$HERE/../relay-timeout"
+NOTO="$WORK/notimeout"
+mkdir -p "$NOTO"
+for _d in /usr/bin /bin; do
+  for _f in "$_d"/*; do
+    case "${_f##*/}" in timeout | gtimeout) continue ;; esac
+    [ -e "$NOTO/${_f##*/}" ] || ln -s "$_f" "$NOTO/${_f##*/}" 2>/dev/null || true
+  done
+done
+unset _d _f
+PATH="$NOTO" command -v timeout >/dev/null 2>&1 || PATH="$NOTO" command -v gtimeout >/dev/null 2>&1
+_hidden=$?
+if [ "$_hidden" = 0 ] || ! PATH="$NOTO" command -v perl >/dev/null 2>&1; then
+  echo "  skip relay-timeout perl tests (could not build a PATH with perl and no timeout)"
+  SKIP=$((SKIP + 1))
+else
+  _t0=$(date +%s)
+  PATH="$NOTO" "$RT" 1 sleep 10
+  _rc=$?
+  _el=$(($(date +%s) - _t0))
+  [ "$_rc" = 124 ] && [ "$_el" -lt 5 ]
+  ok_if $? "relay-timeout without timeout/gtimeout: a hang is cut and exits 124" "rc=$_rc after ${_el}s"
+  _t0=$(date +%s)
+  PATH="$NOTO" "$RT" 1 sh -c 'sleep 10 & wait'
+  _rc=$?
+  _el=$(($(date +%s) - _t0))
+  [ "$_rc" = 124 ] && [ "$_el" -lt 5 ]
+  ok_if $? "relay-timeout without timeout/gtimeout: the command's children are cut too" "rc=$_rc after ${_el}s"
+  PATH="$NOTO" "$RT" 5 sh -c 'exit 7'
+  _rc=$?
+  [ "$_rc" = 7 ]
+  ok_if $? "relay-timeout without timeout/gtimeout: the command's own exit code comes back" "rc=$_rc"
+  _out=$(printf 'diff-on-stdin' | PATH="$NOTO" "$RT" 5 cat)
+  [ "$_out" = diff-on-stdin ]
+  ok_if $? "relay-timeout without timeout/gtimeout: stdin reaches the command" "out=$_out"
+  PATH="$NOTO" "$RT" 5 "$WORK/no-such-command" 2>/dev/null
+  _rc=$?
+  [ "$_rc" = 127 ]
+  ok_if $? "relay-timeout without timeout/gtimeout: a missing command exits 127" "rc=$_rc"
+  # The relay end to end on that PATH: a claude seat that answers must give a clean round.
+  cat >"$BINQ/claude" <<'VB'
+#!/usr/bin/env bash
+cat >/dev/null
+echo "LGTM from claude."
+VB
+  chmod +x "$BINQ/claude"
+  s_reset
+  _err=$(env PATH="$BINQ:$NOTO" XDG_CACHE_HOME="$SCACHE" GH_SHA_COUNTER="$WORK/sha_counter" \
+    GH_FIXED_SHA="$SHA_A" bash "$RELAY" --pr 1 --author antigravity --reviewers claude 2>&1 >/dev/null)
+  _rc=$?
+  [ "$_rc" = 0 ]
+  ok_if $? "the relay without timeout/gtimeout (stock macOS) still runs a clean round" "rc=$_rc; $(printf '%s' "$_err" | tail -3 | tr '\n' '|')"
+fi
+# With no perl either, refuse: a reviewer with no wall-clock limit can hang a round forever.
+NOPERL="$WORK/noperl"
+mkdir -p "$NOPERL"
+ln -sf "$(command -v bash)" "$NOPERL/bash"
+_err=$(PATH="$NOPERL" "$NOPERL/bash" "$RT" 5 "$NOPERL/bash" -c 'echo ran' 2>&1)
+_rc=$?
+[ "$_rc" = 125 ] && ! printf '%s' "$_err" | grep -q '^ran$' && printf '%s' "$_err" | grep -q 'refuse to run without a wall-clock limit'
+ok_if $? "relay-timeout with no timeout, gtimeout or perl refuses and runs nothing" "rc=$_rc err=$_err"
+unset RT NOTO NOPERL _hidden _t0 _rc _el _out _err
+# lib-panel.sh is sourced before the relay's PATH guard, so it must find relay-timeout with
+# builtins only: a dirname planted in the reviewed checkout must never run.
+_fk="$WORK/fake-dirname"
+mkdir -p "$_fk"
+printf '#!/bin/sh\ntouch "%s/ran"\necho /evil\n' "$_fk" >"$_fk/dirname"
+chmod +x "$_fk/dirname"
+_rt=$(PATH="$_fk:$PATH" bash -c '. "$1/lib-panel.sh"; printf %s "$RELAY_TIMEOUT"' _ "$HERE/..")
+[ ! -e "$_fk/ran" ] && [ "$_rt" = "$(cd -P "$HERE/.." && pwd -P)/relay-timeout" ]
+ok_if $? "lib-panel.sh finds relay-timeout without running a dirname from PATH" "rt=$_rt ran=$([ -e "$_fk/ran" ] && echo yes || echo no)"
+unset _fk _rt
+
+# --- temp files honour TMPDIR on macOS too --------------------------------------------------------
+# macOS `mktemp` with no template ignores TMPDIR and uses the system temp dir, so the relay's temp
+# dirs never went where TMPDIR said there (seen on the macOS runner). Every call now names a
+# template under ${TMPDIR:-/tmp}. This stub behaves like the macOS mktemp and logs each call that
+# has no template.
+_real_mktemp="$(command -v mktemp)"
+_bm="$WORK/bsd-mktemp-bin"
+mkdir -p "$_bm" "$WORK/sys-tmp"
+cat >"$_bm/mktemp" <<MK
+#!/usr/bin/env bash
+for _a in "\$@"; do case "\$_a" in -*) ;; *) exec "$_real_mktemp" "\$@" ;; esac; done
+echo "mktemp \$*" >>"$WORK/notemplate.log"
+TMPDIR="$WORK/sys-tmp" exec "$_real_mktemp" "\$@"
+MK
+chmod +x "$_bm/mktemp"
+rm -f "$WORK/notemplate.log"
+s_reset
+env PATH="$_bm:$BIN:$PATH" XDG_CACHE_HOME="$SCACHE" GH_SHA_COUNTER="$WORK/sha_counter" GH_FIXED_SHA="$SHA_A" \
+  bash "$RELAY" --pr 1 --author antigravity --reviewers claude,grok >/dev/null 2>&1
+cf_run PATH="$_bm:$BIN:$PATH" -- --reviewers claude,grok
+[ ! -s "$WORK/notemplate.log" ]
+ok_if $? "pr-review-relay and review-local name a TMPDIR template on every mktemp (macOS ignores TMPDIR without one)" "$(tr '\n' ',' <"$WORK/notemplate.log" 2>/dev/null)"
+unset _real_mktemp _bm
 
 echo "-------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL SKIP=$SKIP"

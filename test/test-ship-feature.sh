@@ -132,7 +132,7 @@ export PR_RELAY_CONFIG=/dev/null
 # come from the shared config. They are knobs people really do export, and an exported one would
 # satisfy the "no config at all -> the built-in default" assertion below: green on this machine,
 # red in CI, for a reason the assertion never mentions.
-unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL GLM_REVIEW_MODEL KIMI3_REVIEW_MODEL GROK45HIGH_REVIEW_MODEL CLAUDE_REVIEW_MODEL CLAUDE_REVIEW_EFFORT CODEX_REVIEW_MODEL CODEX_REVIEW_EFFORT GROK_REVIEW_MODEL GROK_REVIEW_EFFORT PI_GLM_REVIEW_MODEL PI_GLM_REVIEW_EFFORT PI_GROK_REVIEW_MODEL PI_GROK_REVIEW_EFFORT PR_RELAY_OPENCODE_MODEL SHIP_FEATURE_PLAN_TIMEOUT PR_RELAY_AGENT_TIMEOUT SHIP_FEATURE_GEMINI_MODEL SHIP_FEATURE_GEMINI_TESTED_VERSIONS
+unset SHIP_FEATURE_WORKTREE_ROOT SHIP_FEATURE_EXCLUDE_MARKER SHIP_FEATURE_DENYLIST SHIP_FEATURE_REVIEWERS SHIP_FEATURE_PLAN_REVIEWERS CURSOR_REVIEW_MODEL GLM_REVIEW_MODEL KIMI3_REVIEW_MODEL GROK45HIGH_REVIEW_MODEL CLAUDE_REVIEW_MODEL CLAUDE_REVIEW_EFFORT CODEX_REVIEW_MODEL CODEX_REVIEW_EFFORT GROK_REVIEW_MODEL GROK_REVIEW_EFFORT PI_GLM_REVIEW_MODEL PI_GLM_REVIEW_EFFORT PI_GROK_REVIEW_MODEL PI_GROK_REVIEW_EFFORT PR_RELAY_OPENCODE_MODEL SHIP_FEATURE_PLAN_TIMEOUT PR_RELAY_AGENT_TIMEOUT SHIP_FEATURE_GEMINI_MODEL SHIP_FEATURE_GEMINI_TESTED_VERSIONS GLM_REVIEW_CONFIG_DIR GLM_REVIEW_AGENT GLM_REVIEW_PROMPT_EXTRA
 # The gemini seat picks its auth method from the environment, and anyone who actually uses gemini
 # has one of these exported — a working machine is the normal case, not the exotic one. Leave them
 # in place and the seat takes the API-key path on this developer's box and the OAuth path in CI,
@@ -213,6 +213,10 @@ check "preflight fails on the default branch" $? 1
 # preflight: on a feature branch but NOT a linked worktree → fail
 (cd "$MAIN" && git checkout -q -b feat2 && bash "$CLI" preflight >/dev/null 2>&1)
 check "preflight fails outside a linked worktree" $? 1
+# ...and reached through a symlink, as macOS's /var is.
+ln -s "$MAIN" "$MAIN-link"
+out=$(cd "$MAIN-link" && pf 2>&1)
+check "preflight fails outside a linked worktree reached through a symlink" "$?|$(printf '%s' "$out" | grep -c 'not in a linked worktree')" "1|1"
 
 # preflight negatives:
 # (a) worktree marker not git-ignored → fail (fresh clone, no exclude entry added)
@@ -737,6 +741,7 @@ if [ "\$(basename "\$0")" = opencode ] && [ "\${1:-}" = --help ]; then
   case "\${OC_HELP:-}" in
     fail) echo "oc-help-broke" >&2; exit 7 ;;
     hang) exec sleep 30 ;;
+    hang-child) sleep 30 & wait ;;
     v2) printf 'FLAGS\n  --standalone            Run with a private server instead of the background service\n' ;;
     nopure) printf 'Options:\n      --print-logs    print logs to stderr\n' ;;
     *) printf 'Options:\n      --pure          run without external plugins\n' ;;
@@ -745,7 +750,9 @@ if [ "\$(basename "\$0")" = opencode ] && [ "\${1:-}" = --help ]; then
 fi
 _cd_empty=no
 [ -n "\${OPENCODE_CONFIG_DIR:-}" ] && [ -d "\$OPENCODE_CONFIG_DIR" ] && [ -z "\$(ls -A "\$OPENCODE_CONFIG_DIR")" ] && _cd_empty=yes
-echo "REVIEW-$1 CFGDIR_EMPTY=[\$_cd_empty] PROJCFG=[\${OPENCODE_DISABLE_PROJECT_CONFIG:-}] argv=[\$*] OPENCODE_CONFIG_CONTENT=[\${OPENCODE_CONFIG_CONTENT:-}] OPENCODE_CONFIG=[\${OPENCODE_CONFIG:-}] OPENCODE_CONFIG_DIR=[\${OPENCODE_CONFIG_DIR:-}] CWD=[\${PWD}]"
+echo "REVIEW-$1 CFGDIR_EMPTY=[\$_cd_empty] PROJCFG=[\${OPENCODE_DISABLE_PROJECT_CONFIG:-}] argv=[\$*] OPENCODE_CONFIG_CONTENT=[\${OPENCODE_CONFIG_CONTENT:-}] OPENCODE_CONFIG=[\${OPENCODE_CONFIG:-}] OPENCODE_CONFIG_DIR=[\${OPENCODE_CONFIG_DIR:-}] CWD=[\${PWD}] CFGFILES=[\$([ -d "\${OPENCODE_CONFIG_DIR:-}" ] && ls -A "\$OPENCODE_CONFIG_DIR" | tr '\n' ,)]"
+# OC_STDIN_LOG keeps the prompt the seat was given.
+[ -z "\${OC_STDIN_LOG:-}" ] || cat >"\$OC_STDIN_LOG"
 _args=("\$@")
 for ((_i=0; _i<\${#_args[@]}; _i++)); do
   if [ "\${_args[\$_i]}" = "--prompt-file" ]; then
@@ -1046,6 +1053,130 @@ printf '%s' "$km2" | grep -qF "OPENCODE_CONFIG_CONTENT=[$oc_ro2]" &&
   echo "  FAIL glm on v2 lost the policy or the cwd: $km2"
   FAIL=$((FAIL + 1))
 }
+# --- glm's own reviewer setup (v2): GLM_REVIEW_CONFIG_DIR, GLM_REVIEW_AGENT, GLM_REVIEW_PROMPT_EXTRA.
+# The folder is COPIED per run (the user's folder is never the config dir), and read-only is then
+# pinned by a denylist, top level and in the chosen agent, since the allowlist would block its MCP tools.
+rv_dir="$WORK/rv-config"
+mkdir -p "$rv_dir/agents" && printf -- '---\nmode: subagent\n---\nx\n' >"$rv_dir/agents/rev.md" && printf 'x\n' >"$rv_dir/agents/envagent.md" &&
+  printf '{}\n' >"$rv_dir/opencode.json"
+printf 'Extra step for {repo} and {repo}.\n' >"$WORK/rv-extra.md"
+rv_stdin="$WORK/rv-stdin.log"
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=v2 OC_STDIN_LOG="$rv_stdin" GLM_REVIEW_CONFIG_DIR="$rv_dir" GLM_REVIEW_AGENT=rev \
+  GLM_REVIEW_PROMPT_EXTRA="$WORK/rv-extra.md" bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+km2=$(printf '%s' "$out" | grep 'REVIEW-glm')
+rv_deny='"edit":"deny","bash":"deny","execute":"deny","task":"deny","lsp":"deny","webfetch":"deny","websearch":"deny","external_directory":"deny","skill":"deny","question":"deny","worktree_create":"deny","session_move":"deny","session_rename":"deny","opencode_console_*":"deny"'
+printf '%s' "$km2" | grep -q -- "argv=\[run --standalone --agent rev -m " &&
+  printf '%s' "$km2" | grep -q 'CFGFILES=\[agents,opencode.json,\]' &&
+  printf '%s' "$km2" | grep -q 'OPENCODE_CONFIG_DIR=\[[^]]*/oc-config\.' &&
+  ! printf '%s' "$km2" | grep -qF "OPENCODE_CONFIG_DIR=[$rv_dir]" &&
+  printf '%s' "$km2" | grep -qF "OPENCODE_CONFIG_CONTENT=[{\"share\":\"disabled\",\"permission\":{\"*\":\"deny\",\"read\":\"allow\",\"grep\":\"allow\",\"glob\":\"allow\",$rv_deny},\"agent\":{\"rev\":{\"mode\":\"primary\",\"permission\":{$rv_deny}},\"build\":{\"permission\":{\"*\":\"deny\",$rv_deny}}}}]" &&
+  [ "$(ls -A "$rv_dir" | tr '\n' ,)" = "agents,opencode.json," ] && {
+  echo "  ok   [-] glm on v2 runs a copy of GLM_REVIEW_CONFIG_DIR with GLM_REVIEW_AGENT: all denied but read/grep/glob, agent primary, build locked"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm with GLM_REVIEW_CONFIG_DIR: $km2"
+  FAIL=$((FAIL + 1))
+}
+rv_top="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+grep -qF "Extra step for $rv_top and $rv_top." "$rv_stdin" && grep -q -- '--- PLAN ---' "$rv_stdin" && {
+  echo "  ok   [-] glm appends GLM_REVIEW_PROMPT_EXTRA with every {repo} filled"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm prompt extra: $(head -c 600 "$rv_stdin" 2>/dev/null)"
+  FAIL=$((FAIL + 1))
+}
+# The extra is glm's alone: the claude seat in the same round gets the plain prompt. claude takes
+# the prompt as an argument, which its stub echoes, so the prompt is checked to be there at all.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=v2 GLM_REVIEW_PROMPT_EXTRA="$WORK/rv-extra.md" \
+  bash "$CLI" plan-review --reviewers glm,claude 2>/dev/null)
+rv_claude=$(printf '%s' "$out" | grep 'REVIEW-claude')
+! printf '%s' "$rv_claude" | grep -q 'Extra step for' && printf '%s' "$rv_claude" | grep -q 'reviewing an IMPLEMENTATION PLAN' && {
+  echo "  ok   [-] GLM_REVIEW_PROMPT_EXTRA does not reach the other seats"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL GLM_REVIEW_PROMPT_EXTRA leaked: $(printf '%s' "$out" | grep -m2 'Extra step')"
+  FAIL=$((FAIL + 1))
+}
+# Each bad setting fails the seat, says which, and runs no review.
+# shellcheck disable=SC2089,SC2090 # the quote in a"b is the bad agent name under test, passed as one word
+for rv_case in "GLM_REVIEW_CONFIG_DIR=$WORK/rv-missing|GLM_REVIEW_CONFIG_DIR" \
+  "GLM_REVIEW_CONFIG_DIR=$rv_dir GLM_REVIEW_AGENT=a\"b|GLM_REVIEW_AGENT" \
+  "GLM_REVIEW_CONFIG_DIR=$rv_dir GLM_REVIEW_AGENT=--help|GLM_REVIEW_AGENT" \
+  "GLM_REVIEW_CONFIG_DIR=$rv_dir GLM_REVIEW_AGENT=nosuch|GLM_REVIEW_AGENT .nosuch. is not defined" \
+  "GLM_REVIEW_CONFIG_DIR=$WORK/rv-extra.md|GLM_REVIEW_CONFIG_DIR" \
+  "GLM_REVIEW_PROMPT_EXTRA=$WORK/rv-missing.md|GLM_REVIEW_PROMPT_EXTRA"; do
+  out=$(printf 'plan\n' | env PATH="$PBIN:$PATH" OC_HELP=v2 ${rv_case%%|*} bash "$CLI" plan-review --reviewers glm 2>&1)
+  printf '%s' "$out" | grep -q "${rv_case##*|}.*No review ran" && ! printf '%s' "$out" | grep -q 'REVIEW-glm' && {
+    echo "  ok   [-] glm fails closed on a bad ${rv_case##*|}"
+    PASS=$((PASS + 1))
+  } || {
+    echo "  FAIL glm on a bad ${rv_case##*|}: $(printf '%s' "$out" | grep -i -m3 'glm\|review')"
+    FAIL=$((FAIL + 1))
+  }
+done
+# An agent defined only in opencode.json runs (no opencode.jsonc beside it).
+mkdir -p "$WORK/rv-json" && printf '{"agent":{"jsonagent":{"prompt":"x"}}}\n' >"$WORK/rv-json/opencode.json"
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=v2 GLM_REVIEW_CONFIG_DIR="$WORK/rv-json" GLM_REVIEW_AGENT=jsonagent \
+  bash "$CLI" plan-review --reviewers glm 2>&1)
+printf '%s' "$out" | grep 'REVIEW-glm' | grep -q -- '--agent jsonagent ' && {
+  echo "  ok   [-] glm runs an agent defined only in the folder's opencode.json"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm with an agent defined in opencode.json: $out"
+  FAIL=$((FAIL + 1))
+}
+# GLM_REVIEW_AGENT without a folder: the empty dir has no such agent, so it is ignored and said so.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=v2 GLM_REVIEW_AGENT=rev bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+km2=$(printf '%s' "$out" | grep 'REVIEW-glm')
+printf '%s' "$out" | grep -q 'GLM_REVIEW_AGENT needs GLM_REVIEW_CONFIG_DIR' &&
+  printf '%s' "$km2" | grep -q -- "--agent plan " && printf '%s' "$km2" | grep -qF "OPENCODE_CONFIG_CONTENT=[$oc_ro2]" && {
+  echo "  ok   [-] glm ignores GLM_REVIEW_AGENT without a folder, says so, keeps the allowlist"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm with GLM_REVIEW_AGENT and no folder: $out"
+  FAIL=$((FAIL + 1))
+}
+# v1 has none of this: one line says so, and the run is the usual one.
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" GLM_REVIEW_CONFIG_DIR="$rv_dir" GLM_REVIEW_AGENT=rev bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+printf '%s' "$out" | grep -q 'need OpenCode v2 — ignored' && printf '%s' "$out" | grep -q -- 'argv=\[run --pure --agent plan ' && {
+  echo "  ok   [-] glm on v1 ignores the reviewer settings and says so"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm on v1 with reviewer settings: $out"
+  FAIL=$((FAIL + 1))
+}
+# From the config file, with ~/ expanded, and the environment still winning.
+printf 'GLM_REVIEW_CONFIG_DIR=~/rv-config\nGLM_REVIEW_AGENT=rev\nGLM_REVIEW_PROMPT_EXTRA=~/rv-extra.md\n' >"$WORK/rv-sf-config"
+: >"$rv_stdin"
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$WORK" OC_HELP=v2 OC_STDIN_LOG="$rv_stdin" SHIP_FEATURE_CONFIG="$WORK/rv-sf-config" \
+  bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+km2=$(printf '%s' "$out" | grep 'REVIEW-glm')
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" HOME="$WORK" OC_HELP=v2 SHIP_FEATURE_CONFIG="$WORK/rv-sf-config" GLM_REVIEW_AGENT=envagent \
+  bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+printf '%s' "$km2" | grep -q -- '--agent rev ' && printf '%s' "$km2" | grep -q 'CFGFILES=\[agents,opencode.json,\]' &&
+  grep -q 'Extra step for' "$rv_stdin" && printf '%s' "$out" | grep -q -- '--agent envagent ' && {
+  echo "  ok   [-] glm reads its reviewer keys from the config file, expands ~/, and the environment wins"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm reviewer keys from the config file: $out"
+  FAIL=$((FAIL + 1))
+}
+# The shipped opencode-reviewer folder, as its README says to set it up.
+: >"$rv_stdin"
+out=$(printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=v2 OC_STDIN_LOG="$rv_stdin" GLM_REVIEW_CONFIG_DIR="$HERE/../opencode-reviewer" \
+  GLM_REVIEW_AGENT=plan-reviewer GLM_REVIEW_PROMPT_EXTRA="$HERE/../opencode-reviewer/review-prompt-extra.md" \
+  bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+km2=$(printf '%s' "$out" | grep 'REVIEW-glm')
+printf '%s' "$km2" | grep -q -- '--agent plan-reviewer ' && printf '%s' "$km2" | grep -q 'CFGFILES=\[[^]]*agents' &&
+  grep -q 'Callers checked' "$rv_stdin" && grep -qF "checkout at $rv_top " "$rv_stdin" &&
+  [ -f "$HERE/../opencode-reviewer/agents/plan-reviewer.md" ] && {
+  echo "  ok   [-] the shipped opencode-reviewer folder runs as its README says"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL shipped opencode-reviewer folder: $km2"
+  FAIL=$((FAIL + 1))
+}
+unset rv_dir rv_stdin rv_deny rv_top rv_case rv_claude
 # A CLI with neither flag fails the seat with the reason, and the review never starts.
 out=$(printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=nopure bash "$CLI" plan-review --reviewers glm 2>&1)
 printf '%s' "$out" | grep -q 'has neither --pure (v1) nor --standalone (v2)' && ! printf '%s' "$out" | grep -q 'REVIEW-glm' && {
@@ -1087,6 +1218,34 @@ printf '%s' "$out" | grep -q 'opencode --help` did not finish within 1s' && ! pr
   echo "  FAIL glm on a hung --help: $(printf '%s' "$out" | grep -i -m3 'glm\|opencode')"
   FAIL=$((FAIL + 1))
 }
+# Stock macOS has neither timeout nor gtimeout: perl's alarm must still cut the hang. A PATH with
+# every tool but those two, ahead of nothing else.
+if command -v perl >/dev/null 2>&1; then
+  NOTO="$WORK/no-timeout-bin"
+  mkdir -p "$NOTO"
+  (
+    IFS=: read -r -a pdirs <<<"$PATH"
+    for d in "${pdirs[@]}"; do
+      [ -n "$d" ] || continue
+      for b in "$d"/*; do
+        case "${b##*/}" in timeout | gtimeout) continue ;; esac
+        [ -x "$b" ] && [ ! -e "$NOTO/${b##*/}" ] && ln -s "$b" "$NOTO/${b##*/}" 2>/dev/null
+      done
+    done
+  )
+  out=$(printf 'plan\n' | PATH="$PBIN:$NOTO" OC_HELP=hang SHIP_FEATURE_PLAN_TIMEOUT=1 bash "$CLI" plan-review --reviewers glm 2>&1)
+  check "glm on a hung --help without timeout/gtimeout: perl cuts it" \
+    "$(printf '%s' "$out" | grep -c 'opencode --help` did not finish within 1s')|$(printf '%s' "$out" | grep -c 'REVIEW-glm')" "1|0"
+  # A hung reviewer whose child holds the output pipe: the whole group dies, so the round ends on time.
+  t0=$(date +%s)
+  out=$(printf 'plan\n' | PATH="$PBIN:$NOTO" OC_HELP=hang-child SHIP_FEATURE_PLAN_TIMEOUT=1 bash "$CLI" plan-review --reviewers glm 2>&1)
+  check "glm on a hung --help with a child, without timeout/gtimeout: the child dies too" \
+    "$(printf '%s' "$out" | grep -c 'opencode --help` did not finish within 1s')|$(($(date +%s) - t0 < 10))" "1|1"
+  unset t0
+else
+  echo "  ok   [-] perl timeout fallback tests skipped (no perl): 2"
+  PASS=$((PASS + 2))
+fi
 # The --help probe is an opencode startup in the checkout too: empty config dir, no project
 # config, the read-only policy — even with a hostile inherited policy.
 probe_log="$WORK/oc-probe.log"
@@ -1138,6 +1297,36 @@ printf '%s' "$ocfg_out" | grep -q 'opencode.json would configure the reviewer' &
     echo "  FAIL glm degraded silently — a prose-only review must say so"
     FAIL=$((FAIL + 1))
   }
+# On that path the seat is not in the checkout, so a {repo} prompt extra would send it outside.
+printf 'x {repo}\n' >"$WORK/rv-extra2.md"
+ocfg_stdin="$WORK/ocfg-stdin.log"
+ocfg_out=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=v2 OC_STDIN_LOG="$ocfg_stdin" \
+  GLM_REVIEW_PROMPT_EXTRA="$WORK/rv-extra2.md" bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+printf '%s' "$ocfg_out" | grep -q 'GLM_REVIEW_PROMPT_EXTRA skipped' && [ -s "$ocfg_stdin" ] && ! grep -q '^x ' "$ocfg_stdin" && {
+  echo "  ok   [-] glm skips GLM_REVIEW_PROMPT_EXTRA when it is not in the checkout, and says so"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm prompt extra on the degraded path: $ocfg_out"
+  FAIL=$((FAIL + 1))
+}
+# A note about the reviewer keys adds to the degraded-review warning, never replaces it.
+ocfg_out=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" GLM_REVIEW_AGENT=rev bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+printf '%s' "$ocfg_out" | grep -q 'opencode.json would configure the reviewer' && printf '%s' "$ocfg_out" | grep -q 'need OpenCode v2 — ignored' && {
+  echo "  ok   [-] glm keeps the degraded-review warning next to the reviewer-keys note"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm lost a warning: $ocfg_out"
+  FAIL=$((FAIL + 1))
+}
+ocfg_out=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" OC_HELP=v2 GLM_REVIEW_AGENT=rev bash "$CLI" plan-review --reviewers glm 2>/dev/null)
+printf '%s' "$ocfg_out" | grep -q 'opencode.json would configure the reviewer' && printf '%s' "$ocfg_out" | grep -q 'GLM_REVIEW_AGENT needs GLM_REVIEW_CONFIG_DIR' && {
+  echo "  ok   [-] glm on v2 keeps the degraded-review warning next to the agent note"
+  PASS=$((PASS + 1))
+} || {
+  echo "  FAIL glm on v2 lost a warning: $ocfg_out"
+  FAIL=$((FAIL + 1))
+}
+unset ocfg_stdin
 # From a SUBDIRECTORY the config is still found: opencode discovers config by walking up, so a
 # check that only looked at $PWD would miss it and hand the reviewer a config we refused. This
 # is the case the walk-up exists for, and it is also this workflow's normal shape — plan-review
@@ -1159,6 +1348,22 @@ case "$sub_cwd" in
     PASS=$((PASS + 1))
     ;;
 esac
+
+# A goals-only .opencode on the way up is skipped, not a stop: the walk still reaches the root config.
+mkdir -p "$ocfg_repo/sub/.opencode/goals"
+sh_cwd=$(cd "$ocfg_repo/sub/deeper" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null |
+  grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$sh_cwd" in
+  "$ocfg_repo" | "$ocfg_repo"/* | "")
+    echo "  FAIL a goals-only .opencode below the root config stopped the walk ($sh_cwd)"
+    FAIL=$((FAIL + 1))
+    ;;
+  *)
+    echo "  ok   [-] a goals-only .opencode does not hide a config further up"
+    PASS=$((PASS + 1))
+    ;;
+esac
+rm -rf "${ocfg_repo:?}/sub/.opencode"
 printf '%s' "$sub_out" | grep -q 'would configure the reviewer' &&
   {
     echo "  ok   [-] glm announces the degraded review from a subdirectory too"
@@ -1173,7 +1378,7 @@ printf '%s' "$sub_out" | grep -q 'would configure the reviewer' &&
 # and .opencode; only the first was exercised, so a typo in either of the others was free.
 for cfgname in opencode.jsonc .opencode; do
   rm -rf "${ocfg_repo:?}/opencode.json" "${ocfg_repo:?}/opencode.jsonc" "${ocfg_repo:?}/.opencode"
-  if [ "$cfgname" = .opencode ]; then mkdir -p "$ocfg_repo/.opencode"; else printf '{}\n' >"$ocfg_repo/$cfgname"; fi
+  if [ "$cfgname" = .opencode ]; then mkdir -p "$ocfg_repo/.opencode/agent" "$ocfg_repo/.opencode/goals"; else printf '{}\n' >"$ocfg_repo/$cfgname"; fi
   n_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null |
     grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
   case "$n_cwd" in
@@ -1188,6 +1393,53 @@ for cfgname in opencode.jsonc .opencode; do
   esac
 done
 rm -rf "${ocfg_repo:?}/.opencode"
+
+# A `.opencode` holding only `goals/` is opencode v2's own session state, written into every folder
+# it runs in. It is not config, so glm must keep reading the checkout.
+mkdir -p "$ocfg_repo/.opencode/goals" && printf '{}\n' >"$ocfg_repo/.opencode/goals/state.json"
+g_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null |
+  grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+if [ "$g_cwd" = "$ocfg_repo" ]; then
+  echo "  ok   [-] a .opencode with only goals/ does not isolate glm"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL a .opencode with only goals/ isolated glm ($g_cwd)"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "${ocfg_repo:?}/.opencode"
+
+# A symlinked .opencode is read through: a link to a real config dir still isolates glm.
+mkdir -p "$WORK/linked-oc/agent" && ln -s "$WORK/linked-oc" "$ocfg_repo/.opencode"
+l_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null |
+  grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+case "$l_cwd" in
+  "$ocfg_repo" | "$ocfg_repo"/* | "")
+    echo "  FAIL a symlinked .opencode config did not isolate glm ($l_cwd)"
+    FAIL=$((FAIL + 1))
+    ;;
+  *)
+    echo "  ok   [-] a symlinked .opencode config isolates glm"
+    PASS=$((PASS + 1))
+    ;;
+esac
+rm -f "${ocfg_repo:?}/.opencode"
+
+# A .opencode that cannot be listed counts as config (fail closed): glm is isolated.
+mkdir -p "$ocfg_repo/.opencode/goals" && chmod 000 "$ocfg_repo/.opencode"
+u_cwd=isolated
+[ "$(id -u)" = 0 ] || u_cwd=$(cd "$ocfg_repo" && printf 'plan\n' | PATH="$PBIN:$PATH" bash "$CLI" plan-review --reviewers glm 2>/dev/null |
+  grep 'REVIEW-glm' | sed -n 's/.*CWD=\[\([^]]*\)\].*/\1/p')
+chmod 755 "$ocfg_repo/.opencode" && rm -rf "${ocfg_repo:?}/.opencode"
+case "$u_cwd" in
+  "$ocfg_repo" | "$ocfg_repo"/* | "")
+    echo "  FAIL an unreadable .opencode did not isolate glm ($u_cwd)"
+    FAIL=$((FAIL + 1))
+    ;;
+  *)
+    echo "  ok   [-] an unreadable .opencode counts as config and isolates glm"
+    PASS=$((PASS + 1))
+    ;;
+esac
 printf '{}\n' >"$ocfg_repo/opencode.json"
 
 # A LINKED WORKTREE at <repo>/.claude/worktrees/<name> is its own git toplevel, so a walk that
@@ -4537,7 +4789,7 @@ ci_files() {
   local line f miss=""
   line=" $(grep "^$1 " "$CISTUB_LOG" | grep -v ' --version$' | head -n 1) "
   for f in .githooks/pre-push bin/ci bin/ship-feature install.sh scripts/scan-generic.sh scripts/scan-personal-data.sh test/test-ship-feature.sh \
-    relay/bin/ci relay/lib-argv.sh relay/lib-grok.sh relay/lib-opencode.sh relay/lib-panel.sh relay/lib-pi.sh \
+    relay/bin/ci relay/lib-argv.sh relay/lib-grok.sh relay/lib-opencode.sh relay/lib-panel.sh relay/lib-pi.sh relay/relay-timeout \
     relay/pr-review-collapse-comments relay/pr-review-consensus relay/pr-review-distill relay/pr-review-fetch \
     relay/pr-review-relay relay/review-local relay/test/lib-hermetic.sh relay/test/test-distill.sh \
     relay/test/test-fail-closed.sh relay/test/test-panel-config.sh; do
@@ -4664,6 +4916,13 @@ _before="$(ld_tip "$_r")"
 (cd "$_r" && git checkout -q -b g origin/main && echo g >g.txt && git add g.txt && git commit -q -m g && ld >/dev/null 2>&1)
 _rc=$?
 check "land: refuses a feature branch in the main working tree, which stays on it" "$_rc|$([ "$(ld_tip "$_r")" = "$_before" ] && echo same)|$(git -C "$_r" rev-parse --abbrev-ref HEAD)" "1|same|g"
+# Reached through a symlink, as macOS's /var is: the main tree must still be refused.
+_r="$(ld_repo maintreelink)"
+ln -s "$_r" "$_r-link"
+_before="$(ld_tip "$_r")"
+(cd "$_r-link" && git checkout -q -b g origin/main && echo g >g.txt && git add g.txt && git commit -q -m g && ld >/dev/null 2>&1)
+_rc=$?
+check "land: refuses the main working tree reached through a symlink" "$_rc|$([ "$(ld_tip "$_r")" = "$_before" ] && echo same)" "1|same"
 
 _r="$(ld_repo nohook nohook)"
 _before="$(ld_tip "$_r")"
@@ -4885,7 +5144,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=569
+EXPECTED=594
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

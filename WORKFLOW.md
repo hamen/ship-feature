@@ -132,7 +132,8 @@ seat stays out of `grok`'s family too), `glm`
 bundled OpenCode Go tier, overridable to a pay-as-you-go model — pinned read-only by
 `OPENCODE_CONFIG_CONTENT` — the highest-precedence config
 layer — denying `edit`+`bash`, with inherited `OPENCODE_CONFIG*` unset, plus `--pure`
-and `--agent plan`), `grok` (model and effort from `MODEL_grok` / `EFFORT_grok` in the shared panel
+and `--agent plan`; on OpenCode v2 `GLM_REVIEW_CONFIG_DIR`, `GLM_REVIEW_AGENT` and
+`GLM_REVIEW_PROMPT_EXTRA` give it your own agent, MCP servers and prompt text, see the README), `grok` (model and effort from `MODEL_grok` / `EFFORT_grok` in the shared panel
 file — the same keys the relay's grok seat reads — or `$GROK_REVIEW_MODEL` / `$GROK_REVIEW_EFFORT`;
 defaults `grok-4.6` / `medium` — via `grok --prompt-file`, running in your
 checkout with a read-only tool allowlist `--tools read_file,list_dir,grep`, the MCP bridge removed

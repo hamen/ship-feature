@@ -161,6 +161,19 @@ SHIP_FEATURE_DENYLIST=/path/to/your/denylist.txt
 #   MODEL_kimi3 (in pr-review-relay's config)        ->  MODEL_glm
 #   `kimi3` in a reviewer list                       ->  `glm` (the old name fails the round)
 
+# The glm seat's own reviewer setup. OpenCode v2 only; on v1 they are ignored with a note.
+# GLM_REVIEW_CONFIG_DIR: a folder used as the seat's OPENCODE_CONFIG_DIR (agents, instructions,
+#   MCP servers), copied fresh each run. With it set, the seat no longer allows only
+#   read/grep/glob: it denies edit, bash, execute, task, lsp, webfetch, websearch,
+#   external_directory, skill, question, worktree_create, session_move, session_rename and
+#   opencode_console_*, and whatever else your folder's agent allows (your MCP servers, plugins),
+#   it gets: keep those read-only yourself. GLM_REVIEW_MODEL still sets the model.
+# GLM_REVIEW_AGENT: the agent to run (default plan). Needs GLM_REVIEW_CONFIG_DIR.
+# GLM_REVIEW_PROMPT_EXTRA: a file appended to the glm prompt; {repo} becomes the checkout path.
+# GLM_REVIEW_CONFIG_DIR=~/.config/ship-feature/opencode-reviewer
+# GLM_REVIEW_AGENT=change-reviewer
+# GLM_REVIEW_PROMPT_EXTRA=~/.config/ship-feature/review-prompt-extra.md
+
 # RENAMED. The `grok45high` plan reviewer is now `grok` (2026-09), pinned by MODEL_grok /
 # EFFORT_grok in pr-review-relay's config (see above). The old spellings are IGNORED, each with a
 # warning from `plan-review`:

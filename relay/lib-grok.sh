@@ -93,17 +93,13 @@ grok_review() {
   if command -v opencode_reject_if_in_repo >/dev/null 2>&1; then
     opencode_reject_if_in_repo "$grok_bin"
   fi
-  timeout_bin="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
-  if [ -z "$timeout_bin" ]; then
-    # Fail closed: without a wall-clock limit a hung grok burns the round forever.
-    # --max-turns does not cover startup/network hangs. (macOS: brew install coreutils → gtimeout)
-    echo "grok_review: neither timeout nor gtimeout found — refuse to run without a wall-clock limit" >&2
+  # relay-timeout (lib-panel.sh): GNU timeout, gtimeout or perl; it refuses to run the command
+  # when it has none of them, so a hung grok still cannot burn the round forever.
+  timeout_bin="$RELAY_TIMEOUT"
+  [ -x "$timeout_bin" ] || {
+    echo "grok_review: $timeout_bin is missing (keep it next to lib-panel.sh) — refuse to run without a wall-clock limit" >&2
     return 1
-  fi
-  case "$timeout_bin" in
-    /*) ;;
-    *) timeout_bin="$(cd -- "$(dirname "$timeout_bin")" && pwd)/$(basename "$timeout_bin")" ;;
-  esac
+  }
 
   # Absolute errf before cd (relative TMPDIR would otherwise write into iso_cwd).
   case "$errf" in /*) ;; *) errf="$(cd -- "$(dirname "$errf")" && pwd)/$(basename "$errf")" ;; esac
