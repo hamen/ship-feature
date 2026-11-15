@@ -200,6 +200,24 @@ panel_config_load() {
 # own tests run with e.g. CURSOR_REVIEW_MODEL= on purpose, so that an override exported in a dev
 # shell cannot make an assertion pass by accident. Treating that empty as "disabled" silently
 # unpins the model and the argv assertion fails with a bare `--model`.
+# codex_no_mcp_args — one "mcp_servers.<name>.enabled=false" per line, for every MCP server in
+# the user's codex config. Each line goes to `codex exec` as a -c override.
+#
+# `codex exec` starts every MCP server in $CODEX_HOME/config.toml before it sends the first
+# request, and waits for each one. A remote OAuth server that cannot refresh its token hangs that
+# start with no timeout of its own. Measured 2026-11-15, codex-cli 0.164.0: with buffer,
+# revenuecat or stripe in the config, a one-word prompt hung past 1200 s with one idle API
+# connection and no session file; with a clean CODEX_HOME the same prompt answered in 5 s, and
+# with those three servers turned off by -c it answered in 4 s. Every codex review seat timed out
+# for hours before anyone looked. A reviewer reads a diff and needs no MCP tool, so the seats turn
+# them all off. Only plain names ([mcp_servers.foo]) are matched: a quoted name is not, and stays on.
+codex_no_mcp_args() {
+  local cfg="${CODEX_HOME:-${HOME:-}/.codex}/config.toml"
+  [ -r "$cfg" ] || return 0
+  sed -n 's/^\[mcp_servers\.\([A-Za-z0-9_-]*\)\][[:space:]]*$/mcp_servers.\1.enabled=false/p' "$cfg" |
+    sort -u
+}
+
 panel_resolve() {
   local env_name="$1" fallback="${3-}" cfg_name="PANEL_CFG_$2" v
   eval "v=\${$env_name:-}"

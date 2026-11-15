@@ -592,6 +592,28 @@ rlr yes "pipefail: 200 KB body with a marker at the start" "$_rlr_big"
 # stderr. The helper still says no, so ordering is the callers' responsibility.
 rlr no "empty body" ''
 
+# --- codex_no_mcp_args -------------------------------------------------------
+# Every plain [mcp_servers.<name>] header becomes one -c override; tool sub-tables, other
+# sections and a missing config add nothing.
+_cx=$(mktemp -d)
+cat >"$_cx/config.toml" <<'TOML'
+model = "x"
+[mcp_servers.buffer]
+url = "https://mcp.buffer.com/mcp"
+[mcp_servers.buffer.tools.create_post]
+approval_mode = "approve"
+[mcp_servers.app-tools]
+command = "node"
+[mcp_servers.my_srv]
+[tui]
+TOML
+_got=$(CODEX_HOME="$_cx" codex_no_mcp_args | tr '\n' ' ')
+_want="mcp_servers.app-tools.enabled=false mcp_servers.buffer.enabled=false mcp_servers.my_srv.enabled=false "
+if [ "$_got" = "$_want" ]; then ok "codex_no_mcp_args: one override per server"; else bad "codex_no_mcp_args: got '$_got', want '$_want'"; fi
+_got=$(CODEX_HOME="$_cx/missing" codex_no_mcp_args)
+if [ -z "$_got" ]; then ok "codex_no_mcp_args: no config, no overrides"; else bad "codex_no_mcp_args: missing config gave '$_got'"; fi
+rm -rf "$_cx"
+
 echo "-------------------------------------------"
 echo "panel config tests: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

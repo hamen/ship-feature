@@ -95,6 +95,9 @@ relay_isolate_git() {
   local _i
   for ((_i = 0; _i <= 31; _i++)); do unset "GIT_CONFIG_KEY_$_i" "GIT_CONFIG_VALUE_$_i"; done
 
+  # The codex seats read $CODEX_HOME/config.toml (codex_no_mcp_args): never the developer's own.
+  export CODEX_HOME=/dev/null
+
   export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com
   export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 
