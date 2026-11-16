@@ -3634,6 +3634,39 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# An MCP server in the codex config is turned off for the seat, in the relay and in review-local
+# (codex_no_mcp_append). A remote OAuth server that hangs at start hung every codex seat past its
+# timeout on 2026-11-15.
+mkdir -p "$WORK/codex-home"
+printf '[mcp_servers.buffer]\nurl = "https://example.invalid/mcp"\n' >"$WORK/codex-home/config.toml"
+: >"$CODEX_ARGV"
+rm -rf "$WORK/cache"
+mkdir -p "$WORK/cache"
+rm -f "$WORK/sha_counter"
+out=$(env PATH="$BIN:$PATH" HOME="$WORK/home" CODEX_HOME="$WORK/codex-home" \
+  XDG_CONFIG_HOME="$WORK/xdg" XDG_CACHE_HOME="$WORK/cache" TMPDIR="$WORK/tmp" \
+  GH_SHA_COUNTER="$WORK/sha_counter" ARGV_LOG="$CODEX_ARGV" \
+  bash "$RELAY" --pr 1 --author claude --reviewers codex 2>&1)
+if grep -q -- '-c mcp_servers.buffer.enabled=false' "$CODEX_ARGV" 2>/dev/null; then
+  echo "  ok   [-] the relay turns off the configured MCP server for codex"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL the relay left the MCP server on — argv: $(cat "$CODEX_ARGV" 2>/dev/null)"
+  FAIL=$((FAIL + 1))
+fi
+: >"$CODEX_ARGV_RL"
+out=$(cd "$RLREPO2" && env PATH="$BIN:$PATH" HOME="$WORK/home" CODEX_HOME="$WORK/codex-home" \
+  XDG_CONFIG_HOME="$WORK/xdg" XDG_CACHE_HOME="$WORK/cache" TMPDIR="$WORK/tmp" \
+  ARGV_LOG="$CODEX_ARGV_RL" \
+  bash "$RL" --author claude --reviewers codex --base HEAD~1 2>&1)
+if grep -q -- '-c mcp_servers.buffer.enabled=false' "$CODEX_ARGV_RL" 2>/dev/null; then
+  echo "  ok   [-] review-local turns off the configured MCP server for codex"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL review-local left the MCP server on — argv: $(cat "$CODEX_ARGV_RL" 2>/dev/null)"
+  FAIL=$((FAIL + 1))
+fi
+
 : >"$AGY_ARGV_RL"
 out=$(cd "$RLREPO2" && env PATH="$BIN:$PATH" HOME="$WORK/home" \
   XDG_CONFIG_HOME="$WORK/xdg" XDG_CACHE_HOME="$WORK/cache" TMPDIR="$WORK/tmp" \

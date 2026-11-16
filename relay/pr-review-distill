@@ -122,6 +122,8 @@ CODEX_REVIEW_EFFORT="$(panel_resolve CODEX_REVIEW_EFFORT EFFORT_codex "")"
 CODEX_MODEL_ARGS=()
 [ -n "$CODEX_REVIEW_MODEL" ] && CODEX_MODEL_ARGS+=(-m "$CODEX_REVIEW_MODEL")
 [ -n "$CODEX_REVIEW_EFFORT" ] && CODEX_MODEL_ARGS+=(-c "model_reasoning_effort=\"$CODEX_REVIEW_EFFORT\"")
+# No MCP servers for a reviewer: one that hangs at start hangs the seat (see lib-panel.sh).
+codex_no_mcp_append CODEX_MODEL_ARGS
 # Claude's pin, carried here for the same anti-drift reason: three copies that disagree about
 # which model reviews is exactly the bug this repo keeps re-learning. Same hard default and same
 # load-bearing --fallback-model as the relay (an unavailable model prints its error on STDOUT,

@@ -123,6 +123,9 @@ export SHIP_FEATURE_CONFIG=/dev/null
 # suite must not see the developer's real one — its MODEL_* keys would satisfy the
 # default-pin assertions and the tests would pass on this machine only.
 export PR_RELAY_CONFIG=/dev/null
+# The codex seats turn off every MCP server listed in $CODEX_HOME/config.toml (codex_no_mcp_args):
+# the developer's real ~/.codex would add arguments to every codex argv assertion below.
+export CODEX_HOME=/dev/null
 # The model pins are not SHIP_FEATURE_* keys (the names are shared with pr-review-relay), so they
 # would not be caught by the namespace above — but they are knobs people really do export once
 # ship-feature/pr-review-relay are in use, and an exported value would quietly satisfy the
@@ -1884,6 +1887,20 @@ printf '%s' "$pn0" | grep 'REVIEW-claude' | grep -q -- "argv=\[-p --permission-m
   } ||
   {
     echo "  FAIL an unpinned seat gained an argument: $pn0"
+    FAIL=$((FAIL + 1))
+  }
+# An MCP server in the codex config is turned off for the seat, before the prompt: a remote OAuth
+# server that hangs at start hung every codex review past its timeout (2026-11-15).
+mkdir -p "$CFGDIR/codex-home"
+printf '[mcp_servers.buffer]\nurl = "https://example.invalid/mcp"\n' >"$CFGDIR/codex-home/config.toml"
+pnm=$(printf 'plan\n' | PATH="$PBIN:$PATH" CODEX_HOME="$CFGDIR/codex-home" bash "$CLI" plan-review --reviewers codex 2>&1)
+printf '%s' "$pnm" | grep 'REVIEW-codex' | grep -qF -- 'argv=[exec --sandbox read-only -c mcp_servers.buffer.enabled=false You are reviewing' &&
+  {
+    echo "  ok   [-] an MCP server in the codex config is turned off for the codex seat"
+    PASS=$((PASS + 1))
+  } ||
+  {
+    echo "  FAIL the codex seat did not turn off the configured MCP server: $(printf '%s' "$pnm" | grep 'REVIEW-codex')"
     FAIL=$((FAIL + 1))
   }
 # Every other seat's dispatch line too — each is its own arm in plan_seat_pins, so a misspelt
@@ -5144,7 +5161,7 @@ echo "PASS=$PASS FAIL=$FAIL"
 # Hard-coded, deliberately NOT overridable from the environment. An ambient SF_EXPECTED_PASS would
 # let the very thing this suite now guarantees — that its result does not depend on the environment
 # it is run in — be switched off from outside, and would hide a removed test.
-EXPECTED=594
+EXPECTED=595
 if [ "$PASS" != "$EXPECTED" ]; then
   echo "  ! expected PASS=$EXPECTED, got $PASS — a test was added or silently dropped" >&2
   exit 1

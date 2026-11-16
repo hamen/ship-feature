@@ -145,6 +145,8 @@ CLAUDE_REVIEW_FALLBACK_MODEL="$(panel_resolve CLAUDE_REVIEW_FALLBACK_MODEL MODEL
 CODEX_MODEL_ARGS=()
 [ -n "$CODEX_REVIEW_MODEL" ] && CODEX_MODEL_ARGS+=(-m "$CODEX_REVIEW_MODEL")
 [ -n "$CODEX_REVIEW_EFFORT" ] && CODEX_MODEL_ARGS+=(-c "model_reasoning_effort=\"$CODEX_REVIEW_EFFORT\"")
+# No MCP servers for a reviewer: one that hangs at start hangs the seat (see lib-panel.sh).
+codex_no_mcp_append CODEX_MODEL_ARGS
 AGY_MODEL_ARGS=()
 [ -n "$AGY_REVIEW_MODEL" ] && AGY_MODEL_ARGS+=(--model "$AGY_REVIEW_MODEL")
 # Model and fallback are hard-defaulted, so always present; effort is opt-in and must add NO
