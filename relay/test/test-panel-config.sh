@@ -592,26 +592,42 @@ rlr yes "pipefail: 200 KB body with a marker at the start" "$_rlr_big"
 # stderr. The helper still says no, so ordering is the callers' responsibility.
 rlr no "empty body" ''
 
-# --- codex_no_mcp_args -------------------------------------------------------
-# Every plain [mcp_servers.<name>] header becomes one -c override; tool sub-tables, other
-# sections and a missing config add nothing.
+# --- codex_no_mcp_args / codex_no_mcp_append ---------------------------------
+# Every [mcp_servers.<name>] table header becomes one -c override, in config order, each name
+# once: spaces around the parts, a trailing comment and a quoted plain name are all read. Tool
+# sub-tables, array tables, other sections, an unsafe quoted name and a missing config add nothing.
 _cx=$(mktemp -d)
 cat >"$_cx/config.toml" <<'TOML'
 model = "x"
-[mcp_servers.buffer]
+[mcp_servers.buffer] # remote, OAuth
 url = "https://mcp.buffer.com/mcp"
 [mcp_servers.buffer.tools.create_post]
 approval_mode = "approve"
-[mcp_servers.app-tools]
+  [ mcp_servers . app-tools ]
 command = "node"
-[mcp_servers.my_srv]
+[mcp_servers."stripe"]
+[mcp_servers."has.dot"]
+[[mcp_servers.listed]]
+[mcp_servers.buffer]
+# [mcp_servers.commented]
 [tui]
 TOML
+_want="mcp_servers.buffer.enabled=false mcp_servers.app-tools.enabled=false mcp_servers.stripe.enabled=false "
 _got=$(CODEX_HOME="$_cx" codex_no_mcp_args | tr '\n' ' ')
-_want="mcp_servers.app-tools.enabled=false mcp_servers.buffer.enabled=false mcp_servers.my_srv.enabled=false "
-if [ "$_got" = "$_want" ]; then ok "codex_no_mcp_args: one override per server"; else bad "codex_no_mcp_args: got '$_got', want '$_want'"; fi
+if [ "$_got" = "$_want" ]; then ok "codex_no_mcp_args: one override per server, the TOML header forms"; else bad "codex_no_mcp_args: got '$_got', want '$_want'"; fi
+# No external command: with nothing on PATH the result is the same (the relay calls it before
+# its PATH guard, so a sed or sort from the checkout must never run).
+_got=$(env -i CODEX_HOME="$_cx" PATH=/nonexistent "$BASH" -c '. "$1"; codex_no_mcp_args' _ "$LIB" | tr '\n' ' ')
+if [ "$_got" = "$_want" ]; then ok "codex_no_mcp_args: runs no external command"; else bad "codex_no_mcp_args with an empty PATH: got '$_got'"; fi
 _got=$(CODEX_HOME="$_cx/missing" codex_no_mcp_args)
 if [ -z "$_got" ]; then ok "codex_no_mcp_args: no config, no overrides"; else bad "codex_no_mcp_args: missing config gave '$_got'"; fi
+_arr=(-m pin)
+CODEX_HOME="$_cx" codex_no_mcp_append _arr
+_got="${_arr[*]}"
+if [ "$_got" = "-m pin -c mcp_servers.buffer.enabled=false -c mcp_servers.app-tools.enabled=false -c mcp_servers.stripe.enabled=false" ]; then
+  ok "codex_no_mcp_append: appends -c pairs after the existing items"
+else bad "codex_no_mcp_append: got '$_got'"; fi
+if codex_no_mcp_append 'x;y' 2>/dev/null; then bad "codex_no_mcp_append accepted a bad array name"; else ok "codex_no_mcp_append: refuses a bad array name"; fi
 rm -rf "$_cx"
 
 echo "-------------------------------------------"

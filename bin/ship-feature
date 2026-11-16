@@ -914,8 +914,7 @@ have found something serious, write it down before you go looking for the next t
   [ -n "$CODEX_REVIEW_MODEL" ] && CODEX_PIN_ARGS+=(-m "$CODEX_REVIEW_MODEL")
   [ -n "$CODEX_REVIEW_EFFORT" ] && CODEX_PIN_ARGS+=(-c "model_reasoning_effort=\"$CODEX_REVIEW_EFFORT\"")
   # No MCP servers for a reviewer: one that hangs at start hangs the seat (see lib-panel.sh).
-  local _nomcp
-  while IFS= read -r _nomcp; do CODEX_PIN_ARGS+=(-c "$_nomcp"); done < <(codex_no_mcp_args)
+  codex_no_mcp_append CODEX_PIN_ARGS
   # " (model=…, effort=…)" for the dispatch line. "cli default" when a pin adds no argument, so an
   # unpinned seat reads as unpinned rather than as a value nobody chose.
   plan_seat_pins() {

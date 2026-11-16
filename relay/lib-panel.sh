@@ -200,24 +200,6 @@ panel_config_load() {
 # own tests run with e.g. CURSOR_REVIEW_MODEL= on purpose, so that an override exported in a dev
 # shell cannot make an assertion pass by accident. Treating that empty as "disabled" silently
 # unpins the model and the argv assertion fails with a bare `--model`.
-# codex_no_mcp_args — one "mcp_servers.<name>.enabled=false" per line, for every MCP server in
-# the user's codex config. Each line goes to `codex exec` as a -c override.
-#
-# `codex exec` starts every MCP server in $CODEX_HOME/config.toml before it sends the first
-# request, and waits for each one. A remote OAuth server that cannot refresh its token hangs that
-# start with no timeout of its own. Measured 2026-11-15, codex-cli 0.164.0: with buffer,
-# revenuecat or stripe in the config, a one-word prompt hung past 1200 s with one idle API
-# connection and no session file; with a clean CODEX_HOME the same prompt answered in 5 s, and
-# with those three servers turned off by -c it answered in 4 s. Every codex review seat timed out
-# for hours before anyone looked. A reviewer reads a diff and needs no MCP tool, so the seats turn
-# them all off. Only plain names ([mcp_servers.foo]) are matched: a quoted name is not, and stays on.
-codex_no_mcp_args() {
-  local cfg="${CODEX_HOME:-${HOME:-}/.codex}/config.toml"
-  [ -r "$cfg" ] || return 0
-  sed -n 's/^\[mcp_servers\.\([A-Za-z0-9_-]*\)\][[:space:]]*$/mcp_servers.\1.enabled=false/p' "$cfg" |
-    sort -u
-}
-
 panel_resolve() {
   local env_name="$1" fallback="${3-}" cfg_name="PANEL_CFG_$2" v
   eval "v=\${$env_name:-}"
@@ -231,6 +213,59 @@ panel_resolve() {
     return 0
   fi
   printf '%s' "$fallback"
+}
+
+# codex_no_mcp_args — one "mcp_servers.<name>.enabled=false" per line, for every MCP server in
+# the user's codex config, in config order, each name once. Each line goes to `codex exec` as a
+# -c override (codex_no_mcp_append adds them to an argv array).
+#
+# `codex exec` starts every MCP server in $CODEX_HOME/config.toml before it sends the first
+# request, and waits for each one. A remote OAuth server that cannot refresh its token hangs that
+# start with no timeout of its own. Measured 2026-11-15, codex-cli 0.164.0 and 0.169.0: with
+# buffer, revenuecat or stripe in the config, a one-word prompt hung past 1200 s with one idle API
+# connection and no session file; with a clean CODEX_HOME the same prompt answered in 5 s, and
+# with those three servers turned off by -c it answered in 4 s. Every codex review seat timed out
+# for hours before anyone looked. A reviewer reads a diff and needs no MCP tool, so the seats turn
+# them all off.
+#
+# Pure bash, no external command: the relay entrypoints call it before their PATH guard, and a
+# sed or sort resolved through a PATH entry inside the checkout under review would run that
+# checkout's code. Read: table headers [mcp_servers.<name>] with spaces around the parts, a
+# trailing comment, or the name in double quotes. Not read, and so left on: a name outside
+# [A-Za-z0-9_-] (codex's -c key syntax for such a name is not verified), and servers written
+# as keys under [mcp_servers] or as dotted keys.
+codex_no_mcp_args() {
+  local cfg="${CODEX_HOME:-${HOME:-}/.codex}/config.toml" line name seen=" "
+  local re='^mcp_servers[[:space:]]*\.[[:space:]]*("([A-Za-z0-9_-]+)"|([A-Za-z0-9_-]+))$'
+  [ -r "$cfg" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    case "$line" in '[['*) continue ;; '['*']') ;; *) continue ;; esac
+    line="${line#\[}"
+    line="${line%\]}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ $line =~ $re ]] || continue
+    name="${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
+    case "$seen" in *" $name "*) continue ;; esac
+    seen="$seen$name "
+    printf 'mcp_servers.%s.enabled=false\n' "$name"
+  done <"$cfg"
+}
+
+# codex_no_mcp_append <array name> — append "-c <override>" for each line of codex_no_mcp_args.
+# One copy for all four codex call sites, so they cannot drift apart.
+codex_no_mcp_append() {
+  local _line
+  case "$1" in '' | [0-9]* | *[!A-Za-z0-9_]*) return 1 ;; esac
+  while IFS= read -r _line; do
+    [ -n "$_line" ] && eval "$1+=(-c \"\$_line\")"
+  done <<EOF
+$(codex_no_mcp_args)
+EOF
+  return 0
 }
 
 # --- Is this actually a review? ----------------------------------------------
